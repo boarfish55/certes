@@ -4,7 +4,7 @@ CFLAGS := -Wall -g
 all: certainty
 
 certainty: certainty.c
-	$(CC) $(CFLAGS) certainty.c -lssl -o certainty
+	$(CC) $(CFLAGS) certainty.c -lcrypto -lssl -ltls -o certainty
 
 clean:
 	rm -f certainty *.o
