@@ -2,3 +2,4 @@ certainty
 .vimtags
 *.o
 gdb.*
+ca/
