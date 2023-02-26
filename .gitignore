@@ -1,0 +1,4 @@
+certainty
+.vimtags
+*.o
+gdb.*
