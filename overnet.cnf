@@ -50,5 +50,6 @@ basicConstraints	= CA:true
 overnetRoles            = ASN1:SEQUENCE:ca_roles
 
 [ca_roles]
-Role.0                  = UTF8:ca
-Role.1                  = UTF8:assume_role
+overnetRoles.0          = IA5:ca
+overnetRoles.1          = IA5:assume_role
+overnetRoles.2          = IA5:yo

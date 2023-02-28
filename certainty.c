@@ -1,7 +1,9 @@
+#include <openssl/asn1t.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
+#include <openssl/x509v3.h>
 #include <stdio.h>
 #include <err.h>
 
@@ -18,17 +20,69 @@ verify_callback(int ok, X509_STORE_CTX *ctx)
 }
 
 int
+decode_crap(X509_EXTENSION *ext)
+{
+	ASN1_OCTET_STRING *asn1str;
+	unsigned char *data, *p;
+	int len, type, ex_len;
+
+	asn1str = X509_EXTENSION_get_data(ext);
+	data = asn1str->data;
+	ex_len = asn1str->length;
+	for (p = data + 2; p < data + ex_len; ) {
+		type = *p++;
+		if (type != V_ASN1_IA5STRING) {
+			warnx("expected V_ASN1_IA5STRING, got %d", type);
+			return -1;
+		}
+		len = *p++;
+		printf("role=%.*s\n", len, p);
+		p += len;
+	}
+	return 0;
+}
+
+int
+valid(X509 *crt)
+{
+	ASN1_TIME *tm, *tm_now;
+
+	tm_now = ASN1_TIME_set(NULL, time(0));
+
+	tm = X509_get_notAfter(crt);
+	if (tm == NULL) {
+		warnx("notAfter is garbage");
+		return -1;
+	}
+	if (ASN1_TIME_compare(tm, tm_now) == -1) {
+		warnx("cert is expired");
+		return -1;
+	}
+
+	tm = X509_get_notBefore(crt);
+	if (tm == NULL) {
+		warnx("notAfter is garbage");
+		return -1;
+	}
+	if (ASN1_TIME_compare(tm, tm_now) == 1) {
+		warnx("cert is not yet valid");
+		return -1;
+	}
+	return 0;
+}
+
+int
 main()
 {
-	X509_STORE        *store;
-	X509_LOOKUP       *lookup;
-	X509              *crt;
-	X509_EXTENSION    *ex;
-	FILE              *f;
-	int                overnet_roles_nid;
-	int                roles_idx;
-	ASN1_OCTET_STRING *asn1str;
-	ASN1_OBJECT       *asn1obj;
+	X509_STORE             *store;
+	X509_LOOKUP            *lookup;
+	X509                   *crt;
+	X509_EXTENSION         *ex;
+	FILE                   *f;
+	int                     overnet_roles_nid;
+	int                     roles_idx;
+	X509_NAME              *subject;
+	char                    common_name[256];
 
 	crt = X509_new();
 
@@ -64,14 +118,25 @@ main()
 	roles_idx = X509_get_ext_by_NID(crt, overnet_roles_nid, -1);
 	if (roles_idx == -1)
 		errx(1, "overnetRoles extension not found");
-
 	if ((ex = X509_get_ext(crt, roles_idx)) == NULL) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
+	subject = X509_get_subject_name(crt);
+	if (subject == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
 
-	asn1str = X509_EXTENSION_get_data(ex);
-	asn1obj = X509_EXTENSION_get_object(ex);
+	if (X509_NAME_get_text_by_NID(subject, NID_commonName,
+	    common_name, sizeof(common_name)) == -1) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
 
-	return 0;
+	printf("name: %s\n", common_name);
+
+	decode_crap(ex);
+
+	return valid(crt);
 }
