@@ -43,7 +43,7 @@ decode_crap(X509_EXTENSION *ext)
 }
 
 int
-valid(X509 *crt)
+valid_time(X509 *crt)
 {
 	ASN1_TIME *tm, *tm_now;
 
@@ -135,8 +135,9 @@ main()
 	}
 
 	printf("name: %s\n", common_name);
+	if (!valid_time(crt)) {
+		errx(1, "cert is not valid");
+	}
 
-	decode_crap(ex);
-
-	return valid(crt);
+	return decode_crap(ex);
 }
