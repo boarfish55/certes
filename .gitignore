@@ -3,4 +3,5 @@ certainty
 *.o
 gdb.*
 ca/
+client*/
 *.core
