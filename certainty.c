@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <err.h>
 #include <getopt.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -14,8 +15,10 @@
 const char *program = "certainty";
 char        ca_file[PATH_MAX] = "ca/overnet.pem";
 char        crl_file[PATH_MAX] = "ca/overnet.crl";
+char        key_file[PATH_MAX] = "ca/private/overnet_key.pem";
 int         overnet_roles_nid;
 X509_STORE *store;
+EVP_PKEY   *priv_key;
 
 extern char *optarg;
 extern int   optind, opterr, optopt;
@@ -106,6 +109,7 @@ usage()
 	printf("    verify <certificate>    Ensures the certificate is signed by "
 	    "our\n");
 	printf("                            authority\n");
+	printf("    sign <certificate>      Re-signs the certificate\n");
 }
 
 int
@@ -119,11 +123,6 @@ verify(const char *cert_path)
 	FILE           *f;
 	int             r;
 	X509_STORE_CTX *ctx;
-
-	if ((crt = X509_new()) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
 
 	if ((f = fopen(cert_path, "r")) == NULL)
 		err(1, "fopen");
@@ -179,11 +178,62 @@ verify(const char *cert_path)
 }
 
 int
+sign(const char *cert_path)
+{
+	X509 *crt;
+	FILE *f;
+	char  new_cert[PATH_MAX];
+
+	if ((f = fopen(cert_path, "r")) == NULL)
+		err(1, "fopen");
+	if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+
+	// TODO: take a look here about what fields we should put in our
+	// renewed cert:
+	//
+	//  https://github.com/openbsd/src/blob/master/usr.bin/openssl/ca.c#L1965
+	//
+	// Like we might want to at least change the dates, the serial, the
+	// issuer.
+	//
+	// OpenSSL manages serial like this:
+	//   https://github.com/openbsd/src/blob/master/usr.bin/openssl/apps.c#L1124
+	//
+	// Might be time to start doing some paxos'ing to allocate ranges of
+	// serials and sync up on revocations. Short-term, every sub-ca can
+	// have its own serial tracker, since Issuer is different.
+
+	X509_gmtime_adj(X509_get_notBefore(crt), 0);
+	X509_gmtime_adj(X509_get_notAfter(crt), 86400);
+
+	if (!X509_sign(crt, priv_key, EVP_sha256())) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	snprintf(new_cert, sizeof(new_cert), "%s.new", cert_path);
+	if ((f = fopen(new_cert, "w")) == NULL)
+		err(1, "fopen");
+	if (!PEM_write_X509(f, crt)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+
+	return 0;
+}
+
+int
 main(int argc, char **argv)
 {
 	int          opt;
 	char        *command;
 	X509_LOOKUP *lookup;
+	FILE        *f;
 
 	while ((opt = getopt(argc, argv, "hC:")) != -1) {
 		switch (opt) {
@@ -205,6 +255,14 @@ main(int argc, char **argv)
 	    "overnetRoles", "Overnet Security Roles");
 	if (overnet_roles_nid == NID_undef)
 		err(1, "OBJ_create");
+
+	if ((f = fopen(key_file, "r")) == NULL)
+		err(1, "fopen");
+	if ((priv_key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
 
 	if ((store = X509_STORE_new()) == NULL)
 		err(1, "X509_STORE_new");
@@ -239,6 +297,12 @@ main(int argc, char **argv)
 			exit(1);
 		}
 		return verify(argv[optind++]);
+	} else if (strcmp(command, "sign") == 0) {
+		if (optind >= argc) {
+			errx(1, "no certificate file provided");
+			exit(1);
+		}
+		return sign(argv[optind++]);
 	}
 
 	usage();
