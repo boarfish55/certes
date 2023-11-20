@@ -1,6 +1,7 @@
 CC = cc
 CFLAGS = -Wall -g
 LIBS = -lcrypto -lssl
+OBJS = config_vars.o xlog.o
 
 OS != uname -s
 
@@ -15,8 +16,14 @@ LIBS += $(PKGCONFIG_LIBS) -Wl,-z,relro -Wl,-z,now
 
 all: certainty
 
-certainty: certainty.c
-	$(CC) $(CFLAGS) certainty.c $(LIBS) -o certainty
+xlog.o: xlog.c
+	$(CC) $(CFLAGS) xlog.c -c -o xlog.o
+
+config_vars.o: config_vars.c
+	$(CC) $(CFLAGS) config_vars.c -c -o config_vars.o
+
+certainty: certainty.c config_vars.o xlog.o
+	$(CC) $(CFLAGS) certainty.c $(LIBS) $(OBJS) -o certainty
 
 clean:
 	rm -f certainty *.o certainty.core core
