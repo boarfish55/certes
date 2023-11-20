@@ -16,6 +16,7 @@ serial                  = $dir/serial
 default_crl_days        = 365
 default_days            = 7
 default_md              = sha256
+copy_extensions         = copy
 policy                  = overnet_ca_policy
 x509_extensions         = overnet_crt_ext
 
