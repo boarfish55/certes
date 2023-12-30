@@ -17,6 +17,8 @@
 #include "config_vars.h"
 #include "xlog.h"
 
+#define MAX_HEX_SERIAL_LENGTH 32
+
 const char *program = "certainty";
 int         overnet_roles_nid;
 X509_STORE *store;
@@ -34,11 +36,19 @@ struct {
 	char ca_file[PATH_MAX];
 	char crl_file[PATH_MAX];
 	char key_file[PATH_MAX];
+	char serial_file[PATH_MAX];
+
+	/* Leave space for "0x" and terminating zero */
+	char min_serial[MAX_HEX_SERIAL_LENGTH + 3];
+	char max_serial[MAX_HEX_SERIAL_LENGTH + 3];
 } certainty_conf = {
 	"/var/run/certainty.pid",
 	"ca/overnet.pem",
 	"ca/overnet.crl",
-	"ca/private/overnet_key.pem"
+	"ca/private/overnet_key.pem",
+	"ca/serial",
+	"0x0",
+	"0x0"
 };
 
 struct config_vars certainty_config_vars[] = {
@@ -65,6 +75,24 @@ struct config_vars certainty_config_vars[] = {
 		CONFIG_VARS_STRING,
 		certainty_conf.key_file,
 		sizeof(certainty_conf.key_file)
+	},
+	{
+		"serial_file",
+		CONFIG_VARS_STRING,
+		certainty_conf.serial_file,
+		sizeof(certainty_conf.serial_file)
+	},
+	{
+		"min_serial",
+		CONFIG_VARS_STRING,
+		certainty_conf.min_serial,
+		sizeof(certainty_conf.min_serial)
+	},
+	{
+		"max_serial",
+		CONFIG_VARS_STRING,
+		certainty_conf.max_serial,
+		sizeof(certainty_conf.max_serial)
 	},
 	CONFIG_VARS_LAST
 };
@@ -111,37 +139,6 @@ decode_overnet_roles(X509_EXTENSION *ext)
 		len = *p++;
 		printf("role=%.*s\n", len, p);
 		p += len;
-	}
-	return 0;
-}
-
-int
-valid_time(X509 *crt)
-{
-	ASN1_TIME *tm, *tm_now;
-
-	tm_now = ASN1_TIME_set(NULL, time(0));
-
-	// TODO: do I need to do this check myself? Doesn't it do it
-	// already?
-	tm = X509_get_notAfter(crt);
-	if (tm == NULL) {
-		warnx("notAfter is garbage");
-		return -1;
-	}
-	if (ASN1_TIME_compare(tm, tm_now) == -1) {
-		warnx("cert is expired");
-		return -1;
-	}
-
-	tm = X509_get_notBefore(crt);
-	if (tm == NULL) {
-		warnx("notAfter is garbage");
-		return -1;
-	}
-	if (ASN1_TIME_compare(tm, tm_now) == 1) {
-		warnx("cert is not yet valid");
-		return -1;
 	}
 	return 0;
 }
@@ -195,9 +192,6 @@ verify(const char *cert_path)
 	}
 
 	printf("Common name: %s\n", common_name);
-	if (valid_time(crt) == -1) {
-		errx(1, "cert is not valid");
-	}
 
 	// TODO: do a challenge on the client and its cert name. The peer
 	// IP on the connection should match one of the subjectAltNames, or
@@ -231,12 +225,106 @@ verify(const char *cert_path)
 	return decode_overnet_roles(ex);
 }
 
+BIGNUM *
+new_serial()
+{
+	BIGNUM  *min_bn = NULL;
+	BIGNUM  *max_bn = NULL;
+	BIGNUM  *v = NULL;
+	int      fd;
+	char    *p;
+	ssize_t  r;
+	int      l;
+	char     buf[MAX_HEX_SERIAL_LENGTH + 1];
+
+	if (!BN_hex2bn(&min_bn, certainty_conf.min_serial)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	if (!BN_hex2bn(&max_bn, certainty_conf.max_serial)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	// TODO: flock exclusive
+	if ((fd = open(certainty_conf.serial_file,
+	    O_RDWR|O_CREAT|O_CLOEXEC, 0666)) == -1)
+		err(1, "open");
+	r = read(fd, buf, sizeof(buf));
+	if (r == -1)
+		err(1, "read");
+	if (r > 0) {
+		if (buf[r - 1] != '\n')
+			errx(1, "serial file does not end in newline, "
+			    "or the value is too large");
+		buf[r - 1] = '\0';
+		for (p = buf; *p; p++) {
+			if (!((*p >= '0' && *p <= '9') ||
+			    (*p >= 'a' && *p <= 'f') ||
+			    (*p >= 'A' && *p <= 'F'))) {
+				errx(1, "serial is not a valid hex integer");
+			}
+		}
+		if (!BN_hex2bn(&v, buf)) {
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+
+		if (BN_cmp(v, min_bn) == -1)
+			errx(1, "saved serial is less than min_serial");
+
+		if (!BN_add_word(v, 1)) {
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+		if (BN_cmp(v, max_bn) > 0) {
+			BN_free(min_bn);
+			BN_free(max_bn);
+			warnx("max_serial exceeded");
+			return NULL;
+		}
+	} else {
+		if ((v = BN_dup(min_bn)) == NULL) {
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+	}
+
+	BN_free(min_bn);
+	BN_free(max_bn);
+
+	if ((p = BN_bn2hex(v)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	l = snprintf(buf, sizeof(buf), "%s\n", p);
+	if (l >= sizeof(buf))
+		errx(1, "computed serial is too large");
+	OPENSSL_free(p);
+
+	// TODO: rename, donc truncate
+	if (lseek(fd, 0, SEEK_SET) == -1)
+		err(1, "lseek");
+	if (ftruncate(fd, 0) == -1)
+		err(1, "ftruncate");
+	r = write(fd, buf, l);
+	if (r == -1)
+		err(1, "write");
+	if (r < l)
+		errx(1, "short write on serial file");
+	close(fd);
+	return v;
+}
+
 int
 sign(const char *cert_path)
 {
-	X509 *crt;
-	FILE *f;
-	char  new_cert[PATH_MAX];
+	X509   *crt;
+	FILE   *f;
+	char    new_cert[PATH_MAX];
+	BIGNUM *serial;
 
 	if ((f = fopen(cert_path, "r")) == NULL)
 		err(1, "fopen");
@@ -262,6 +350,16 @@ sign(const char *cert_path)
 	// have its own serial tracker, since Issuer is different.
 	// It's BIGNUM, we can probably shard IDs by ranges and avoid
 	// consensus things.
+
+	serial = new_serial();
+	if (serial == NULL)
+		exit(1);
+
+	if (BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(crt)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	BN_free(serial);
 
 	X509_gmtime_adj(X509_get_notBefore(crt), 0);
 	X509_gmtime_adj(X509_get_notAfter(crt), 86400);
@@ -396,6 +494,8 @@ main(int argc, char **argv)
 	char        *command;
 	X509_LOOKUP *lookup;
 	FILE        *f;
+	size_t       sz;
+	char        *p;
 
 	xlog_init(program, NULL, NULL, 1);
 
@@ -418,6 +518,35 @@ main(int argc, char **argv)
 
 	if (config_vars_read(config_file_path, certainty_config_vars) == -1)
 		err(1, "config_vars_read");
+
+	if (strncmp(certainty_conf.min_serial, "0x", 2) != 0)
+		errx(1, "min_serial does not begin with \"0x\"");
+	sz = strlen(certainty_conf.min_serial) - 2;
+	memmove(certainty_conf.min_serial,
+	    certainty_conf.min_serial + 2, sz);
+	certainty_conf.min_serial[sz] = '\0';
+	for (p = certainty_conf.min_serial; *p; p++) {
+		if (!((*p >= '0' && *p <= '9') ||
+		    (*p >= 'a' && *p <= 'f') ||
+		    (*p >= 'A' && *p <= 'F'))) {
+			errx(1, "min_serial is not a valid hex integer");
+		}
+	}
+
+	if (strncmp(certainty_conf.max_serial, "0x", 2) != 0)
+		errx(1, "max_serial does not begin with \"0x\"");
+	sz = strlen(certainty_conf.max_serial) - 2;
+	memmove(certainty_conf.max_serial,
+	    certainty_conf.max_serial + 2, sz);
+	certainty_conf.max_serial[sz] = '\0';
+	for (p = certainty_conf.max_serial; *p; p++) {
+		if (!((*p >= '0' && *p <= '9') ||
+		    (*p >= 'a' && *p <= 'f') ||
+		    (*p >= 'A' && *p <= 'F'))) {
+			errx(1,
+			    "min_serial is not a valid hexadecimal integer");
+		}
+	}
 
 	if (optind >= argc) {
 		usage();

@@ -1,1 +1,4 @@
 pid_file: certainty.pid
+serial_file: ca/serial
+min_serial: 0x01
+max_serial: 0xff

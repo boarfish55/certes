@@ -5,3 +5,4 @@ gdb.*
 ca/
 client*/
 *.core
+*.gdb
