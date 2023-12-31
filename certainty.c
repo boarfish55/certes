@@ -124,58 +124,20 @@ verify_callback(int ok, X509_STORE_CTX *ctx)
 int
 decode_overnet_roles(X509_EXTENSION *ext)
 {
-	ASN1_OCTET_STRING *asn1str;
-	unsigned char     *data, *p;
-	int                type;
-	size_t             len, ex_len;
+	ASN1_OCTET_STRING   *asn1str;
+	STACK_OF(ASN1_TYPE) *seq;
+	ASN1_TYPE           *v;
 
 	asn1str = X509_EXTENSION_get_data(ext);
-	data = asn1str->data;
-	ex_len = asn1str->length;
 
-	if (ex_len < 2) {
-		warnx("not enough byts for DER encoded data");
-		return -1;
+	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
+	    (const unsigned char **)&asn1str->data, asn1str->length);
+	while (sk_ASN1_TYPE_num(seq) > 0) {
+		v = sk_ASN1_TYPE_shift(seq);
+		printf("role: %s\n", v->value.ia5string->data);
+		free(v);
 	}
-	if (data[0] != 0x30) {
-		/*
-		 * DER encoded ASN.1 data begins with 8 bits: 00110000.
-		 * - Bits 8-7 are set to zero to indicate native ASN.1
-		 * - Bit 6 is set to 1 to indicate a constructed type
-		 *   (multiple encodings)
-		 * - Bits 5-1 indicate the tag type, in this case a
-		 *   SEQUENCE.
-		 */
-		warnx("expected ASN.1 constructed SEQUENCE data");
-		return -1;
-	}
-	if ((data[1] & 0x80) != 0) {
-		warnx("multi-byte length octets not supported");
-		return -1;
-	}
-	if (data[1] != ex_len - 2) {
-		/*
-		 * DER encoded ASN.1 data begins with 8 bits: 00110000.
-		 * - Bits 8-7 are set to zero to indicate native ASN.1
-		 * - Bit 6 is set to 1 to indicate a constructed type
-		 *   (multiple encodings)
-		 * - Bits 5-1 indicate the tag type, in this case a
-		 *   SEQUENCE.
-		 */
-		warnx("expected ASN.1 constructed SEQUENCE data: %d != %lu", data[1], ex_len);
-		return -1;
-	}
-
-	for (p = data + 2; p < data + ex_len; ) {
-		type = *p++;
-		if (type != V_ASN1_IA5STRING) {
-			warnx("expected V_ASN1_IA5STRING, got %d", type);
-			return -1;
-		}
-		len = *p++;
-		printf("role=%.*s\n", (int)len, p);
-		p += len;
-	}
+	sk_ASN1_TYPE_free(seq);
 	return 0;
 }
 
