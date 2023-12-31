@@ -125,20 +125,21 @@ int
 decode_overnet_roles(X509_EXTENSION *ext)
 {
 	ASN1_OCTET_STRING *asn1str;
-	unsigned char *data, *p;
-	int len, type, ex_len;
+	unsigned char     *data, *p;
+	int                type;
+	size_t             len, ex_len;
 
 	asn1str = X509_EXTENSION_get_data(ext);
 	data = asn1str->data;
 	ex_len = asn1str->length;
 
 	if (ex_len < 2) {
-		warnx("expected BER encoded data");
+		warnx("not enough byts for DER encoded data");
 		return -1;
 	}
 	if (data[0] != 0x30) {
 		/*
-		 * BER encoded ASN.1 data begins with 8 bits: 00110000.
+		 * DER encoded ASN.1 data begins with 8 bits: 00110000.
 		 * - Bits 8-7 are set to zero to indicate native ASN.1
 		 * - Bit 6 is set to 1 to indicate a constructed type
 		 *   (multiple encodings)
@@ -148,16 +149,20 @@ decode_overnet_roles(X509_EXTENSION *ext)
 		warnx("expected ASN.1 constructed SEQUENCE data");
 		return -1;
 	}
+	if ((data[1] & 0x80) != 0) {
+		warnx("multi-byte length octets not supported");
+		return -1;
+	}
 	if (data[1] != ex_len - 2) {
 		/*
-		 * BER encoded ASN.1 data begins with 8 bits: 00110000.
+		 * DER encoded ASN.1 data begins with 8 bits: 00110000.
 		 * - Bits 8-7 are set to zero to indicate native ASN.1
 		 * - Bit 6 is set to 1 to indicate a constructed type
 		 *   (multiple encodings)
 		 * - Bits 5-1 indicate the tag type, in this case a
 		 *   SEQUENCE.
 		 */
-		warnx("expected ASN.1 constructed SEQUENCE data: %d != %d", data[1], ex_len);
+		warnx("expected ASN.1 constructed SEQUENCE data: %d != %lu", data[1], ex_len);
 		return -1;
 	}
 
@@ -168,7 +173,7 @@ decode_overnet_roles(X509_EXTENSION *ext)
 			return -1;
 		}
 		len = *p++;
-		printf("role=%.*s\n", len, p);
+		printf("role=%.*s\n", (int)len, p);
 		p += len;
 	}
 	return 0;
@@ -180,18 +185,35 @@ make_overnet_roles(const char **roles)
 	const char        **role;
 	ASN1_OCTET_STRING  *asn1str;
 	unsigned char      *data, *p;
-	int                 ex_len = 0;
+	size_t              ex_len = strlen("agent") + 2;
 	unsigned char       len;
 	X509_EXTENSION     *ex;
 
 	for (role = roles; *role != NULL; role++) {
-		ex_len += strlen(*role) + 2;
+		len = strlen(*role);
+		if (len > 255) {
+			warnx("role name exceeds 255 characters");
+			return NULL;
+		}
+		ex_len += len + 2;
 	}
+
 	if ((data = malloc(ex_len + 2)) == NULL)
 		return NULL;
+
 	p = data;
 	*p++ = 0x30;
+	// TODO: ex_len may be encoded over multiple bytes
 	*p++ = ex_len;
+
+	/*
+	 * We always have a base role of "agent".
+	 */
+	*p++ = V_ASN1_IA5STRING;
+	*p++ = strlen("agent");
+	memcpy(p, "agent", 5);
+	p += 5;
+
 	for (role = roles; *role != NULL; role++) {
 		len = strlen(*role);
 		*p++ = V_ASN1_IA5STRING;
@@ -205,6 +227,7 @@ make_overnet_roles(const char **roles)
 		free(data);
 		return NULL;
 	}
+	// TODO: leak?
 	ex = X509_EXTENSION_create_by_NID(NULL, NID_overnet_roles, 0, asn1str);
 	if (ex == NULL) {
 		free(data);
@@ -223,10 +246,10 @@ usage()
 	printf("\t-c <conf>     Specify alternate configuration path\n");
 	printf("\n");
 	printf("  Commands:\n");
-	printf("\tverify <certificate>  Ensures the certificate is signed by "
+	printf("\tverify <certificate>            Ensures the certificate is signed by "
 	    "our\n");
-	printf("\t                      authority\n");
-	printf("\tsign <certificate>    Re-signs the certificate\n");
+	printf("\t                                authority\n");
+	printf("\tsign <certificate> [roles...]   Re-signs the certificate\n");
 }
 
 int
@@ -434,7 +457,7 @@ add_ext(X509V3_CTX *ctx, X509 *crt, int nid, char *value)
 }
 
 int
-sign(const char *cert_path)
+sign(const char *cert_path, const char **roles)
 {
 	X509           *crt, *newcrt;
 	FILE           *f;
@@ -442,12 +465,6 @@ sign(const char *cert_path)
 	BIGNUM         *serial;
 	X509_EXTENSION *ex;
 	X509V3_CTX      ctx;
-	// TODO: move roles to CLI args
-	const char *roles[] = {
-		"yo",
-		"ya",
-		NULL
-	};
 
 	if ((f = fopen(cert_path, "r")) == NULL)
 		err(1, "fopen");
@@ -771,7 +788,7 @@ main(int argc, char **argv)
 			errx(1, "no certificate file provided");
 			exit(1);
 		}
-		return sign(argv[optind++]);
+		return sign(argv[optind], (const char **)argv + optind + 1);
 	}
 
 	/*
