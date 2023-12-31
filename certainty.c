@@ -20,9 +20,10 @@
 #define MAX_HEX_SERIAL_LENGTH 32
 
 const char *program = "certainty";
-int         overnet_roles_nid;
+int         NID_overnet_roles;
 X509_STORE *store;
 EVP_PKEY   *priv_key;
+X509       *ca_crt;
 
 int  foreground = 0;
 int  debug = 0;
@@ -130,6 +131,36 @@ decode_overnet_roles(X509_EXTENSION *ext)
 	asn1str = X509_EXTENSION_get_data(ext);
 	data = asn1str->data;
 	ex_len = asn1str->length;
+
+	if (ex_len < 2) {
+		warnx("expected BER encoded data");
+		return -1;
+	}
+	if (data[0] != 0x30) {
+		/*
+		 * BER encoded ASN.1 data begins with 8 bits: 00110000.
+		 * - Bits 8-7 are set to zero to indicate native ASN.1
+		 * - Bit 6 is set to 1 to indicate a constructed type
+		 *   (multiple encodings)
+		 * - Bits 5-1 indicate the tag type, in this case a
+		 *   SEQUENCE.
+		 */
+		warnx("expected ASN.1 constructed SEQUENCE data");
+		return -1;
+	}
+	if (data[1] != ex_len - 2) {
+		/*
+		 * BER encoded ASN.1 data begins with 8 bits: 00110000.
+		 * - Bits 8-7 are set to zero to indicate native ASN.1
+		 * - Bit 6 is set to 1 to indicate a constructed type
+		 *   (multiple encodings)
+		 * - Bits 5-1 indicate the tag type, in this case a
+		 *   SEQUENCE.
+		 */
+		warnx("expected ASN.1 constructed SEQUENCE data: %d != %d", data[1], ex_len);
+		return -1;
+	}
+
 	for (p = data + 2; p < data + ex_len; ) {
 		type = *p++;
 		if (type != V_ASN1_IA5STRING) {
@@ -141,6 +172,45 @@ decode_overnet_roles(X509_EXTENSION *ext)
 		p += len;
 	}
 	return 0;
+}
+
+X509_EXTENSION *
+make_overnet_roles(const char **roles)
+{
+	const char        **role;
+	ASN1_OCTET_STRING  *asn1str;
+	unsigned char      *data, *p;
+	int                 ex_len = 0;
+	unsigned char       len;
+	X509_EXTENSION     *ex;
+
+	for (role = roles; *role != NULL; role++) {
+		ex_len += strlen(*role) + 2;
+	}
+	if ((data = malloc(ex_len + 2)) == NULL)
+		return NULL;
+	p = data;
+	*p++ = 0x30;
+	*p++ = ex_len;
+	for (role = roles; *role != NULL; role++) {
+		len = strlen(*role);
+		*p++ = V_ASN1_IA5STRING;
+		*p++ = len;
+		memcpy(p, *role, len);
+		p += len;
+	}
+
+	asn1str = ASN1_OCTET_STRING_new();
+	if (!ASN1_STRING_set(asn1str, data, ex_len + 2)) {
+		free(data);
+		return NULL;
+	}
+	ex = X509_EXTENSION_create_by_NID(NULL, NID_overnet_roles, 0, asn1str);
+	if (ex == NULL) {
+		free(data);
+		return NULL;
+	}
+	return ex;
 }
 
 void
@@ -214,7 +284,7 @@ verify(const char *cert_path)
 		errx(1, "X509_verify_cert failed");
 	}
 
-	roles_idx = X509_get_ext_by_NID(crt, overnet_roles_nid, -1);
+	roles_idx = X509_get_ext_by_NID(crt, NID_overnet_roles, -1);
 	if (roles_idx == -1)
 		errx(1, "overnetRoles extension not found");
 	if ((ex = X509_get_ext(crt, roles_idx)) == NULL) {
@@ -225,17 +295,42 @@ verify(const char *cert_path)
 	return decode_overnet_roles(ex);
 }
 
+int
+open_wflock(const char *path, int flags, mode_t mode, int lk)
+{
+	int             fd;
+	struct timespec tp = {0, 1000000}, req, rem;  /* 1ms */
+
+	for (;;) {
+		if ((fd = open(path, flags, mode)) == -1)
+			return -1;
+
+		if (flock(fd, lk|LOCK_NB) == 0)
+			return fd;
+
+		if (errno != EWOULDBLOCK)
+			break;
+
+		close(fd);
+		memcpy(&req, &tp, sizeof(req));
+		while (nanosleep(&req, &rem) == -1)
+			memcpy(&req, &rem, sizeof(req));
+	}
+	return -1;
+}
+
 BIGNUM *
 new_serial()
 {
 	BIGNUM  *min_bn = NULL;
 	BIGNUM  *max_bn = NULL;
 	BIGNUM  *v = NULL;
-	int      fd;
+	int      fd, fdtmp;
 	char    *p;
 	ssize_t  r;
 	int      l;
 	char     buf[MAX_HEX_SERIAL_LENGTH + 1];
+	char     tmpfile[PATH_MAX];
 
 	if (!BN_hex2bn(&min_bn, certainty_conf.min_serial)) {
 		ERR_print_errors_fp(stderr);
@@ -247,10 +342,18 @@ new_serial()
 		exit(1);
 	}
 
-	// TODO: flock exclusive
-	if ((fd = open(certainty_conf.serial_file,
-	    O_RDWR|O_CREAT|O_CLOEXEC, 0666)) == -1)
-		err(1, "open");
+	if (snprintf(tmpfile, sizeof(tmpfile), "%s.new",
+	    certainty_conf.serial_file) >= sizeof(tmpfile))
+		errx(1, "tmpfile name too long");
+
+	/*
+	 * We get an exclusive lock while we write the new serial to a
+	 * tmp file and overwrite the serial file. This way other processes
+	 * may not read or write while we are incrementing the serial.
+	 */
+	if ((fd = open_wflock(certainty_conf.serial_file,
+	    O_RDWR|O_CREAT, 0666, LOCK_EX)) == -1)
+		err(1, "open_wflock");
 	r = read(fd, buf, sizeof(buf));
 	if (r == -1)
 		err(1, "read");
@@ -279,6 +382,7 @@ new_serial()
 			exit(1);
 		}
 		if (BN_cmp(v, max_bn) > 0) {
+			close(fd);
 			BN_free(min_bn);
 			BN_free(max_bn);
 			warnx("max_serial exceeded");
@@ -304,27 +408,46 @@ new_serial()
 		errx(1, "computed serial is too large");
 	OPENSSL_free(p);
 
-	// TODO: rename, donc truncate
-	if (lseek(fd, 0, SEEK_SET) == -1)
-		err(1, "lseek");
-	if (ftruncate(fd, 0) == -1)
-		err(1, "ftruncate");
-	r = write(fd, buf, l);
+	if ((fdtmp = open(tmpfile, O_WRONLY|O_CREAT, 0666)) == -1)
+		err(1, "open");
+	r = write(fdtmp, buf, l);
 	if (r == -1)
 		err(1, "write");
 	if (r < l)
 		errx(1, "short write on serial file");
+	fsync(fdtmp);
+	close(fdtmp);
+	if (rename(tmpfile, certainty_conf.serial_file) == -1)
+		err(1, "rename");
 	close(fd);
+
 	return v;
+}
+
+int
+add_ext(X509V3_CTX *ctx, X509 *crt, int nid, char *value)
+{
+	X509_EXTENSION *ex;
+	if (!(ex = X509V3_EXT_conf_nid(NULL, ctx, nid, value)))
+		return 0;
+	return X509_add_ext(crt, ex, -1);
 }
 
 int
 sign(const char *cert_path)
 {
-	X509   *crt;
-	FILE   *f;
-	char    new_cert[PATH_MAX];
-	BIGNUM *serial;
+	X509           *crt, *newcrt;
+	FILE           *f;
+	char            new_cert[PATH_MAX];
+	BIGNUM         *serial;
+	X509_EXTENSION *ex;
+	X509V3_CTX      ctx;
+	// TODO: move roles to CLI args
+	const char *roles[] = {
+		"yo",
+		"ya",
+		NULL
+	};
 
 	if ((f = fopen(cert_path, "r")) == NULL)
 		err(1, "fopen");
@@ -334,37 +457,73 @@ sign(const char *cert_path)
 	}
 	fclose(f);
 
-	// TODO: take a look here about what fields we should put in our
-	// renewed cert:
-	//
-	//  https://github.com/openbsd/src/blob/master/usr.bin/openssl/ca.c#L1965
-	//
-	// Like we might want to at least change the dates, the serial, the
-	// issuer.
-	//
-	// OpenSSL manages serial like this:
-	//   https://github.com/openbsd/src/blob/master/usr.bin/openssl/apps.c#L1124
-	//
-	// Might be time to start doing some paxos'ing to allocate ranges of
-	// serials and sync up on revocations. Short-term, every sub-ca can
-	// have its own serial tracker, since Issuer is different.
-	// It's BIGNUM, we can probably shard IDs by ranges and avoid
-	// consensus things.
+	X509V3_set_ctx(&ctx, ca_crt, crt, NULL, NULL, 0);
+
+	if ((newcrt = X509_new()) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (!X509_set_version(newcrt, 2)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
 
 	serial = new_serial();
 	if (serial == NULL)
 		exit(1);
 
-	if (BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(crt)) == NULL) {
+	if (BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(newcrt)) == NULL) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
 	BN_free(serial);
 
-	X509_gmtime_adj(X509_get_notBefore(crt), 0);
-	X509_gmtime_adj(X509_get_notAfter(crt), 86400);
+	if (!X509_set_issuer_name(newcrt, X509_get_subject_name(ca_crt))) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
 
-	if (!X509_sign(crt, priv_key, EVP_sha256())) {
+	if (!X509_set_subject_name(newcrt, X509_get_subject_name(crt))) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	if (!X509_set_pubkey(newcrt, X509_get0_pubkey(crt))) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	X509_gmtime_adj(X509_get_notBefore(newcrt), 0);
+	X509_gmtime_adj(X509_get_notAfter(newcrt), 86400);
+
+	if (!add_ext(&ctx, newcrt, NID_basic_constraints, "critical,CA:false")) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (!add_ext(&ctx, newcrt, NID_key_usage, "critical,nonRepudiation,digitalSignature,keyEncipherment")) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (!add_ext(&ctx, newcrt, NID_ext_key_usage, "serverAuth,clientAuth")) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (!add_ext(&ctx, newcrt, NID_subject_key_identifier, "hash")) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (!add_ext(&ctx, newcrt, NID_authority_key_identifier, "keyid,issuer")) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	ex = make_overnet_roles(roles);
+	if (!X509_add_ext(newcrt, ex, -1)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	if (!X509_sign(newcrt, priv_key, EVP_sha256())) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
@@ -372,7 +531,7 @@ sign(const char *cert_path)
 	snprintf(new_cert, sizeof(new_cert), "%s.new", cert_path);
 	if ((f = fopen(new_cert, "w")) == NULL)
 		err(1, "fopen");
-	if (!PEM_write_X509(f, crt)) {
+	if (!PEM_write_X509(f, newcrt)) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
@@ -474,14 +633,12 @@ daemon_pid(const char *pid_path, int nochdir, int noclose)
 
 	snprintf(pid_line, sizeof(pid_line), "%d\n", getpid());
 	if (write(pid_fd, pid_line, strlen(pid_line)) == -1) {
-		// TODO: use xlog_strerror?
-		syslog(LOG_ERR, "write");
+		xlog_strerror(LOG_ERR, errno, "write");
 		_exit(1);
 	}
 
 	if (fsync(pid_fd) == -1) {
-		// TODO: use xlog_strerror?
-		syslog(LOG_ERR, "fsync");
+		xlog_strerror(LOG_ERR, errno, "fsync");
 		_exit(1);
 	}
 	return 0;
@@ -553,14 +710,22 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	overnet_roles_nid = OBJ_create("1.3.6.1.4.1.35910.3.1",
+	NID_overnet_roles = OBJ_create("1.3.6.1.4.1.35910.3.1",
 	    "overnetRoles", "Overnet Security Roles");
-	if (overnet_roles_nid == NID_undef)
+	if (NID_overnet_roles == NID_undef)
 		err(1, "OBJ_create");
 
 	if ((f = fopen(certainty_conf.key_file, "r")) == NULL)
 		err(1, "fopen");
 	if ((priv_key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+
+	if ((f = fopen(certainty_conf.ca_file, "r")) == NULL)
+		err(1, "fopen");
+	if ((ca_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
