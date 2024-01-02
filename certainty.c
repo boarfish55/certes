@@ -142,57 +142,61 @@ decode_overnet_roles(X509_EXTENSION *ext)
 }
 
 X509_EXTENSION *
-make_overnet_roles(const char **roles)
+encode_overnet_roles(const char **roles)
 {
-	const char        **role;
-	ASN1_OCTET_STRING  *asn1str;
-	unsigned char      *data, *p;
-	size_t              ex_len = strlen("agent") + 2;
-	unsigned char       len;
-	X509_EXTENSION     *ex;
+	const char          **role;
+	X509_EXTENSION       *ex;
+	ASN1_OCTET_STRING    *asn1str;
+	STACK_OF(ASN1_TYPE)  *sk;
+	ASN1_TYPE            *v;
+	ASN1_IA5STRING       *s;
+	unsigned char        *data = NULL;
+	int                   len;
 
-	for (role = roles; *role != NULL; role++) {
-		len = strlen(*role);
-		if (len > 255) {
-			warnx("role name exceeds 255 characters");
-			return NULL;
-		}
-		ex_len += len + 2;
-	}
+	sk = sk_ASN1_TYPE_new(NULL);
 
-	if ((data = malloc(ex_len + 2)) == NULL)
+	// TODO: so much error handling/cleanup to do!
+	if ((s = ASN1_IA5STRING_new()) == NULL)
+		return NULL;
+	if (!ASN1_STRING_set(s, "agent", 5))
+		return NULL;
+	if ((v = ASN1_TYPE_new()) == NULL)
+		return NULL;
+	ASN1_TYPE_set(v, V_ASN1_IA5STRING, s);
+	if (sk_ASN1_TYPE_push(sk, v) <= 0)
 		return NULL;
 
-	p = data;
-	*p++ = 0x30;
-	// TODO: ex_len may be encoded over multiple bytes
-	*p++ = ex_len;
-
-	/*
-	 * We always have a base role of "agent".
-	 */
-	*p++ = V_ASN1_IA5STRING;
-	*p++ = strlen("agent");
-	memcpy(p, "agent", 5);
-	p += 5;
-
 	for (role = roles; *role != NULL; role++) {
-		len = strlen(*role);
-		*p++ = V_ASN1_IA5STRING;
-		*p++ = len;
-		memcpy(p, *role, len);
-		p += len;
+		if ((s = ASN1_IA5STRING_new()) == NULL)
+			return NULL;
+		if (!ASN1_STRING_set(s, *role, strlen(*role)))
+			return NULL;
+		if ((v = ASN1_TYPE_new()) == NULL)
+			return NULL;
+		ASN1_TYPE_set(v, V_ASN1_IA5STRING, s);
+		if (sk_ASN1_TYPE_push(sk, v) <= 0)
+			return NULL;
 	}
+
+	if ((len = i2d_ASN1_SEQUENCE_ANY((STACK_OF(ASN1_TYPE) *)sk, &data)) < 0)
+		return NULL;
+
+	while (sk_ASN1_TYPE_num(sk) > 0) {
+		v = sk_ASN1_TYPE_shift(sk);
+		free(v->value.ia5string);
+		free(v);
+	}
+	sk_ASN1_TYPE_free(sk);
 
 	asn1str = ASN1_OCTET_STRING_new();
-	if (!ASN1_STRING_set(asn1str, data, ex_len + 2)) {
-		free(data);
+	if (!ASN1_OCTET_STRING_set(asn1str, data, len))
 		return NULL;
-	}
+	free(data);
+
 	// TODO: leak?
 	ex = X509_EXTENSION_create_by_NID(NULL, NID_overnet_roles, 0, asn1str);
+	ASN1_OCTET_STRING_free(asn1str);
 	if (ex == NULL) {
-		free(data);
 		return NULL;
 	}
 	return ex;
@@ -496,7 +500,7 @@ sign(const char *cert_path, const char **roles)
 		exit(1);
 	}
 
-	ex = make_overnet_roles(roles);
+	ex = encode_overnet_roles(roles);
 	if (!X509_add_ext(newcrt, ex, -1)) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
