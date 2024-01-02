@@ -499,6 +499,7 @@ sign(const char *cert_path, const char **roles)
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
+	// TODO: need to add the subjectAltNames
 
 	ex = encode_overnet_roles(roles);
 	if (!X509_add_ext(newcrt, ex, -1)) {
@@ -525,7 +526,7 @@ sign(const char *cert_path, const char **roles)
 
 // TODO: for bootstrapping; a new client will send a REQ, preceded with
 // a shared key (response to challenge); the shared key will have been supplied by
-// the certainty service and the client must send it. If the challenge is
+// by the certainty service and the client must send it. If the challenge is
 // successful, certainty signs de REQ. The roles are also passed by
 // certainty at creation and tied with the challenge, added to the REQ
 // by the client.
@@ -535,21 +536,22 @@ sign_req()
 	return 0;
 }
 
-// TODO: for boostrapping from the certainty server; this will generate a timed challenge
-// and can tie roles to the challenge. Boostrapping can also invoke a shell command to
-// perform a action to bring up the server (i.e. DHCP reservation & reboot, cloud calls, etc.)
-// The server must remember the challenge until it expires.
-// Active challenges can be kept in an sqlite DB, alongside available serial ranges and next
-// allocatable serial.
+// TODO: for boostrapping from the certainty server; this will generate a timed
+// challenge and can tie roles to the challenge. Boostrapping can also invoke a
+// shell command to perform a action to bring up the server (i.e. DHCP
+// reservation & reboot, cloud calls, etc.) The server must remember the
+// challenge until it expires.  Active challenges can be kept in an sqlite DB,
+// alongside available serial ranges and next allocatable serial.
 int
 boostrap_req()
 {
 	return 0;
 }
 
-// TODO: client-side for the above; given a challenge and roles, we can generate a REQ with
-// those roles, create our REQ and pick and DNS/CommonName we can answer to, then contact
-// the server, passing the challenge to get the REQ signed.
+// TODO: client-side for the above; given a challenge and roles, we can
+// generate a REQ with those roles, create our REQ and pick and DNS/CommonName
+// we can answer to, then contact the server, passing the challenge to get the
+// REQ signed.
 int
 agent_boostrap_req()
 {
