@@ -431,6 +431,7 @@ sign(const char *cert_path, const char **roles)
 	BIGNUM         *serial;
 	X509_EXTENSION *ex;
 	X509V3_CTX      ctx;
+	int             san_idx;
 
 	if ((f = fopen(cert_path, "r")) == NULL)
 		err(1, "fopen");
@@ -478,6 +479,18 @@ sign(const char *cert_path, const char **roles)
 
 	X509_gmtime_adj(X509_get_notBefore(newcrt), 0);
 	X509_gmtime_adj(X509_get_notAfter(newcrt), 86400);
+
+	san_idx = X509_get_ext_by_NID(crt, NID_subject_alt_name, -1);
+	if (san_idx == -1)
+		errx(1, "subjectAltName extension not found");
+	if ((ex = X509_get_ext(crt, san_idx)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (!X509_add_ext(newcrt, ex, -1)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
 
 	if (!add_ext(&ctx, newcrt, NID_basic_constraints, "critical,CA:false")) {
 		ERR_print_errors_fp(stderr);
