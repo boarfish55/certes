@@ -1,7 +1,8 @@
 CC = cc
+DEPDIR = .deps
 CFLAGS = -Wall -g
 LIBS = -lcrypto -lssl
-OBJS = config_vars.o xlog.o
+OBJS = config_vars.o xlog.o util.o
 
 OS != uname -s
 
@@ -16,13 +17,16 @@ LIBS += $(PKGCONFIG_LIBS) -Wl,-z,relro -Wl,-z,now
 
 all: certainty
 
-xlog.o: xlog.c
+util.o: util.c util.h
+	$(CC) $(CFLAGS) util.c -c -o util.o
+
+xlog.o: xlog.c xlog.h
 	$(CC) $(CFLAGS) xlog.c -c -o xlog.o
 
 config_vars.o: config_vars.c
 	$(CC) $(CFLAGS) config_vars.c -c -o config_vars.o
 
-certainty: certainty.c config_vars.o xlog.o
+certainty: certainty.c $(OBJS)
 	$(CC) $(CFLAGS) certainty.c $(LIBS) $(OBJS) -o certainty
 
 clean:

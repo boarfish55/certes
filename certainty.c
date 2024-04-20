@@ -1,7 +1,12 @@
 #include <sys/file.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <netinet/in.h>
 #include <openssl/asn1t.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
 #include <openssl/x509v3.h>
@@ -9,22 +14,28 @@
 #include <err.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <grp.h>
 #include <limits.h>
+#include <pwd.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
 #include "config_vars.h"
+#include "util.h"
 #include "xlog.h"
 
 #define MAX_HEX_SERIAL_LENGTH 32
 
 const char *program = "certainty";
+const char *daemon_name = "certaintyd";
 int         NID_overnet_roles;
 X509_STORE *store;
 EVP_PKEY   *priv_key;
 X509       *ca_crt;
 
+int  shutdown_triggered = 0;
 int  foreground = 0;
 int  debug = 0;
 char config_file_path[PATH_MAX] = "/etc/certainty.conf";
@@ -33,26 +44,50 @@ extern char *optarg;
 extern int   optind, opterr, optopt;
 
 struct {
-	char pid_file[PATH_MAX];
-	char ca_file[PATH_MAX];
-	char crl_file[PATH_MAX];
-	char key_file[PATH_MAX];
-	char serial_file[PATH_MAX];
+	char *unpriv_user;
+	char *unpriv_group;
+
+	char  pid_file[PATH_MAX];
+	char  ca_file[PATH_MAX];
+	char  crl_file[PATH_MAX];
+	char  key_file[PATH_MAX];
+	char  serial_file[PATH_MAX];
 
 	/* Leave space for "0x" and terminating zero */
-	char min_serial[MAX_HEX_SERIAL_LENGTH + 3];
-	char max_serial[MAX_HEX_SERIAL_LENGTH + 3];
+	char  min_serial[MAX_HEX_SERIAL_LENGTH + 3];
+	char  max_serial[MAX_HEX_SERIAL_LENGTH + 3];
+
+	uint64_t port;
+	uint64_t listen_backlog;
+	uint64_t prefork;
 } certainty_conf = {
+	"_certainty",
+	"_certainty",
 	"/var/run/certainty.pid",
 	"ca/overnet.pem",
 	"ca/overnet.crl",
 	"ca/private/overnet_key.pem",
 	"ca/serial",
 	"0x0",
-	"0x0"
+	"0x0",
+	9790,
+	128,
+	4
 };
 
 struct config_vars certainty_config_vars[] = {
+	{
+		"unpriv_user",
+		CONFIG_VARS_PWNAM,
+		&certainty_conf.unpriv_user,
+		0
+	},
+	{
+		"unpriv_group",
+		CONFIG_VARS_GRNAM,
+		&certainty_conf.unpriv_group,
+		0
+	},
 	{
 		"pid_file",
 		CONFIG_VARS_STRING,
@@ -94,6 +129,24 @@ struct config_vars certainty_config_vars[] = {
 		CONFIG_VARS_STRING,
 		certainty_conf.max_serial,
 		sizeof(certainty_conf.max_serial)
+	},
+	{
+		"port",
+		CONFIG_VARS_ULONG,
+		&certainty_conf.port,
+		sizeof(certainty_conf.port)
+	},
+	{
+		"listen_backlog",
+		CONFIG_VARS_ULONG,
+		&certainty_conf.listen_backlog,
+		sizeof(certainty_conf.listen_backlog)
+	},
+	{
+		"prefork",
+		CONFIG_VARS_ULONG,
+		&certainty_conf.prefork,
+		sizeof(certainty_conf.prefork)
 	},
 	CONFIG_VARS_LAST
 };
@@ -216,6 +269,7 @@ usage()
 	    "our\n");
 	printf("\t                                authority\n");
 	printf("\tsign <certificate> [roles...]   Re-signs the certificate\n");
+	printf("\tdaemon                          Run certainty daemon\n");
 }
 
 int
@@ -555,6 +609,9 @@ sign_req()
 // reservation & reboot, cloud calls, etc.) The server must remember the
 // challenge until it expires.  Active challenges can be kept in an sqlite DB,
 // alongside available serial ranges and next allocatable serial.
+// When a client sends a successful response to this challenge, along with an
+// X509 REQ, the server can sign it if the commonName and subjectAltNames
+// match.
 int
 boostrap_req()
 {
@@ -564,10 +621,35 @@ boostrap_req()
 // TODO: client-side for the above; given a challenge and roles, we can
 // generate a REQ with those roles, create our REQ and pick and DNS/CommonName
 // we can answer to, then contact the server, passing the challenge to get the
-// REQ signed.
+// REQ signed. This can also generate the private key.
+//
+// We'll need to know:
+// - The subject name
+// - The subjectAltName (possibly multiple)
+// - NOT the roles associated with with the challenge;
+//   those are kept server-side
+// - Validity period (capped by the server, but could be shorter)
+// Most other things are decided by the cert issuer.
 int
 agent_boostrap_req()
 {
+	// TODO: look at acme-client/keyproc.c:77
+	X509_REQ *req;
+
+	if ((req = X509_REQ_new()) == NULL) {
+		warnx("X509_REQ_new");
+		return 0;
+	}
+
+	if (!X509_REQ_set_version(req, 2)) {
+		warnx("X509_REQ_set_version");
+		return 0;
+	}
+
+//	if (!X509_REQ_set_pubkey(x, pkey)) {
+//		warnx("X509_REQ_set_pubkey");
+//	}
+
 	return 0;
 }
 
@@ -590,56 +672,225 @@ agent_sign_req()
 	return 0;
 }
 
-int
-daemon_pid(const char *pid_path, int nochdir, int noclose)
+void
+handle_signals(int sig)
 {
-	pid_t pid;
-	int   pid_fd;
-	char  pid_line[32];
-	int   null_fd;
+	xlog(LOG_NOTICE, NULL, "signal received: %d", sig);
+	shutdown_triggered = 1;
+}
 
-	if ((pid_fd = open(pid_path, O_CREAT|O_WRONLY|O_CLOEXEC, 0644)) == -1)
-		err(1, "open");
+void
+handle_clients(int lsock)
+{
+	int client;
 
-	if (flock(pid_fd, LOCK_EX|LOCK_NB) == -1) {
-		if (errno == EWOULDBLOCK) {
-			errx(1, "pid file %s is already locked; "
-			    "is another instance running?", pid_path);
+	setproctitle("listener");
+	while (!shutdown_triggered) {
+		client = accept(lsock, NULL, 0);
+		if (client == -1) {
+			if (errno == EINTR) {
+				if (shutdown_triggered)
+					close(lsock);
+				continue;
+			} else
+				xlog_strerror(LOG_ERR, errno, "accept");
+		} else {
+			close(client);
 		}
-		err(1, "flock");
+
+		// TODO: look at this for example of non-blocking polled sockets
+		// using BIO_s_mem:
+		//  https://gist.github.com/darrenjs/4645f115d10aa4b5cebf57483ec82eca
+		// With this we can implement a daemon that forks X children 
+		// to kqueue() on accept and all its active conns (to a point; it
+		// no longer accepts once it reaches a certain size), creating a
+		// BIO_s_mem() buffer and filling it with data (up to a limit) as it
+		// comes in, in one structure per client. It uses SSL_pending() to
+		// see if it can get actual bytes and gradually builds up a complete
+		// request.
+		// Once the request is complete and we no longer need any bytes from
+		// the client, it dispatches the request to a worker via a pipe. The
+		// worker doesn't deal with encryption but may still need to know
+		// details from the client (like its cert).
+		// Drawback is if spammy clients all land on the same process
+		// (because OS decides which accept() returns), then we may start
+		// stalling all requests going to that child.
+		//
+		// Or with pthread for better load distribution?
+		// In which case we'd start filling up a BIO_s_mem inside one struct
+		// per client putting it on a queue, where a worker thread can
+		// call SSL_pending() and start constructing the buffer if there's
+		// data available. It puts it back on a pending queue if more data
+		// is needed where the listener thread can then add more to it, or
+		// destroy it after waiting for a certain time.
+		// This means the listener thread doesn't do encryption/decryption
+		// and only need to shuffle bytes around and do kqueue(), pretty
+		// lightweight.
+		// Workers do the heavy lifting, but if they're all busy we're not
+		// timing out new clients who can still start sending bytes.
+		//
+		// We can also set cipher preference on server:
+		// look for SSL_OP_CIPHER_SERVER_PREFERENCE
+		// This is nice because we can pick AES256 which may have CPU
+		// offload thus better performance.
+
+	}
+	exit(0);
+}
+
+int
+do_daemon(const char **argv)
+{
+	SSL_CTX             *ctx;
+	struct xerr          e;
+	int                  lsock;
+	struct sockaddr_in6  sa;
+	int                  one = 1;
+	int                  n_children;
+	int                  wstatus;
+	pid_t                pid;
+	struct sigaction     act;
+
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0;
+	act.sa_handler = handle_signals;
+	if (sigaction(SIGINT, &act, NULL) == -1 ||
+	    sigaction(SIGTERM, &act, NULL) == -1) {
+		err(1, "sigaction");
 	}
 
-	if ((pid = fork()) == -1)
-		err(1, "fork");
-
-	if (pid == 0)
-		_exit(0);
-
-	if (!nochdir && chdir("/") == -1)
-		err(1, "chdir");
-
-	if (!noclose) {
-		if ((null_fd = open("/dev/null", O_RDWR)) == -1)
-			err(1, "open");
-
-		dup2(null_fd, STDIN_FILENO);
-		dup2(null_fd, STDOUT_FILENO);
-		dup2(null_fd, STDERR_FILENO);
-		if (null_fd > 2)
-			close(null_fd);
+	if (!foreground) {
+		if (daemonize(daemon_name, certainty_conf.pid_file,
+		    0, 0, &e) == -1) {
+			xerr_print(&e);
+			exit(1);
+		}
+#ifdef __OpenBSD__
+		// TODO: pledge() & unveil() ?
+		pledge();
+#endif
 	}
 
-	snprintf(pid_line, sizeof(pid_line), "%d\n", getpid());
-	if (write(pid_fd, pid_line, strlen(pid_line)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "write");
-		_exit(1);
+	if (geteuid() == 0) {
+		if (drop_privileges(certainty_conf.unpriv_group,
+		    certainty_conf.unpriv_user, &e) == -1) {
+			xerr_print(&e);
+			exit(1);
+		}
 	}
 
-	if (fsync(pid_fd) == -1) {
-		xlog_strerror(LOG_ERR, errno, "fsync");
-		_exit(1);
+	if ((ctx = SSL_CTX_new(TLS_method())) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
 	}
+	SSL_CTX_set_security_level(ctx, 4);
+	SSL_CTX_set_cert_store(ctx, store);
+
+	if ((lsock = socket(AF_INET6, SOCK_STREAM, 0)) == -1) {
+		xlog_strerror(LOG_ERR, errno, "socket");
+		exit(1);
+	}
+
+	if (setsockopt(lsock, SOL_SOCKET,
+	    SO_REUSEADDR, &one, sizeof(one)) == -1) {
+		xlog_strerror(LOG_ERR, errno, "socket");
+		exit(1);
+	}
+
+	bzero(&sa, sizeof(sa));
+	sa.sin6_family = AF_INET6;
+	memcpy(&sa.sin6_addr, &in6addr_any, sizeof(in6addr_any));
+	sa.sin6_port = htons(certainty_conf.port);
+	if (bind(lsock, (struct sockaddr *)&sa, sizeof(sa)) == -1) {
+		xlog_strerror(LOG_ERR, errno, "bind");
+		exit(1);
+	}
+
+	if (listen(lsock, certainty_conf.listen_backlog) == -1) {
+		xlog_strerror(LOG_ERR, errno, "listen");
+		exit(1);
+	}
+
+	if (certainty_conf.prefork > 0) {
+		for (n_children = 0; n_children < certainty_conf.prefork;
+		    n_children++) {
+			if ((pid = fork()) == -1) {
+				xlog_strerror(LOG_ERR, errno, "fork");
+			} else if (pid == 0) {
+				handle_clients(lsock);
+				/* Never reached */
+				exit(1);
+			}
+		}
+
+		setproctitle("parent");
+
+		for (;;) {
+			pid = waitpid(-1, &wstatus, 0);
+			if (pid != -1 && !shutdown_triggered) {
+				n_children--;
+				if (WIFEXITED(wstatus))
+					xlog(LOG_WARNING, NULL,
+					    "child %d exited with status %d",
+					    pid, WEXITSTATUS(wstatus));
+				else
+					xlog(LOG_WARNING, NULL,
+					    "child %d killed by signal %d",
+					    pid, WTERMSIG(wstatus));
+				if ((pid = fork()) == -1) {
+					xlog_strerror(LOG_ERR, errno, "fork");
+				} else if (pid == 0) {
+					handle_clients(lsock);
+					/* Never reached */
+					exit(1);
+				} else {
+					n_children++;
+				}
+				continue;
+			}
+
+			if (!shutdown_triggered) {
+				xlog(LOG_WARNING, NULL, "signal received but "
+				    "shutdown not yet triggered");
+				continue;
+			}
+
+			if (lsock > -1) {
+				close(lsock);
+				lsock = -1;
+
+				sigemptyset(&act.sa_mask);
+				act.sa_flags = 0;
+				act.sa_handler = SIG_IGN;
+				sigaction(SIGINT, &act, NULL);
+				sigaction(SIGTERM, &act, NULL);
+
+				kill(0, 15);
+			}
+
+			if (pid != -1) {
+				if (WIFEXITED(wstatus))
+					xlog(LOG_NOTICE, NULL,
+					    "child %d exited with status %d",
+					    pid, WEXITSTATUS(wstatus));
+				else
+					xlog(LOG_NOTICE, NULL,
+					    "child %d killed by signal %d",
+					    pid, WTERMSIG(wstatus));
+				n_children--;
+				if (n_children == 0)
+					break;
+			}
+		}
+	}
+	xlog(LOG_NOTICE, NULL, "all children exited");
 	return 0;
+}
+
+void
+cleanup()
+{
+	config_vars_free(certainty_config_vars);
 }
 
 int
@@ -650,9 +901,6 @@ main(int argc, char **argv)
 	X509_LOOKUP *lookup;
 	FILE        *f;
 	size_t       sz;
-	char        *p;
-
-	xlog_init(program, NULL, NULL, 1);
 
 	while ((opt = getopt(argc, argv, "c:hfd")) != -1) {
 		switch (opt) {
@@ -665,6 +913,7 @@ main(int argc, char **argv)
 			break;
 		case 'd':
 			debug = 1;
+			/* fallthrough; debug implies foreground */
 		case 'f':
 			foreground = 1;
 			break;
@@ -673,6 +922,7 @@ main(int argc, char **argv)
 
 	if (config_vars_read(config_file_path, certainty_config_vars) == -1)
 		err(1, "config_vars_read");
+	atexit(&cleanup);
 
 	if (strncmp(certainty_conf.min_serial, "0x", 2) != 0)
 		errx(1, "min_serial does not begin with \"0x\"");
@@ -680,13 +930,8 @@ main(int argc, char **argv)
 	memmove(certainty_conf.min_serial,
 	    certainty_conf.min_serial + 2, sz);
 	certainty_conf.min_serial[sz] = '\0';
-	for (p = certainty_conf.min_serial; *p; p++) {
-		if (!((*p >= '0' && *p <= '9') ||
-		    (*p >= 'a' && *p <= 'f') ||
-		    (*p >= 'A' && *p <= 'F'))) {
-			errx(1, "min_serial is not a valid hex integer");
-		}
-	}
+	if (!is_hex_str(certainty_conf.min_serial))
+		errx(1, "min_serial is not a valid hex integer");
 
 	if (strncmp(certainty_conf.max_serial, "0x", 2) != 0)
 		errx(1, "max_serial does not begin with \"0x\"");
@@ -694,14 +939,12 @@ main(int argc, char **argv)
 	memmove(certainty_conf.max_serial,
 	    certainty_conf.max_serial + 2, sz);
 	certainty_conf.max_serial[sz] = '\0';
-	for (p = certainty_conf.max_serial; *p; p++) {
-		if (!((*p >= '0' && *p <= '9') ||
-		    (*p >= 'a' && *p <= 'f') ||
-		    (*p >= 'A' && *p <= 'F'))) {
-			errx(1,
-			    "min_serial is not a valid hexadecimal integer");
-		}
-	}
+	if (!is_hex_str(certainty_conf.max_serial))
+		errx(1, "max_serial is not a valid hexadecimal integer");
+	if (certainty_conf.port < 1 || certainty_conf.port > 65535)
+		errx(1, "invalid listen port specified");
+	if (certainty_conf.listen_backlog < 1)
+		errx(1, "invalid listen backlog size specified");
 
 	if (optind >= argc) {
 		usage();
@@ -770,11 +1013,10 @@ main(int argc, char **argv)
 			exit(1);
 		}
 		return sign(argv[optind], (const char **)argv + optind + 1);
+	} else if (strcmp(command, "daemon") == 0) {
+		return do_daemon((const char **)argv + optind + 1);
 	}
 
-	/*
-	 * Without args, we run in daemon mode
-	 */
-
+	usage();
 	return 1;
 }

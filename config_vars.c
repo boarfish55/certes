@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <unistd.h>
 #include "config_vars.h"
 #include "xlog.h"
 
@@ -48,6 +49,26 @@ config_vars_get_ulong(void *dst, size_t sz, const char *v, struct xerr *e)
 }
 
 static int
+config_vars_get_allocstring(void *dst, size_t sz, const char *v, struct xerr *e)
+{
+	char **pdst = (char **)dst;
+
+	if (strlen(v) >= sz) {
+		errno = ERANGE;
+		return -1;
+	}
+
+	if ((*pdst = malloc(sz)) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "malloc");
+
+	if (strlcpy(*pdst, v, sz) >= sz) {
+		errno = ERANGE;
+		return -1;
+	}
+	return 0;
+}
+
+static int
 config_vars_get_string(void *dst, size_t sz, const char *v, struct xerr *e)
 {
 	if (strlen(v) >= sz) {
@@ -86,6 +107,21 @@ config_vars_read(const char *cfg_path, struct config_vars *cfg_vars)
 	struct config_vars *cv;
 	int                 r, known;
 	struct xerr         e;
+	long                pwnam_sz;
+	long                grnam_sz;
+
+	if ((pwnam_sz = sysconf(_SC_GETPW_R_SIZE_MAX)) == -1) {
+		xlog(LOG_WARNING, NULL,
+		    "sysconf(_SC_GETPW_R_SIZE_MAX)) failed; "
+		    "defaulting to 16384");
+		pwnam_sz = 16384;
+	}
+	if ((grnam_sz = sysconf(_SC_GETGR_R_SIZE_MAX)) == -1) {
+		xlog(LOG_WARNING, NULL,
+		    "sysconf(_SC_GETGR_R_SIZE_MAX)) failed; "
+		    "defaulting to 16384");
+		grnam_sz = 16384;
+	}
 
 	if ((cfg = fopen(cfg_path, "r")) == NULL)
 		return -1;
@@ -138,6 +174,16 @@ config_vars_read(const char *cfg_path, struct config_vars *cfg_vars)
 				r = config_vars_get_boolint(cv->dst,
 				    cv->dst_sz, v, xerrz(&e));
 				break;
+			case CONFIG_VARS_PWNAM:
+				cv->dst_sz = pwnam_sz;
+				r = config_vars_get_allocstring(cv->dst,
+				    pwnam_sz, v, xerrz(&e));
+				break;
+			case CONFIG_VARS_GRNAM:
+				cv->dst_sz = grnam_sz;
+				r = config_vars_get_allocstring(cv->dst,
+				    cv->dst_sz, v, xerrz(&e));
+				break;
 			default:
 				xlog(LOG_WARNING, NULL,
 				    "failed to parse value for "
@@ -159,4 +205,28 @@ config_vars_read(const char *cfg_path, struct config_vars *cfg_vars)
 		}
 	}
 	return 0;
+}
+
+void
+config_vars_free(struct config_vars *cfg_vars)
+{
+	struct config_vars *cv;
+
+	for (cv = cfg_vars; cv->t != CONFIG_VARS_NONE; cv++) {
+		switch (cv->t) {
+		case CONFIG_VARS_STRING:
+		case CONFIG_VARS_ULONG:
+		case CONFIG_VARS_BOOLINT:
+			/* Nothing allocated */
+			break;
+		case CONFIG_VARS_PWNAM:
+		case CONFIG_VARS_GRNAM:
+			/* Only free if we actually allocated this variable */
+			if (cv->dst_sz > 0)
+				free(*((char **)cv->dst));
+			break;
+		default:
+			xlog(LOG_ERR, NULL, "unknown var %s", cv->name);
+		}
+	}
 }

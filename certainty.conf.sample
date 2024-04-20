@@ -1,4 +1,7 @@
-pid_file: certainty.pid
+#unpriv_user: plalonde
+#unpriv_group: plalonde
+pid_file: /tmp/certainty.pid
 serial_file: ca/serial
 min_serial: 0x01
 max_serial: 0xff
+port: 9790
