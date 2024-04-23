@@ -9,18 +9,23 @@
 
 #define TLSEV_STORE_BUCKETS 1000
 
-struct tlsev_store {
+static struct tlsev_store {
 	struct tlsev *head[TLSEV_STORE_BUCKETS];
 } tlsev_store;
 
+static int socket_timeout;
+static int tlsev_data_idx;
+
 void
-tlsev_init()
+tlsev_init(int ssl_data_idx, int timeout)
 {
+	socket_timeout = timeout;
+	tlsev_data_idx = ssl_data_idx;
 	bzero(&tlsev_store, sizeof(tlsev_store));
 }
 
 int
-tlsev_create(int fd, SSL_CTX *ctx, struct xerr *e)
+tlsev_create(int fd, SSL_CTX *ctx, struct sockaddr_in6 *peer, struct xerr *e)
 {
 	struct tlsev *t;
 
@@ -28,13 +33,12 @@ tlsev_create(int fd, SSL_CTX *ctx, struct xerr *e)
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "fcntl");
 
-	// TODO: set send/receive timeout
-
 	if ((t = malloc(sizeof(struct tlsev))) == NULL)
 		return XERRF(e, XLOG_ERRNO, errno, "malloc");
 
 	bzero(t, sizeof(struct tlsev));
 	t->fd = fd;
+	memcpy(&t->peer_addr, peer, sizeof(t->peer_addr));
 	if ((t->r = BIO_new(BIO_s_mem())) == NULL) {
 		free(t);
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
@@ -51,12 +55,15 @@ tlsev_create(int fd, SSL_CTX *ctx, struct xerr *e)
 		free(t);
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_new");
 	}
-
+	SSL_set_ex_data(t->ssl, tlsev_data_idx, t);
 	SSL_set_bio(t->ssl, t->r, t->w);
 	SSL_set_accept_state(t->ssl);
 
 	t->next = tlsev_store.head[fd % TLSEV_STORE_BUCKETS];
 	tlsev_store.head[fd % TLSEV_STORE_BUCKETS] = t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t->timeout_at);
+	t->timeout_at.tv_sec += socket_timeout;
 
 	return 0;
 }
@@ -80,10 +87,12 @@ tlsev_close(struct tlsev *t)
 		break;
 	}
 
-	// TODO: need to free up "t", anything to shutdown the connection?
+	if (t->peer_cert != NULL)
+		X509_free(t->peer_cert);
 
 	/* This will free up the associated BIOs */
 	SSL_free(t->ssl);
+
 	close(t->fd);
 	xlog(LOG_INFO, NULL, "closed fd %d", t->fd);
 	free(t);
@@ -108,6 +117,14 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 	ssize_t n;
 	int     r;
 
+	clock_gettime(CLOCK_MONOTONIC, &t->timeout_at);
+	t->timeout_at.tv_sec += socket_timeout;
+
+	/* Don't read more if we're already full */
+	if (SSL_is_init_finished(t->ssl) &&
+	    t->in_len == sizeof(t->in_buf))
+		return t->in_len;
+
 	n = read(t->fd, buf, sizeof(buf));
 	if (n == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "read");
@@ -129,17 +146,20 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 			switch (r) {
 			case SSL_ERROR_WANT_READ:
 			case SSL_ERROR_WANT_WRITE:
+			case SSL_ERROR_ZERO_RETURN:
+				// TODO: test the zero return one...
 				return 0;
+			case SSL_ERROR_SSL:
+				return XERRF(e, XLOG_SSL, r,
+				    "SSL_accept: SSL_ERROR_SSL: %s",
+				    ERR_error_string(r, NULL));
 			default:
 				return XERRF(e, XLOG_SSL, r, "SSL_accept: %s",
 				    ERR_error_string(r, NULL));
 			}
 		}
+		t->peer_cert = SSL_get1_peer_certificate(t->ssl);
 	}
-
-	if (t->in_len == sizeof(t->in_buf))
-		return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
-		    "cannot fit more bytes; t->in_buf is full");
 
 	if ((r = SSL_read(t->ssl, t->in_buf + t->in_len,
 	    sizeof(t->in_buf) - t->in_len)) <= 0) {
@@ -164,6 +184,9 @@ tlsev_out(struct tlsev *t, struct xerr *e)
 	ssize_t n;
 	int     r, to_write, pending;
 
+	clock_gettime(CLOCK_MONOTONIC, &t->timeout_at);
+	t->timeout_at.tv_sec += socket_timeout;
+
 	if ((pending = BIO_pending(t->w)) < 0)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_pending");
 
@@ -172,7 +195,7 @@ tlsev_out(struct tlsev *t, struct xerr *e)
 	    : pending;
 	r = BIO_read(t->w, t->retry_buf, to_write);
 	if (r < 0)
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
 	t->retry_len += r;
 	pending -= r;
 
@@ -193,7 +216,6 @@ tlsev_out(struct tlsev *t, struct xerr *e)
 int
 tlsev_read(struct tlsev *t, char *buf, int len, struct xerr *e)
 {
-	// TODO
 	int to_copy = (len > t->in_len) ? t->in_len : len;
 	memcpy(buf, t->in_buf, to_copy);
 	memmove(t->in_buf, t->in_buf + to_copy, t->in_len - to_copy);
@@ -204,10 +226,12 @@ tlsev_read(struct tlsev *t, char *buf, int len, struct xerr *e)
 int
 tlsev_write(struct tlsev *t, const char *buf, int len, struct xerr *e)
 {
-	// TODO
 	int r = SSL_write(t->ssl, buf, len);
-	if (r < 0)
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
+	if (r < 0) {
+		r = SSL_get_error(t->ssl, r);
+		return XERRF(e, XLOG_SSL, r, "SSL_write: %s",
+		    ERR_error_string(r, NULL));
+	}
 	return r;
 }
 

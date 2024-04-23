@@ -1,28 +1,37 @@
 #ifndef TLSEV_H
 #define TLSEV_H
 
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <openssl/bio.h>
+#include <openssl/x509.h>
+#include <netdb.h>
 #include "xlog.h"
 
 struct tlsev {
-	int           fd;
-	SSL          *ssl;
-	BIO          *r;
-	BIO          *w;
+	int                  fd;
+	SSL                 *ssl;
+	BIO                 *r;
+	BIO                 *w;
+	struct timespec      timeout_at;
 
-	// TODO: store cert here? and peer name?
+	struct sockaddr_in6  peer_addr;
+	X509                *peer_cert;
 
-	char          retry_buf[4096];
-	int           retry_len;
+	char                 retry_buf[4096];
+	int                  retry_len;
 
-	char          in_buf[4096];
-	int           in_len;
+	char                 in_buf[4096];
+	int                  in_len;
 
-	struct tlsev *next;
+	struct tlsev        *next;
+
+	// TODO: maybe a read queue and a write queue?
 };
 
-void          tlsev_init();
-int           tlsev_create(int, SSL_CTX *, struct xerr *);
+void          tlsev_init(int, int);
+int           tlsev_create(int, SSL_CTX *,
+                  struct sockaddr_in6 *, struct xerr *);
 void          tlsev_close(struct tlsev *);
 struct tlsev *tlsev_get(int);
 int           tlsev_in(struct tlsev *, struct xerr *);

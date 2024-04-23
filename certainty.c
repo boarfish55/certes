@@ -41,6 +41,7 @@ X509       *ca_crt;
 int  shutdown_triggered = 0;
 int  foreground = 0;
 int  debug = 0;
+int  ssl_data_idx;
 char config_file_path[PATH_MAX] = "/etc/certainty.conf";
 
 extern char *optarg;
@@ -63,6 +64,8 @@ struct {
 	uint64_t port;
 	uint64_t listen_backlog;
 	uint64_t prefork;
+	uint64_t max_clients;
+	uint64_t socket_timeout;
 } certainty_conf = {
 	"_certainty",
 	"_certainty",
@@ -75,7 +78,9 @@ struct {
 	"0x0",
 	9790,
 	128,
-	4
+	4,
+	1000,
+	10
 };
 
 struct config_vars certainty_config_vars[] = {
@@ -151,6 +156,18 @@ struct config_vars certainty_config_vars[] = {
 		&certainty_conf.prefork,
 		sizeof(certainty_conf.prefork)
 	},
+	{
+		"max_clients",
+		CONFIG_VARS_ULONG,
+		&certainty_conf.max_clients,
+		sizeof(certainty_conf.max_clients)
+	},
+	{
+		"socket_timeout",
+		CONFIG_VARS_ULONG,
+		&certainty_conf.socket_timeout,
+		sizeof(certainty_conf.socket_timeout)
+	},
 	CONFIG_VARS_LAST
 };
 
@@ -173,6 +190,40 @@ verify_callback(int ok, X509_STORE_CTX *ctx)
 		e = X509_STORE_CTX_get_error(ctx);
 		fprintf(stderr, "error: %s\n",
 		    X509_verify_cert_error_string(e));
+	}
+	return ok;
+}
+
+int
+verify_callback_daemon(int ok, X509_STORE_CTX *ctx)
+{
+	int           e;
+	SSL          *ssl;
+	X509         *err_cert;
+	struct tlsev *t;
+	char          name[256];
+	char          hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
+
+	ssl = X509_STORE_CTX_get_ex_data(ctx,
+	    SSL_get_ex_data_X509_STORE_CTX_idx());
+	err_cert = X509_STORE_CTX_get_current_cert(ctx);
+	t = SSL_get_ex_data(ssl, ssl_data_idx);
+
+	if (getnameinfo((struct sockaddr *)&t->peer_addr,
+	    sizeof(struct sockaddr_in6), hbuf, sizeof(hbuf), sbuf,
+	    sizeof(sbuf), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
+		hbuf[0] = '?';
+		hbuf[1] = '\0';
+		sbuf[0] = '?';
+		sbuf[1] = '\0';
+	}
+
+	if (!ok) {
+		X509_NAME_oneline(X509_get_subject_name(err_cert),
+		    name, sizeof(name));
+		e = X509_STORE_CTX_get_error(ctx);
+		xlog(LOG_NOTICE, NULL, "verify error for %s (%s:%s): %s\n",
+		    name, hbuf, sbuf, X509_verify_cert_error_string(e));
 	}
 	return ok;
 }
@@ -693,40 +744,43 @@ del_epoll_fd(int epollfd, int fd)
 }
 
 void
-handle_clients_epoll(int lsock, SSL_CTX *ctx)
+handle_clients_epoll(int lsock, SSL_CTX *ctx, int max_clients)
 {
 #define MAX_EPOLL_EVENTS 128
-
 	struct xerr          e;
 	int                  fd;
 	int                  epollfd, nfds, n, r, wpending;
+	int                  active_clients = 0, accepting = 0;
 	struct sockaddr_in6  peer;
 	socklen_t            peerlen = sizeof(peer);
 	struct epoll_event   ev, events[MAX_EPOLL_EVENTS];
 	char                 hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
 	struct tlsev        *t;
 
-	if (!foreground)
-		setproctitle("listener");
-
 	if ((epollfd = epoll_create1(0)) == -1) {
 		xlog_strerror(LOG_ERR, errno, "epoll_create");
 		exit(1);
 	}
 
-	ev.events = EPOLLIN;
-	ev.data.fd = lsock;
-	if (epoll_ctl(epollfd, EPOLL_CTL_ADD, lsock, &ev) == -1) {
-		xlog_strerror(LOG_ERR, errno, "epoll_ctl: lsock");
-		exit(1);
-	}
+	while (!shutdown_triggered || active_clients > 0) {
+		if (!accepting && active_clients < max_clients) {
+			xlog(LOG_NOTICE, NULL,
+			    "active_clients=%d; "
+			    "accepting new connections", active_clients);
+			ev.events = EPOLLIN;
+			ev.data.fd = lsock;
+			if (epoll_ctl(epollfd, EPOLL_CTL_ADD, lsock, &ev) == -1) {
+				xlog_strerror(LOG_ERR, errno, "epoll_ctl: lsock");
+				shutdown_triggered = 1;
+			}
+			accepting = 1;
+		}
 
-	while (!shutdown_triggered) {
 		if ((nfds = epoll_wait(epollfd, events,
-		    MAX_EPOLL_EVENTS, -1)) == -1) {
+		    MAX_EPOLL_EVENTS, 1000)) == -1) {
 			if (errno != EINTR) {
 				xlog_strerror(LOG_ERR, errno, "epoll_wait");
-				exit(1);
+				shutdown_triggered = 1;
 			}
 			if (shutdown_triggered && lsock > -1) {
 				if (del_epoll_fd(epollfd, lsock) == -1)
@@ -734,8 +788,6 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx)
 				close(lsock);
 				lsock = -1;
 			}
-			// TODO: do we have a way to see how many fds
-			// in our epoll?
 			continue;
 		}
 
@@ -766,13 +818,25 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx)
 					close(fd);
 					continue;
 				}
+				active_clients++;
 
-				if (tlsev_create(fd, ctx, xerrz(&e)) == -1) {
+				if (tlsev_create(fd, ctx,
+				    &peer, xerrz(&e)) == -1) {
 					if (del_epoll_fd(epollfd, fd) == -1)
 						exit(1);
+					active_clients--;
 					close(fd);
 					xlog(LOG_ERR, &e, "tlsev_create");
 				}
+
+				if (active_clients >= max_clients) {
+					xlog(LOG_WARNING, NULL,
+					    "max_clients reached; "
+					    "not accepting new connections");
+					del_epoll_fd(epollfd, lsock);
+					accepting = 0;
+				}
+
 				continue;
 			}
 
@@ -784,23 +848,31 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx)
 				if (del_epoll_fd(epollfd,
 				    events[n].data.fd) == -1)
 					exit(1);
+				active_clients--;
 				close(events[n].data.fd);
 				continue;
 			}
 
-			// TODO: EPOLLERR ? EPOLLHUP is always monitored and
-			// will happen on EOF...
+			if (events[n].events & EPOLLERR)
+				/* Not sure when this happens */
+				xlog(LOG_WARNING, NULL,
+				    "EPOLLERR: fd=%d", t->fd);
 
-			// TODO: check for EPOLLIN vs. EPOLLOUT
 			if (events[n].events & EPOLLIN){
 				r = tlsev_in(t, xerrz(&e));
 				if (r == -1) {
-					if (xerr_is(&e, XLOG_APP, XLOG_EOF)) {
-						del_epoll_fd(epollfd, t->fd);
-						tlsev_close(t);
-					} else
+					if (xerr_is(&e, XLOG_SSL,
+					    SSL_ERROR_SSL)) {
+						xlog(LOG_WARNING, &e,
+						    "fd=%d", t->fd);
+					} else if (!xerr_is(&e, XLOG_APP,
+					    XLOG_EOF)) {
 						xlog(LOG_ERR, &e,
 						    "fd=%d", t->fd);
+					}
+					del_epoll_fd(epollfd, t->fd);
+					active_clients--;
+					tlsev_close(t);
 					continue;
 				}
 
@@ -832,6 +904,7 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx)
 					// TODO: cleanup a bit
 					xlog(LOG_ERR, &e, "fd=%d", t->fd);
 					del_epoll_fd(epollfd, t->fd);
+					active_clients--;
 					tlsev_close(t);
 					continue;
 				}
@@ -846,6 +919,7 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx)
 					xlog_strerror(LOG_ERR, errno,
 					    "epoll_ctl");
 					del_epoll_fd(epollfd, t->fd);
+					active_clients--;
 					tlsev_close(t);
 					continue;
 				}
@@ -869,13 +943,13 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx)
 					xlog_strerror(LOG_ERR, errno,
 					    "epoll_ctl");
 					del_epoll_fd(epollfd, t->fd);
+					active_clients--;
 					tlsev_close(t);
 				}
 			}
-
-			// TODO: check if if have any pending r/w bytes,
-			// set epoll accordingly.
 		}
+
+		// TODO: purge old sockets; very slow, need a heap or something
 
 		// TODO: look at this for example of non-blocking polled sockets
 		// using BIO_s_mem:
@@ -962,9 +1036,11 @@ do_daemon(const char **argv)
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
+
 	SSL_CTX_set_security_level(ctx, 3);
 	SSL_CTX_set_cert_store(ctx, store);
 	SSL_CTX_set_options(ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback_daemon);
 
 	if (SSL_CTX_use_certificate(ctx, ca_crt) != 1) {
 		ERR_print_errors_fp(stderr);
@@ -1000,8 +1076,11 @@ do_daemon(const char **argv)
 		exit(1);
 	}
 
+	ssl_data_idx = SSL_get_ex_new_index(0, "tlsev_idx", NULL, NULL, NULL);
+	tlsev_init(ssl_data_idx, certainty_conf.socket_timeout);
+
 	if (certainty_conf.prefork <= 0 || foreground) {
-		handle_clients_epoll(lsock, ctx);
+		handle_clients_epoll(lsock, ctx, certainty_conf.max_clients);
 		return 0;
 	}
 
@@ -1010,7 +1089,9 @@ do_daemon(const char **argv)
 		if ((pid = fork()) == -1) {
 			xlog_strerror(LOG_ERR, errno, "fork");
 		} else if (pid == 0) {
-			handle_clients_epoll(lsock, ctx);
+			setproctitle("listener");
+			handle_clients_epoll(lsock, ctx,
+			    certainty_conf.max_clients);
 			/* Never reached */
 			exit(1);
 		}
@@ -1033,7 +1114,9 @@ do_daemon(const char **argv)
 			if ((pid = fork()) == -1) {
 				xlog_strerror(LOG_ERR, errno, "fork");
 			} else if (pid == 0) {
-				handle_clients_epoll(lsock, ctx);
+				setproctitle("listener");
+				handle_clients_epoll(lsock, ctx,
+				    certainty_conf.max_clients);
 				/* Never reached */
 				exit(1);
 			} else {
@@ -1166,7 +1249,7 @@ main(int argc, char **argv)
 
 	if ((store = X509_STORE_new()) == NULL)
 		err(1, "X509_STORE_new");
-	X509_STORE_set_verify_cb_func(store, verify_callback);
+	//X509_STORE_set_verify_cb_func(store, verify_callback);
 	if ((lookup = X509_STORE_add_lookup(store, X509_LOOKUP_file())) == NULL) {
 		ERR_print_errors_fp(stderr);
 		exit(1);

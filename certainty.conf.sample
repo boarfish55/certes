@@ -1,7 +1,14 @@
 #unpriv_user: plalonde
 #unpriv_group: plalonde
 pid_file: /tmp/certainty.pid
+ca_file: ca/overnet.pem
+crl_file: ca/overnet.crl
+key_file: ca/private/overnet_key.pem
 serial_file: ca/serial
 min_serial: 0x01
 max_serial: 0xff
 port: 9790
+listen_backlog: 128
+prefork: 4
+max_clients: 2
+socket_timeout: 300
