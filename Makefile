@@ -1,19 +1,11 @@
 CC = cc
-DEPDIR = .deps
 CFLAGS = -Wall -g
-LIBS = -lcrypto -lssl
+LIBS = -lcrypto -lssl -ltls
+SRCS = certainty.c config_vars.c xlog.c util.c
 OBJS = config_vars.o xlog.o util.o
 
-OS != uname -s
-
-.if ${OS} == "OpenBSD"
-LIBS += -ltls
-.else
-PKGCONFIG_LIBS != pkg-config --libs libbsd-overlay libbsd-ctor
-PKGCONFIG_CFLAGS != pkg-config --cflags libbsd-overlay libbsd-ctor
-CFLAGS += $(PKGCONFIG_CFLAGS) -fstack-protector-strong
-LIBS += $(PKGCONFIG_LIBS) -Wl,-z,relro -Wl,-z,now
-.endif
+depend:
+	mkdep $(CFLAGS) $(SRCS)
 
 all: certainty
 

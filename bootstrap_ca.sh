@@ -7,7 +7,7 @@ echo "01" > ca/serial
 touch ca/index.txt
 
 # Create self-signed root certificate
-openssl req -x509 -nodes -config overnet.cnf -newkey rsa \
+openssl req -x509 -nodes -config overnet.cnf -newkey rsa:4096 \
 	-out ca/overnet.pem -outform PEM -days 3650 -section root_req
 
 # Create a "client1" cert request

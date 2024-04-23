@@ -9,13 +9,18 @@ enum xerr_space {
 	XLOG_NONE = 0,
 	XLOG_APP,      /* App-internal error */
 	XLOG_ERRNO,    /* Standard errno code used internally only */
+	XLOG_SSL,      /* SSL error codes */
 	XLOG_DB        /* DB error */
 };
 
 enum xerr_code {
 	XLOG_SUCCESS = 0,
+	XLOG_EOF,          /* EOF on a pipe/socket */
 	XLOG_INVAL,        /* An invalid value was obtained */
-	XLOG_OVERFLOW      /* Value too large for container */
+	XLOG_NOENT,        /* Entity not found */
+	XLOG_OVERFLOW,     /* Value too large for container */
+	XLOG_SHORTIO,      /* Short read/write */
+	XLOG_WOULDBLOCK    /* Operation would block but is set non-blocking */
 };
 
 #define XLOG_ALL     0xFFFF

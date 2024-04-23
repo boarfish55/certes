@@ -1,3 +1,4 @@
+#include <sys/epoll.h>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -16,6 +17,7 @@
 #include <getopt.h>
 #include <grp.h>
 #include <limits.h>
+#include <netdb.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -24,6 +26,7 @@
 #include <unistd.h>
 #include "config_vars.h"
 #include "util.h"
+#include "tlsev.h"
 #include "xlog.h"
 
 #define MAX_HEX_SERIAL_LENGTH 32
@@ -679,23 +682,199 @@ handle_signals(int sig)
 	shutdown_triggered = 1;
 }
 
-void
-handle_clients(int lsock)
+int
+del_epoll_fd(int epollfd, int fd)
 {
-	int client;
+	if (epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL) == -1) {
+		xlog_strerror(LOG_ERR, errno, "epoll_ctl: DEL fd %d", fd);
+		return -1;
+	}
+	return 0;
+}
 
-	setproctitle("listener");
+void
+handle_clients_epoll(int lsock, SSL_CTX *ctx)
+{
+#define MAX_EPOLL_EVENTS 128
+
+	struct xerr          e;
+	int                  fd;
+	int                  epollfd, nfds, n, r, wpending;
+	struct sockaddr_in6  peer;
+	socklen_t            peerlen = sizeof(peer);
+	struct epoll_event   ev, events[MAX_EPOLL_EVENTS];
+	char                 hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
+	struct tlsev        *t;
+
+	if (!foreground)
+		setproctitle("listener");
+
+	if ((epollfd = epoll_create1(0)) == -1) {
+		xlog_strerror(LOG_ERR, errno, "epoll_create");
+		exit(1);
+	}
+
+	ev.events = EPOLLIN;
+	ev.data.fd = lsock;
+	if (epoll_ctl(epollfd, EPOLL_CTL_ADD, lsock, &ev) == -1) {
+		xlog_strerror(LOG_ERR, errno, "epoll_ctl: lsock");
+		exit(1);
+	}
+
 	while (!shutdown_triggered) {
-		client = accept(lsock, NULL, 0);
-		if (client == -1) {
-			if (errno == EINTR) {
-				if (shutdown_triggered)
-					close(lsock);
+		if ((nfds = epoll_wait(epollfd, events,
+		    MAX_EPOLL_EVENTS, -1)) == -1) {
+			if (errno != EINTR) {
+				xlog_strerror(LOG_ERR, errno, "epoll_wait");
+				exit(1);
+			}
+			if (shutdown_triggered && lsock > -1) {
+				if (del_epoll_fd(epollfd, lsock) == -1)
+					exit(1);
+				close(lsock);
+				lsock = -1;
+			}
+			// TODO: do we have a way to see how many fds
+			// in our epoll?
+			continue;
+		}
+
+		for (n = 0; n < nfds; n++) {
+			if (events[n].data.fd == lsock) {
+				if ((fd = accept(lsock,
+				    (struct sockaddr *)&peer,
+				    &peerlen)) == -1) {
+					xlog_strerror(LOG_ERR, errno, "accept");
+					continue;
+				}
+
+				if (getnameinfo((struct sockaddr *)&peer,
+				    peerlen, hbuf, sizeof(hbuf), sbuf,
+				    sizeof(sbuf),
+				    NI_NUMERICHOST | NI_NUMERICSERV) == 0) {
+					 xlog(LOG_INFO, NULL,
+					     "new connection from %s:%s",
+					     hbuf, sbuf);
+				}
+
+				ev.events = EPOLLIN|EPOLLERR;
+				ev.data.fd = fd;
+				if (epoll_ctl(epollfd, EPOLL_CTL_ADD,
+				    fd, &ev) == -1) {
+					xlog_strerror(LOG_ERR, errno,
+					    "epoll_ctl");
+					close(fd);
+					continue;
+				}
+
+				if (tlsev_create(fd, ctx, xerrz(&e)) == -1) {
+					if (del_epoll_fd(epollfd, fd) == -1)
+						exit(1);
+					close(fd);
+					xlog(LOG_ERR, &e, "tlsev_create");
+				}
 				continue;
-			} else
-				xlog_strerror(LOG_ERR, errno, "accept");
-		} else {
-			close(client);
+			}
+
+			t = tlsev_get(events[n].data.fd);
+			if (t == NULL) {
+				xlog(LOG_ERR, NULL,
+				    "tlsev_get on fd %d not found",
+				    events[n].data.fd);
+				if (del_epoll_fd(epollfd,
+				    events[n].data.fd) == -1)
+					exit(1);
+				close(events[n].data.fd);
+				continue;
+			}
+
+			// TODO: EPOLLERR ? EPOLLHUP is always monitored and
+			// will happen on EOF...
+
+			// TODO: check for EPOLLIN vs. EPOLLOUT
+			if (events[n].events & EPOLLIN){
+				r = tlsev_in(t, xerrz(&e));
+				if (r == -1) {
+					if (xerr_is(&e, XLOG_APP, XLOG_EOF)) {
+						del_epoll_fd(epollfd, t->fd);
+						tlsev_close(t);
+					} else
+						xlog(LOG_ERR, &e,
+						    "fd=%d", t->fd);
+					continue;
+				}
+
+				if (r > 0) {
+					// TODO: here's where we need to process
+					// pending read bytes; we should wait
+					// until we have a full request
+					// buffered; then we block until
+					// processed.
+
+					// Just echo...
+					char buf[4096];
+					r = tlsev_read(t, buf,
+					    sizeof(buf),xerrz(&e));
+					if (r == -1) {
+						xlog(LOG_ERR, &e,
+						    "fd=%d", t->fd);
+					} else {
+						if (tlsev_write(t, buf, r,
+						    xerrz(&e)) == -1) {
+							xlog(LOG_ERR, &e,
+							    "fd=%d", t->fd);
+						}
+					}
+				}
+
+				if ((r = tlsev_bio_pending(t, NULL, &wpending,
+				    xerrz(&e))) == -1) {
+					// TODO: cleanup a bit
+					xlog(LOG_ERR, &e, "fd=%d", t->fd);
+					del_epoll_fd(epollfd, t->fd);
+					tlsev_close(t);
+					continue;
+				}
+
+				ev.data.fd = t->fd;
+				ev.events = EPOLLERR|EPOLLIN;
+				if (wpending > 0)
+					ev.events |= EPOLLOUT;
+
+				if (epoll_ctl(epollfd, EPOLL_CTL_MOD,
+				    t->fd, &ev) == -1) {
+					xlog_strerror(LOG_ERR, errno,
+					    "epoll_ctl");
+					del_epoll_fd(epollfd, t->fd);
+					tlsev_close(t);
+					continue;
+				}
+			}
+
+			if (events[n].events & EPOLLOUT) {
+				r = tlsev_out(t, xerrz(&e));
+				if (r == -1) {
+					xlog(LOG_ERR, &e, "write on fd %d",
+					    events[n].data.fd);
+					continue;
+				}
+
+				ev.data.fd = t->fd;
+				ev.events = EPOLLERR|EPOLLIN;
+				if (r > 0)
+					ev.events |= EPOLLOUT;
+
+				if (epoll_ctl(epollfd, EPOLL_CTL_MOD,
+				    t->fd, &ev) == -1) {
+					xlog_strerror(LOG_ERR, errno,
+					    "epoll_ctl");
+					del_epoll_fd(epollfd, t->fd);
+					tlsev_close(t);
+				}
+			}
+
+			// TODO: check if if have any pending r/w bytes,
+			// set epoll accordingly.
 		}
 
 		// TODO: look at this for example of non-blocking polled sockets
@@ -783,8 +962,18 @@ do_daemon(const char **argv)
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
-	SSL_CTX_set_security_level(ctx, 4);
+	SSL_CTX_set_security_level(ctx, 3);
 	SSL_CTX_set_cert_store(ctx, store);
+	SSL_CTX_set_options(ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
+
+	if (SSL_CTX_use_certificate(ctx, ca_crt) != 1) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (SSL_CTX_use_PrivateKey(ctx, priv_key) != 1) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
 
 	if ((lsock = socket(AF_INET6, SOCK_STREAM, 0)) == -1) {
 		xlog_strerror(LOG_ERR, errno, "socket");
@@ -811,76 +1000,79 @@ do_daemon(const char **argv)
 		exit(1);
 	}
 
-	if (certainty_conf.prefork > 0) {
-		for (n_children = 0; n_children < certainty_conf.prefork;
-		    n_children++) {
+	if (certainty_conf.prefork <= 0 || foreground) {
+		handle_clients_epoll(lsock, ctx);
+		return 0;
+	}
+
+	for (n_children = 0; n_children < certainty_conf.prefork;
+	    n_children++) {
+		if ((pid = fork()) == -1) {
+			xlog_strerror(LOG_ERR, errno, "fork");
+		} else if (pid == 0) {
+			handle_clients_epoll(lsock, ctx);
+			/* Never reached */
+			exit(1);
+		}
+	}
+
+	setproctitle("parent");
+
+	for (;;) {
+		pid = waitpid(-1, &wstatus, 0);
+		if (pid != -1 && !shutdown_triggered) {
+			n_children--;
+			if (WIFEXITED(wstatus))
+				xlog(LOG_WARNING, NULL,
+				    "child %d exited with status %d",
+				    pid, WEXITSTATUS(wstatus));
+			else
+				xlog(LOG_WARNING, NULL,
+				    "child %d killed by signal %d",
+				    pid, WTERMSIG(wstatus));
 			if ((pid = fork()) == -1) {
 				xlog_strerror(LOG_ERR, errno, "fork");
 			} else if (pid == 0) {
-				handle_clients(lsock);
+				handle_clients_epoll(lsock, ctx);
 				/* Never reached */
 				exit(1);
+			} else {
+				n_children++;
 			}
+			continue;
 		}
 
-		setproctitle("parent");
+		if (!shutdown_triggered) {
+			xlog(LOG_WARNING, NULL, "signal received but "
+			    "shutdown not yet triggered");
+			continue;
+		}
 
-		for (;;) {
-			pid = waitpid(-1, &wstatus, 0);
-			if (pid != -1 && !shutdown_triggered) {
-				n_children--;
-				if (WIFEXITED(wstatus))
-					xlog(LOG_WARNING, NULL,
-					    "child %d exited with status %d",
-					    pid, WEXITSTATUS(wstatus));
-				else
-					xlog(LOG_WARNING, NULL,
-					    "child %d killed by signal %d",
-					    pid, WTERMSIG(wstatus));
-				if ((pid = fork()) == -1) {
-					xlog_strerror(LOG_ERR, errno, "fork");
-				} else if (pid == 0) {
-					handle_clients(lsock);
-					/* Never reached */
-					exit(1);
-				} else {
-					n_children++;
-				}
-				continue;
-			}
+		if (lsock > -1) {
+			close(lsock);
+			lsock = -1;
 
-			if (!shutdown_triggered) {
-				xlog(LOG_WARNING, NULL, "signal received but "
-				    "shutdown not yet triggered");
-				continue;
-			}
+			sigemptyset(&act.sa_mask);
+			act.sa_flags = 0;
+			act.sa_handler = SIG_IGN;
+			sigaction(SIGINT, &act, NULL);
+			sigaction(SIGTERM, &act, NULL);
 
-			if (lsock > -1) {
-				close(lsock);
-				lsock = -1;
+			kill(0, 15);
+		}
 
-				sigemptyset(&act.sa_mask);
-				act.sa_flags = 0;
-				act.sa_handler = SIG_IGN;
-				sigaction(SIGINT, &act, NULL);
-				sigaction(SIGTERM, &act, NULL);
-
-				kill(0, 15);
-			}
-
-			if (pid != -1) {
-				if (WIFEXITED(wstatus))
-					xlog(LOG_NOTICE, NULL,
-					    "child %d exited with status %d",
-					    pid, WEXITSTATUS(wstatus));
-				else
-					xlog(LOG_NOTICE, NULL,
-					    "child %d killed by signal %d",
-					    pid, WTERMSIG(wstatus));
-				n_children--;
-				if (n_children == 0)
-					break;
-			}
+		if (pid != -1) {
+			if (WIFEXITED(wstatus))
+				xlog(LOG_NOTICE, NULL,
+				    "child %d exited with status %d",
+				    pid, WEXITSTATUS(wstatus));
+			else
+				xlog(LOG_NOTICE, NULL,
+				    "child %d killed by signal %d",
+				    pid, WTERMSIG(wstatus));
+			n_children--;
+			if (n_children == 0)
+				break;
 		}
 	}
 	xlog(LOG_NOTICE, NULL, "all children exited");
