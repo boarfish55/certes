@@ -39,5 +39,7 @@ int           tlsev_out(struct tlsev *, struct xerr *);
 int           tlsev_read(struct tlsev *, char *, int, struct xerr *);
 int           tlsev_write(struct tlsev *, const char *, int, struct xerr *);
 int           tlsev_bio_pending(struct tlsev *, int *, int *, struct xerr *);
+void          tlsev_run(int, SSL_CTX *, int);
+void          tlsev_shutdown();
 
 #endif

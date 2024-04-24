@@ -1,6 +1,3 @@
-#ifndef __OpenBSD__
-#include <sys/epoll.h>
-#endif
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -733,276 +730,7 @@ handle_signals(int sig)
 {
 	xlog(LOG_NOTICE, NULL, "signal received: %d", sig);
 	shutdown_triggered = 1;
-}
-
-#ifndef __OpenBSD__
-int
-del_epoll_fd(int epollfd, int fd)
-{
-	if (epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL) == -1) {
-		xlog_strerror(LOG_ERR, errno, "epoll_ctl: DEL fd %d", fd);
-		return -1;
-	}
-	return 0;
-}
-#endif
-
-#ifndef __OpenBSD__
-void
-handle_clients_epoll(int lsock, SSL_CTX *ctx, int max_clients)
-{
-#define MAX_EPOLL_EVENTS 128
-	struct xerr          e;
-	int                  fd;
-	int                  epollfd, nfds, n, r, wpending;
-	int                  active_clients = 0, accepting = 0;
-	struct sockaddr_in6  peer;
-	socklen_t            peerlen = sizeof(peer);
-	struct epoll_event   ev, events[MAX_EPOLL_EVENTS];
-	char                 hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
-	struct tlsev        *t;
-
-	if ((epollfd = epoll_create1(0)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "epoll_create");
-		exit(1);
-	}
-
-	while (!shutdown_triggered || active_clients > 0) {
-		if (!accepting && active_clients < max_clients) {
-			xlog(LOG_NOTICE, NULL,
-			    "active_clients=%d; "
-			    "accepting new connections", active_clients);
-			ev.events = EPOLLIN;
-			ev.data.fd = lsock;
-			if (epoll_ctl(epollfd, EPOLL_CTL_ADD, lsock, &ev) == -1) {
-				xlog_strerror(LOG_ERR, errno, "epoll_ctl: lsock");
-				shutdown_triggered = 1;
-			}
-			accepting = 1;
-		}
-
-		if ((nfds = epoll_wait(epollfd, events,
-		    MAX_EPOLL_EVENTS, 1000)) == -1) {
-			if (errno != EINTR) {
-				xlog_strerror(LOG_ERR, errno, "epoll_wait");
-				shutdown_triggered = 1;
-			}
-			if (shutdown_triggered && lsock > -1) {
-				if (del_epoll_fd(epollfd, lsock) == -1)
-					exit(1);
-				close(lsock);
-				lsock = -1;
-			}
-			continue;
-		}
-
-		for (n = 0; n < nfds; n++) {
-			if (events[n].data.fd == lsock) {
-				if ((fd = accept(lsock,
-				    (struct sockaddr *)&peer,
-				    &peerlen)) == -1) {
-					xlog_strerror(LOG_ERR, errno, "accept");
-					continue;
-				}
-
-				if (getnameinfo((struct sockaddr *)&peer,
-				    peerlen, hbuf, sizeof(hbuf), sbuf,
-				    sizeof(sbuf),
-				    NI_NUMERICHOST | NI_NUMERICSERV) == 0) {
-					 xlog(LOG_INFO, NULL,
-					     "new connection from %s:%s",
-					     hbuf, sbuf);
-				}
-
-				ev.events = EPOLLIN|EPOLLERR;
-				ev.data.fd = fd;
-				if (epoll_ctl(epollfd, EPOLL_CTL_ADD,
-				    fd, &ev) == -1) {
-					xlog_strerror(LOG_ERR, errno,
-					    "epoll_ctl");
-					close(fd);
-					continue;
-				}
-				active_clients++;
-
-				if (tlsev_create(fd, ctx,
-				    &peer, xerrz(&e)) == -1) {
-					if (del_epoll_fd(epollfd, fd) == -1)
-						exit(1);
-					active_clients--;
-					close(fd);
-					xlog(LOG_ERR, &e, "tlsev_create");
-				}
-
-				if (active_clients >= max_clients) {
-					xlog(LOG_WARNING, NULL,
-					    "max_clients reached; "
-					    "not accepting new connections");
-					del_epoll_fd(epollfd, lsock);
-					accepting = 0;
-				}
-
-				continue;
-			}
-
-			t = tlsev_get(events[n].data.fd);
-			if (t == NULL) {
-				xlog(LOG_ERR, NULL,
-				    "tlsev_get on fd %d not found",
-				    events[n].data.fd);
-				if (del_epoll_fd(epollfd,
-				    events[n].data.fd) == -1)
-					exit(1);
-				active_clients--;
-				close(events[n].data.fd);
-				continue;
-			}
-
-			if (events[n].events & EPOLLERR)
-				/* Not sure when this happens */
-				xlog(LOG_WARNING, NULL,
-				    "EPOLLERR: fd=%d", t->fd);
-
-			if (events[n].events & EPOLLIN){
-				r = tlsev_in(t, xerrz(&e));
-				if (r == -1) {
-					if (xerr_is(&e, XLOG_SSL,
-					    SSL_ERROR_SSL)) {
-						xlog(LOG_WARNING, &e,
-						    "fd=%d", t->fd);
-					} else if (!xerr_is(&e, XLOG_APP,
-					    XLOG_EOF)) {
-						xlog(LOG_ERR, &e,
-						    "fd=%d", t->fd);
-					}
-					del_epoll_fd(epollfd, t->fd);
-					active_clients--;
-					tlsev_close(t);
-					continue;
-				}
-
-				if (r > 0) {
-					// TODO: here's where we need to process
-					// pending read bytes; we should wait
-					// until we have a full request
-					// buffered; then we block until
-					// processed.
-
-					// Just echo...
-					char buf[4096];
-					r = tlsev_read(t, buf,
-					    sizeof(buf),xerrz(&e));
-					if (r == -1) {
-						xlog(LOG_ERR, &e,
-						    "fd=%d", t->fd);
-					} else {
-						if (tlsev_write(t, buf, r,
-						    xerrz(&e)) == -1) {
-							xlog(LOG_ERR, &e,
-							    "fd=%d", t->fd);
-						}
-					}
-				}
-
-				if ((r = tlsev_bio_pending(t, NULL, &wpending,
-				    xerrz(&e))) == -1) {
-					// TODO: cleanup a bit
-					xlog(LOG_ERR, &e, "fd=%d", t->fd);
-					del_epoll_fd(epollfd, t->fd);
-					active_clients--;
-					tlsev_close(t);
-					continue;
-				}
-
-				ev.data.fd = t->fd;
-				ev.events = EPOLLERR|EPOLLIN;
-				if (wpending > 0)
-					ev.events |= EPOLLOUT;
-
-				if (epoll_ctl(epollfd, EPOLL_CTL_MOD,
-				    t->fd, &ev) == -1) {
-					xlog_strerror(LOG_ERR, errno,
-					    "epoll_ctl");
-					del_epoll_fd(epollfd, t->fd);
-					active_clients--;
-					tlsev_close(t);
-					continue;
-				}
-			}
-
-			if (events[n].events & EPOLLOUT) {
-				r = tlsev_out(t, xerrz(&e));
-				if (r == -1) {
-					xlog(LOG_ERR, &e, "write on fd %d",
-					    events[n].data.fd);
-					continue;
-				}
-
-				ev.data.fd = t->fd;
-				ev.events = EPOLLERR|EPOLLIN;
-				if (r > 0)
-					ev.events |= EPOLLOUT;
-
-				if (epoll_ctl(epollfd, EPOLL_CTL_MOD,
-				    t->fd, &ev) == -1) {
-					xlog_strerror(LOG_ERR, errno,
-					    "epoll_ctl");
-					del_epoll_fd(epollfd, t->fd);
-					active_clients--;
-					tlsev_close(t);
-				}
-			}
-		}
-
-		// TODO: purge old sockets; very slow, need a heap or something
-
-		// TODO: look at this for example of non-blocking polled sockets
-		// using BIO_s_mem:
-		//  https://gist.github.com/darrenjs/4645f115d10aa4b5cebf57483ec82eca
-		// With this we can implement a daemon that forks X children 
-		// to kqueue() on accept and all its active conns (to a point; it
-		// no longer accepts once it reaches a certain size), creating a
-		// BIO_s_mem() buffer and filling it with data (up to a limit) as it
-		// comes in, in one structure per client. It uses SSL_pending() to
-		// see if it can get actual bytes and gradually builds up a complete
-		// request.
-		// Once the request is complete and we no longer need any bytes from
-		// the client, it dispatches the request to a worker via a pipe. The
-		// worker doesn't deal with encryption but may still need to know
-		// details from the client (like its cert).
-		// Drawback is if spammy clients all land on the same process
-		// (because OS decides which accept() returns), then we may start
-		// stalling all requests going to that child.
-		//
-		// Or with pthread for better load distribution?
-		// In which case we'd start filling up a BIO_s_mem inside one struct
-		// per client putting it on a queue, where a worker thread can
-		// call SSL_pending() and start constructing the buffer if there's
-		// data available. It puts it back on a pending queue if more data
-		// is needed where the listener thread can then add more to it, or
-		// destroy it after waiting for a certain time.
-		// This means the listener thread doesn't do encryption/decryption
-		// and only need to shuffle bytes around and do kqueue(), pretty
-		// lightweight.
-		// Workers do the heavy lifting, but if they're all busy we're not
-		// timing out new clients who can still start sending bytes.
-		//
-		// We can also set cipher preference on server:
-		// look for SSL_OP_CIPHER_SERVER_PREFERENCE
-		// This is nice because we can pick AES256 which may have CPU
-		// offload thus better performance.
-
-	}
-	exit(0);
-}
-#endif
-
-void
-handle_clients(int lsock, SSL_CTX *ctx, int max_clients)
-{
-#ifndef __OpenBSD__
-	handle_clients_epoll(lsock, ctx, certainty_conf.max_clients);
-#endif
+	tlsev_shutdown();
 }
 
 int
@@ -1032,23 +760,46 @@ do_daemon(const char **argv)
 			xerr_print(&e);
 			exit(1);
 		}
-#ifdef __OpenBSD__
-		// TODO: pledge() & unveil() ?
-		if (pledge("stdio,rpath,wpath,cpath,inet,fattr,"
-		    "dns,getpw,proc,id", "") == -1)
-			err(1, "pledge");
-#endif
 	}
 
 	if (geteuid() == 0) {
 		if (drop_privileges(certainty_conf.unpriv_group,
 		    certainty_conf.unpriv_user, &e) == -1) {
-			xerr_print(&e);
+			xlog(LOG_ERR, &e, "");
 			exit(1);
 		}
 	}
 
+#ifdef __OpenBSD__
+	if (unveil(certainty_conf.ca_file, "rw") == -1) {
+		xlog_strerror(LOG_ERR, errno,
+		    "unveil: %s", certainty_conf.ca_file);
+		exit(1);
+	}
+	if (unveil(certainty_conf.crl_file, "rw") == -1) {
+		xlog_strerror(LOG_ERR, errno,
+		    "unveil: %s", certainty_conf.crl_file);
+		exit(1);
+	}
+	if (unveil(certainty_conf.key_file, "r") == -1) {
+		xlog_strerror(LOG_ERR, errno,
+		    "unveil: %s", certainty_conf.key_file);
+		exit(1);
+	}
+	if (unveil(certainty_conf.serial_file, "rw") == -1) {
+		xlog_strerror(LOG_ERR, errno,
+		    "unveil: %s", certainty_conf.serial_file);
+		exit(1);
+	}
+	if (pledge("stdio rpath wpath cpath inet fattr "
+	    "flock dns proc id", "") == -1) {
+		xlog_strerror(LOG_ERR, errno, "pledge");
+		exit(1);
+	}
+#endif
+
 	if ((ctx = SSL_CTX_new(TLS_method())) == NULL) {
+		// TODO: xlog...
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
@@ -1059,6 +810,7 @@ do_daemon(const char **argv)
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback_daemon);
 
 	if (SSL_CTX_use_certificate(ctx, ca_crt) != 1) {
+		// TODO: xlog...
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
@@ -1096,7 +848,7 @@ do_daemon(const char **argv)
 	tlsev_init(ssl_data_idx, certainty_conf.socket_timeout);
 
 	if (certainty_conf.prefork <= 0 || foreground) {
-		handle_clients(lsock, ctx, certainty_conf.max_clients);
+		tlsev_run(lsock, ctx, certainty_conf.max_clients);
 		return 0;
 	}
 
@@ -1106,8 +858,7 @@ do_daemon(const char **argv)
 			xlog_strerror(LOG_ERR, errno, "fork");
 		} else if (pid == 0) {
 			setproctitle("listener");
-			handle_clients(lsock, ctx,
-			    certainty_conf.max_clients);
+			tlsev_run(lsock, ctx, certainty_conf.max_clients);
 			/* Never reached */
 			exit(1);
 		}
@@ -1131,7 +882,7 @@ do_daemon(const char **argv)
 				xlog_strerror(LOG_ERR, errno, "fork");
 			} else if (pid == 0) {
 				setproctitle("listener");
-				handle_clients(lsock, ctx,
+				tlsev_run(lsock, ctx,
 				    certainty_conf.max_clients);
 				/* Never reached */
 				exit(1);
