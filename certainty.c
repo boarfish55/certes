@@ -735,14 +735,6 @@ handle_signals(int sig)
 	shutdown_triggered = 1;
 }
 
-void
-handle_clients(int lsock, SSL_CTX *ctx, int max_clients)
-{
-#ifndef __OpenBSD__
-	handle_clients_epoll(lsock, ctx, certainty_conf.max_clients);
-#endif
-}
-
 #ifndef __OpenBSD__
 int
 del_epoll_fd(int epollfd, int fd)
@@ -1004,6 +996,14 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx, int max_clients)
 	exit(0);
 }
 #endif
+
+void
+handle_clients(int lsock, SSL_CTX *ctx, int max_clients)
+{
+#ifndef __OpenBSD__
+	handle_clients_epoll(lsock, ctx, certainty_conf.max_clients);
+#endif
+}
 
 int
 do_daemon(const char **argv)
