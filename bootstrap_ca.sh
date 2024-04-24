@@ -7,8 +7,11 @@ echo "01" > ca/serial
 touch ca/index.txt
 
 # Create self-signed root certificate
-openssl req -x509 -nodes -config overnet.cnf -newkey rsa:4096 \
-	-out ca/overnet.pem -outform PEM -days 3650 -section root_req
+openssl req -x509 -nodes -config overnet.cnf -newkey rsa \
+	-keyout ca/private/overnet_key.pem \
+	-out ca/overnet.pem -outform PEM -days 3650 \
+	-extensions root_ext \
+	-subj "/emailAddress=cert@overnet.ca/O=Overnet/CN=Overnet CA"
 
 # Create a "client1" cert request
 rm -f client1/*
@@ -34,6 +37,7 @@ openssl req -nodes -config overnet.cnf -newkey rsa \
 
 # Sign and revoke client2 cert
 yes | openssl ca -config overnet.cnf -in client2/req.pem -out client2/cert.pem
+openssl verify -CAfile ca/overnet.pem client2/cert.pem
 openssl ca -config overnet.cnf -revoke client2/cert.pem
 
 # Generate CRL

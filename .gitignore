@@ -1,4 +1,5 @@
 .deps/
+.depend
 certainty
 .vimtags
 *.o

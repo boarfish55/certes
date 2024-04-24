@@ -158,7 +158,7 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 				    ERR_error_string(r, NULL));
 			}
 		}
-		t->peer_cert = SSL_get1_peer_certificate(t->ssl);
+		t->peer_cert = SSL_get_peer_certificate(t->ssl);
 	}
 
 	if ((r = SSL_read(t->ssl, t->in_buf + t->in_len,

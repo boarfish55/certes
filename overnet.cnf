@@ -42,20 +42,7 @@ overnetRoles.1          = IA5:ya
 overnetRoles.2          = IA5:yiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyi
 overnetRoles.3          = IA5:yiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyi
 
-[root_req]
-default_bits            = 3072
-default_keyfile         = $dir/private/overnet_key.pem
-default_md              = sha256
-prompt                  = no
-distinguished_name      = root_req_dn
-x509_extensions         = root_req_ext
-
-[root_req_dn]
-commonName              = Overnet CA
-organizationName        = Overnet
-emailAddress            = cert@overnet.ca
-
-[root_req_ext]
+[root_ext]
 basicConstraints        = critical,CA:true
 keyUsage                = critical,cRLSign,keyCertSign,digitalSignature
 subjectKeyIdentifier    = hash
@@ -67,6 +54,10 @@ overnetRoles.0          = IA5:ca
 overnetRoles.1          = IA5:assume_role
 
 [req]
-default_bits            = 3072
+default_bits            = 4096
 default_md              = sha256
-prompt                  = no
+distinguished_name      = dn
+
+[dn]
+organizationName        = supplied
+commonName              = supplied

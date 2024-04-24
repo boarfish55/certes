@@ -1,4 +1,6 @@
+#ifndef __OpenBSD__
 #include <sys/epoll.h>
+#endif
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -733,6 +735,15 @@ handle_signals(int sig)
 	shutdown_triggered = 1;
 }
 
+void
+handle_clients(int lsock, SSL_CTX *ctx, int max_clients)
+{
+#ifndef __OpenBSD__
+	handle_clients_epoll(lsock, ctx, certainty_conf.max_clients);
+#endif
+}
+
+#ifndef __OpenBSD__
 int
 del_epoll_fd(int epollfd, int fd)
 {
@@ -742,7 +753,9 @@ del_epoll_fd(int epollfd, int fd)
 	}
 	return 0;
 }
+#endif
 
+#ifndef __OpenBSD__
 void
 handle_clients_epoll(int lsock, SSL_CTX *ctx, int max_clients)
 {
@@ -990,6 +1003,7 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx, int max_clients)
 	}
 	exit(0);
 }
+#endif
 
 int
 do_daemon(const char **argv)
@@ -1020,7 +1034,9 @@ do_daemon(const char **argv)
 		}
 #ifdef __OpenBSD__
 		// TODO: pledge() & unveil() ?
-		pledge();
+		if (pledge("stdio,rpath,wpath,cpath,inet,fattr,"
+		    "dns,getpw,proc,id", "") == -1)
+			err(1, "pledge");
 #endif
 	}
 
@@ -1080,7 +1096,7 @@ do_daemon(const char **argv)
 	tlsev_init(ssl_data_idx, certainty_conf.socket_timeout);
 
 	if (certainty_conf.prefork <= 0 || foreground) {
-		handle_clients_epoll(lsock, ctx, certainty_conf.max_clients);
+		handle_clients(lsock, ctx, certainty_conf.max_clients);
 		return 0;
 	}
 
@@ -1090,7 +1106,7 @@ do_daemon(const char **argv)
 			xlog_strerror(LOG_ERR, errno, "fork");
 		} else if (pid == 0) {
 			setproctitle("listener");
-			handle_clients_epoll(lsock, ctx,
+			handle_clients(lsock, ctx,
 			    certainty_conf.max_clients);
 			/* Never reached */
 			exit(1);
@@ -1115,7 +1131,7 @@ do_daemon(const char **argv)
 				xlog_strerror(LOG_ERR, errno, "fork");
 			} else if (pid == 0) {
 				setproctitle("listener");
-				handle_clients_epoll(lsock, ctx,
+				handle_clients(lsock, ctx,
 				    certainty_conf.max_clients);
 				/* Never reached */
 				exit(1);
