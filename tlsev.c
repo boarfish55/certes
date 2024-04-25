@@ -76,11 +76,12 @@ tlsev_create(int fd, SSL_CTX *ctx, struct sockaddr_in6 *peer, struct xerr *e)
 	return 0;
 }
 
-void
+int
 tlsev_close(struct tlsev *t)
 {
 	int           fd = t->fd;
 	struct tlsev *prev = NULL;
+	int           r;
 
 	for (t = tlsev_store.head[fd % TLSEV_STORE_BUCKETS];
 	    t != NULL;
@@ -101,9 +102,11 @@ tlsev_close(struct tlsev *t)
 	/* This will free up the associated BIOs */
 	SSL_free(t->ssl);
 
-	close(t->fd);
-	xlog(LOG_INFO, NULL, "closed fd %d", t->fd);
+	xlog(LOG_INFO, NULL, "closing fd %d", t->fd);
+	if ((r = close(t->fd)) == -1)
+		xlog_strerror(LOG_ERR, errno, "close: %d", t->fd);
 	free(t);
+	return r;
 }
 
 struct tlsev *
@@ -181,8 +184,8 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 			return XERRF(e, XLOG_SSL, r, "SSL_read: %s",
 			    ERR_error_string(r, NULL));
 		}
-	}
-	t->in_len += r;
+	} else
+		t->in_len += r;
 	return t->in_len;
 }
 
@@ -342,8 +345,9 @@ handle_clients_kqueue(int lsock, SSL_CTX *ctx, int max_clients)
 
 				if (++active_clients >= max_clients) {
 					xlog(LOG_WARNING, NULL,
-					    "max_clients reached; "
-					    "not accepting new connections");
+					    "max_clients reached (%d); "
+					    "not accepting new connections",
+					    active_clients);
 					EV_SET(&ch[chn++], lsock, EVFILT_READ,
 					    EV_DISABLE, 0, 0, 0);
 					accepting = 0;
@@ -360,8 +364,10 @@ handle_clients_kqueue(int lsock, SSL_CTX *ctx, int max_clients)
 				xlog(LOG_ERR, NULL,
 				    "tlsev_get on fd %d not found",
 				    ev[n].ident);
-				close(ev[n].ident);
-				active_clients--;
+				if (close(ev[n].ident) == -1)
+					xlog_strerror(LOG_ERR, errno, "close");
+				else
+					active_clients--;
 				continue;
 			}
 
@@ -377,8 +383,8 @@ handle_clients_kqueue(int lsock, SSL_CTX *ctx, int max_clients)
 						xlog(LOG_ERR, &e,
 						    "fd=%d", t->fd);
 					}
-					active_clients--;
-					tlsev_close(t);
+					if (tlsev_close(t) != -1)
+						active_clients--;
 					continue;
 				}
 
@@ -409,8 +415,8 @@ handle_clients_kqueue(int lsock, SSL_CTX *ctx, int max_clients)
 				    xerrz(&e))) == -1) {
 					// TODO: cleanup a bit
 					xlog(LOG_ERR, &e, "fd=%d", t->fd);
-					active_clients--;
-					tlsev_close(t);
+					if (tlsev_close(t) != -1)
+						active_clients--;
 					continue;
 				}
 
@@ -564,8 +570,8 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx, int max_clients)
 						    "fd=%d", t->fd);
 					}
 					del_epoll_fd(epollfd, t->fd);
-					active_clients--;
-					tlsev_close(t);
+					if (tlsev_close(t) != -1)
+						active_clients--;
 					continue;
 				}
 
@@ -597,8 +603,8 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx, int max_clients)
 					// TODO: cleanup a bit
 					xlog(LOG_ERR, &e, "fd=%d", t->fd);
 					del_epoll_fd(epollfd, t->fd);
-					active_clients--;
-					tlsev_close(t);
+					if (tlsev_close(t) != -1)
+						active_clients--;
 					continue;
 				}
 
@@ -612,8 +618,8 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx, int max_clients)
 					xlog_strerror(LOG_ERR, errno,
 					    "epoll_ctl");
 					del_epoll_fd(epollfd, t->fd);
-					active_clients--;
-					tlsev_close(t);
+					if (tlsev_close(t) != -1)
+						active_clients--;
 					continue;
 				}
 			}
@@ -636,8 +642,8 @@ handle_clients_epoll(int lsock, SSL_CTX *ctx, int max_clients)
 					xlog_strerror(LOG_ERR, errno,
 					    "epoll_ctl");
 					del_epoll_fd(epollfd, t->fd);
-					active_clients--;
-					tlsev_close(t);
+					if (tlsev_close(t) != -1)
+						active_clients--;
 				}
 			}
 		}

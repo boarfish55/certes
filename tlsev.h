@@ -32,7 +32,7 @@ struct tlsev {
 void          tlsev_init(int, int);
 int           tlsev_create(int, SSL_CTX *,
                   struct sockaddr_in6 *, struct xerr *);
-void          tlsev_close(struct tlsev *);
+int           tlsev_close(struct tlsev *);
 struct tlsev *tlsev_get(int);
 int           tlsev_in(struct tlsev *, struct xerr *);
 int           tlsev_out(struct tlsev *, struct xerr *);
