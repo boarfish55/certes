@@ -51,6 +51,11 @@ daemonize(const char *program, const char *pid_path, int nochdir, int noclose, s
 	if (pid > 0)
 		exit(0);
 
+	if (setsid() == -1) {
+		xlog_strerror(LOG_ERR, errno, "setsid");
+		exit(1);
+	}
+
 	xlog_init(program, NULL, NULL, 1);
 
 	if (!nochdir && chdir("/") == -1) {
