@@ -410,10 +410,7 @@ tlsev_run(int lsock, SSL_CTX *ctx, int max_clients)
 				    (now.tv_sec == t->timeout_at.tv_sec &&
 				     now.tv_nsec <= t->timeout_at.tv_nsec))
 					break;
-#ifdef __OpenBSD__
-				EV_SET(&ch[chn++], evfd, EVFILT_READ,
-				    EV_DELETE, 0, 0, 0);
-#else
+#ifndef __OpenBSD__
 				del_epoll_fd(epollfd, t->fd);
 #endif
 				if (tlsev_close(t) != -1)
