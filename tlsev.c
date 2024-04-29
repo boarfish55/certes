@@ -410,6 +410,8 @@ tlsev_run(int lsock, SSL_CTX *ctx, int max_clients)
 				    (now.tv_sec == t->timeout_at.tv_sec &&
 				     now.tv_nsec <= t->timeout_at.tv_nsec))
 					break;
+				xlog(LOG_NOTICE, NULL, "timeout reached for "
+				    "fd %d; closing socket", t->fd);
 #ifndef __OpenBSD__
 				del_epoll_fd(epollfd, t->fd);
 #endif
