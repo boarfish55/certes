@@ -13,23 +13,74 @@
 #include <stdio.h>
 #include <unistd.h>
 #include "tlsev.h"
+#include "idxheap.h"
 
 #define TLSEV_STORE_BUCKETS 1000
 
-static struct tlsev_store {
-	struct tlsev *head[TLSEV_STORE_BUCKETS];
-} tlsev_store;
+static struct idxheap tlsev_store;
 
 static int socket_timeout;
 static int tlsev_data_idx;
 static int shutdown_triggered = 0;
+
+static int
+tlsev_timeout_cmp(const void *k1, const void *k2)
+{
+	struct timespec *t1, *t2;
+
+	t1 = &((struct tlsev *)k1)->timeout_at;
+	t2 = &((struct tlsev *)k2)->timeout_at;
+
+	if (t1->tv_sec < t2->tv_sec ||
+	    (t1->tv_sec == t2->tv_sec && t1->tv_nsec < t2->tv_nsec))
+		return -1;
+
+	if (t1->tv_sec > t2->tv_sec ||
+	    (t1->tv_sec == t2->tv_sec && t1->tv_nsec > t2->tv_nsec))
+		return 1;
+
+	return 0;
+}
+
+static int
+tlsev_match(const void *k1, const void *k2)
+{
+	struct tlsev *t1 = (struct tlsev *)k1;
+	struct tlsev *t2 = (struct tlsev *)k2;
+
+	return t1->fd == t2->fd;
+}
+
+static uint32_t
+tlsev_hash(const void *t)
+{
+	return ((struct tlsev *)t)->fd;
+}
+
+void
+tlsev_free(struct tlsev *t)
+{
+	if (t->peer_cert != NULL)
+		X509_free(t->peer_cert);
+
+	/* This will free up the associated BIOs */
+	SSL_free(t->ssl);
+
+	free(t);
+}
 
 void
 tlsev_init(int ssl_data_idx, int timeout)
 {
 	socket_timeout = timeout;
 	tlsev_data_idx = ssl_data_idx;
-	bzero(&tlsev_store, sizeof(tlsev_store));
+
+	if (idxheap_init(&tlsev_store, TLSEV_STORE_BUCKETS,
+	    &tlsev_timeout_cmp, &tlsev_match,
+	    (void(*)(void *))&tlsev_free, &tlsev_hash)) {
+		xlog_strerror(LOG_CRIT, errno, "idxheap_init");
+		exit(1);
+	}
 }
 
 int
@@ -67,11 +118,13 @@ tlsev_create(int fd, SSL_CTX *ctx, struct sockaddr_in6 *peer, struct xerr *e)
 	SSL_set_bio(t->ssl, t->r, t->w);
 	SSL_set_accept_state(t->ssl);
 
-	t->next = tlsev_store.head[fd % TLSEV_STORE_BUCKETS];
-	tlsev_store.head[fd % TLSEV_STORE_BUCKETS] = t;
-
 	clock_gettime(CLOCK_MONOTONIC, &t->timeout_at);
 	t->timeout_at.tv_sec += socket_timeout;
+
+	if (idxheap_insert(&tlsev_store, t) == -1) {
+		tlsev_free(t);
+		return XERRF(e, XLOG_ERRNO, errno, "idxheap_insert");
+	}
 
 	return 0;
 }
@@ -79,46 +132,24 @@ tlsev_create(int fd, SSL_CTX *ctx, struct sockaddr_in6 *peer, struct xerr *e)
 int
 tlsev_close(struct tlsev *t)
 {
-	int           fd = t->fd;
-	struct tlsev *prev = NULL;
-	int           r;
+	int r;
 
-	for (t = tlsev_store.head[fd % TLSEV_STORE_BUCKETS];
-	    t != NULL;
-	    prev = t, t = t->next) {
-		if (t->fd != fd)
-			continue;
-
-		if (prev == NULL)
-			tlsev_store.head[fd % TLSEV_STORE_BUCKETS] = t->next;
-		else
-			prev->next = t->next;
-		break;
-	}
-
-	if (t->peer_cert != NULL)
-		X509_free(t->peer_cert);
-
-	/* This will free up the associated BIOs */
-	SSL_free(t->ssl);
+	if ((struct tlsev *)idxheap_removek(&tlsev_store, t) != t)
+		abort();
 
 	xlog(LOG_INFO, NULL, "closing fd %d", t->fd);
 	if ((r = close(t->fd)) == -1)
 		xlog_strerror(LOG_ERR, errno, "close: %d", t->fd);
-	free(t);
+	tlsev_free(t);
 	return r;
 }
 
 struct tlsev *
 tlsev_get(int fd)
 {
-	struct tlsev *t;
-	for (t = tlsev_store.head[fd % TLSEV_STORE_BUCKETS]; t != NULL;
-	    t = t->next) {
-		if (t->fd == fd)
-			return t;
-	}
-	return NULL;
+	struct tlsev key;
+	key.fd = fd;
+	return idxheap_lookup(&tlsev_store, &key);
 }
 
 int
@@ -130,6 +161,9 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 
 	clock_gettime(CLOCK_MONOTONIC, &t->timeout_at);
 	t->timeout_at.tv_sec += socket_timeout;
+	if (idxheap_update(&tlsev_store, t) == NULL)
+		xlog(LOG_ERR, NULL, "%s: idxheap_update: returned NULL "
+		    "for fd %d", __func__, t->fd);
 
 	/* Don't read more if we're already full */
 	if (SSL_is_init_finished(t->ssl) &&
@@ -197,6 +231,9 @@ tlsev_out(struct tlsev *t, struct xerr *e)
 
 	clock_gettime(CLOCK_MONOTONIC, &t->timeout_at);
 	t->timeout_at.tv_sec += socket_timeout;
+	if (idxheap_update(&tlsev_store, t) == NULL)
+		xlog(LOG_ERR, NULL, "%s: idxheap_update: returned NULL "
+		    "for fd %d", __func__, t->fd);
 
 	if ((pending = BIO_pending(t->w)) < 0)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_pending");
@@ -294,9 +331,8 @@ tlsev_run(int lsock, SSL_CTX *ctx, int max_clients)
 	socklen_t            peerlen = sizeof(peer);
 	char                 hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
 	struct tlsev        *t;
-	struct tlsev         timeout_queue[max_clients];
+	struct timespec      now;
 
-	bzero(timeout_queue, sizeof(timeout_queue));
 #ifdef __OpenBSD__
 	if ((kq = kqueue()) == -1) {
 		xlog_strerror(LOG_ERR, errno, "kqueue");
@@ -355,11 +391,34 @@ tlsev_run(int lsock, SSL_CTX *ctx, int max_clients)
 			}
 			if (shutdown_triggered && lsock > -1) {
 #ifndef __OpenBSD__
-				if (del_epoll_fd(epollfd, lsock) == -1)
+				if (accepting &&
+				    del_epoll_fd(epollfd, lsock) == -1)
 					exit(1);
 #endif
 				close(lsock);
 				lsock = -1;
+			}
+			continue;
+		}
+
+		if (nev == 0) {
+			clock_gettime(CLOCK_MONOTONIC, &now);
+
+			t = idxheap_peek(&tlsev_store, 0);
+			while (t != NULL) {
+				if (now.tv_sec < t->timeout_at.tv_sec ||
+				    (now.tv_sec == t->timeout_at.tv_sec &&
+				     now.tv_nsec <= t->timeout_at.tv_nsec))
+					break;
+#ifdef __OpenBSD__
+				EV_SET(&ch[chn++], evfd, EVFILT_READ,
+				    EV_DELETE, 0, 0, 0);
+#else
+				del_epoll_fd(epollfd, t->fd);
+#endif
+				if (tlsev_close(t) != -1)
+					active_clients--;
+				t = idxheap_peek(&tlsev_store, 0);
 			}
 			continue;
 		}

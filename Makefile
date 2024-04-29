@@ -1,8 +1,8 @@
 CC = cc
 CFLAGS = -Wall -g
 LIBS = -lcrypto -lssl -ltls
-SRCS = certainty.c config_vars.c xlog.c util.c tlsev.c
-OBJS = config_vars.o xlog.o util.o tlsev.o
+SRCS = certainty.c config_vars.c xlog.c util.c tlsev.c idxheap.c
+OBJS = config_vars.o xlog.o util.o tlsev.o idxheap.o
 
 all: certainty
 

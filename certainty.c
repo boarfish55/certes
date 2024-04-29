@@ -791,8 +791,7 @@ do_daemon(const char **argv)
 		    "unveil: %s", certainty_conf.serial_file);
 		exit(1);
 	}
-	if (pledge("stdio rpath wpath cpath inet "
-	    "flock dns proc", "") == -1) {
+	if (pledge("stdio rpath wpath cpath inet flock dns proc", "") == -1) {
 		xlog_strerror(LOG_ERR, errno, "pledge");
 		exit(1);
 	}

@@ -11,4 +11,4 @@ port: 9790
 listen_backlog: 128
 prefork: 4
 max_clients: 2
-socket_timeout: 300
+socket_timeout: 10
