@@ -37,7 +37,8 @@ X509_STORE *store;
 EVP_PKEY   *priv_key;
 X509       *ca_crt;
 
-int  shutdown_triggered = 0;
+volatile sig_atomic_t shutdown_triggered = 0;
+
 int  foreground = 0;
 int  debug = 0;
 int  ssl_data_idx;

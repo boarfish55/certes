@@ -9,6 +9,7 @@
 #include "xlog.h"
 
 struct tlsev {
+	uint64_t             id;
 	int                  fd;
 	SSL                 *ssl;
 	BIO                 *r;
@@ -21,12 +22,14 @@ struct tlsev {
 	char                 retry_buf[4096];
 	int                  retry_len;
 
+	// TODO: in_buf should be as big as our max request size
+	// ulimit pipe size should ideally be as big so we can pass
+	// the entire thing at once? Maybe don't do an array but
+	// alloc the buffer on the heap so we can grow it up to message
+	// max len? Plus no need to alloc anything as long as we didn't
+	// get any data. Same for retry_buf.
 	char                 in_buf[4096];
 	int                  in_len;
-
-	struct tlsev        *next;
-
-	// TODO: maybe a read queue and a write queue?
 };
 
 void          tlsev_init(int, int);

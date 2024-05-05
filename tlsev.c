@@ -9,6 +9,7 @@
 #include <openssl/ssl.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <strings.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -19,9 +20,11 @@
 
 static struct idxheap tlsev_store;
 
+static volatile sig_atomic_t shutdown_triggered = 0;
+
 static int socket_timeout;
 static int tlsev_data_idx;
-static int shutdown_triggered = 0;
+static int next_id = 1;
 
 static int
 tlsev_timeout_cmp(const void *k1, const void *k2)
@@ -69,6 +72,10 @@ tlsev_free(struct tlsev *t)
 	free(t);
 }
 
+// TODO: pass a callback for when we have bytes to read, where we pass
+//       the session ID, client cert, as well as return buffers with
+//       the response if any.
+//       But if we do that, the entire response is returned.
 void
 tlsev_init(int ssl_data_idx, int timeout)
 {
@@ -96,6 +103,7 @@ tlsev_create(int fd, SSL_CTX *ctx, struct sockaddr_in6 *peer, struct xerr *e)
 		return XERRF(e, XLOG_ERRNO, errno, "malloc");
 
 	bzero(t, sizeof(struct tlsev));
+	t->id = next_id++;
 	t->fd = fd;
 	memcpy(&t->peer_addr, peer, sizeof(t->peer_addr));
 	if ((t->r = BIO_new(BIO_s_mem())) == NULL) {
@@ -174,8 +182,6 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 	if (n == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "read");
 	else if (n == 0)
-		// TODO: any case where we'd want to return how many
-		// buffered bytes instead of indicating EOF now?
 		return XERRF(e, XLOG_APP, XLOG_EOF, "read EOF");
 
 	if ((r = BIO_write(t->r, buf, n)) < 0)
@@ -192,7 +198,6 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 			case SSL_ERROR_WANT_READ:
 			case SSL_ERROR_WANT_WRITE:
 			case SSL_ERROR_ZERO_RETURN:
-				// TODO: test the zero return one...
 				return 0;
 			case SSL_ERROR_SSL:
 				return XERRF(e, XLOG_SSL, r,
@@ -220,6 +225,7 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 		}
 	} else
 		t->in_len += r;
+	// TODO: maybe return 0 when the request isn't complete?
 	return t->in_len;
 }
 
@@ -274,6 +280,7 @@ tlsev_read(struct tlsev *t, char *buf, int len, struct xerr *e)
 int
 tlsev_write(struct tlsev *t, const char *buf, int len, struct xerr *e)
 {
+	// TODO: might need a limit here, because mem BIOs don't have one
 	int r = SSL_write(t->ssl, buf, len);
 	if (r < 0) {
 		r = SSL_get_error(t->ssl, r);
@@ -553,6 +560,15 @@ tlsev_run(int lsock, SSL_CTX *ctx, int max_clients)
 						xlog(LOG_ERR, &e,
 						    "fd=%d", t->fd);
 					} else {
+						// TODO: writing back
+						// may need to be elsewhere,
+						// but we have to be careful
+						// not to grow the w BIO too
+						// much.
+						// Maybe disable polling
+						// until we write the request
+						// back, if the BIO has too
+						// much data
 						if (tlsev_write(t, buf, r,
 						    xerrz(&e)) == -1) {
 							xlog(LOG_ERR, &e,
@@ -563,7 +579,6 @@ tlsev_run(int lsock, SSL_CTX *ctx, int max_clients)
 
 				if ((r = tlsev_bio_pending(t, NULL, &wpending,
 				    xerrz(&e))) == -1) {
-					// TODO: cleanup a bit
 					xlog(LOG_ERR, &e, "fd=%d", t->fd);
 #ifndef __OpenBSD__
 					del_epoll_fd(epollfd, t->fd);
