@@ -37,6 +37,8 @@ X509_STORE *store;
 EVP_PKEY   *priv_key;
 X509       *ca_crt;
 
+struct tlsev_listener listener;
+
 volatile sig_atomic_t shutdown_triggered = 0;
 
 int  foreground = 0;
@@ -731,7 +733,7 @@ handle_signals(int sig)
 {
 	xlog(LOG_NOTICE, NULL, "signal received: %d", sig);
 	shutdown_triggered = 1;
-	tlsev_shutdown();
+	tlsev_shutdown(&listener);
 }
 
 int
@@ -851,11 +853,15 @@ do_daemon(const char **argv)
 	}
 
 	ssl_data_idx = SSL_get_ex_new_index(0, "tlsev_idx", NULL, NULL, NULL);
-	tlsev_init(ssl_data_idx, certainty_conf.socket_timeout,
-	    &daemon_in_cb, NULL);
+	if (tlsev_init(&listener, ctx, lsock, certainty_conf.socket_timeout,
+	    certainty_conf.max_clients, ssl_data_idx,
+	    &daemon_in_cb, NULL) == -1) {
+		xlog_strerror(LOG_ERR, errno, "tlsev_init");
+		exit(1);
+	}
 
 	if (certainty_conf.prefork <= 0 || foreground) {
-		tlsev_run(lsock, ctx, certainty_conf.max_clients);
+		tlsev_run(&listener);
 		return 0;
 	}
 
@@ -865,7 +871,7 @@ do_daemon(const char **argv)
 			xlog_strerror(LOG_ERR, errno, "fork");
 		} else if (pid == 0) {
 			setproctitle("listener");
-			tlsev_run(lsock, ctx, certainty_conf.max_clients);
+			tlsev_run(&listener);
 			/* Never reached */
 			exit(1);
 		}
@@ -889,8 +895,7 @@ do_daemon(const char **argv)
 				xlog_strerror(LOG_ERR, errno, "fork");
 			} else if (pid == 0) {
 				setproctitle("listener");
-				tlsev_run(lsock, ctx,
-				    certainty_conf.max_clients);
+				tlsev_run(&listener);
 				/* Never reached */
 				exit(1);
 			} else {
