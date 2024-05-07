@@ -633,7 +633,6 @@ tlsev_run(struct tlsev_listener *listener)
 			}
 		}
 	}
-	exit(0);
 }
 
 void
