@@ -16,8 +16,6 @@
 #include "tlsev.h"
 #include "idxheap.h"
 
-#define TLSEV_STORE_BUCKETS 1000
-
 static int
 tlsev_timeout_cmp(const void *k1, const void *k2)
 {
@@ -80,10 +78,12 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
 	l->tlsev_in_cb = in_cb;
 	l->tlsev_in_cb_data_free = in_cb_data_free;
 
-	if (idxheap_init(&l->tlsev_store, TLSEV_STORE_BUCKETS,
+	if (idxheap_init(&l->tlsev_store,
+	    (max_clients / 2 < 1) ? 2 : max_clients / 2,
 	    &tlsev_timeout_cmp, &tlsev_match,
 	    (void(*)(void *))&tlsev_free, &tlsev_hash))
 		return -1;
+
 	return 0;
 }
 
@@ -333,7 +333,6 @@ del_epoll_fd(int epollfd, int fd)
 }
 #endif
 
-// TODO: move run args to tlsev_init()
 void
 tlsev_run(struct tlsev_listener *listener)
 {
@@ -341,14 +340,14 @@ tlsev_run(struct tlsev_listener *listener)
 #define TLSEV_READ   0x01
 #define TLSEV_WRITE  0x02
 	uint8_t              evtype;
-#define MAX_SOCK_EVENTS 128
 #ifdef __OpenBSD__
 	int                  kq, nev, chn = 0;
-	struct kevent        ev[MAX_SOCK_EVENTS], ch[MAX_SOCK_EVENTS * 2];
+	struct kevent        ev[listener->max_clients];
+	struct kevent        ch[listener->max_clients * 2];
 	struct timespec      timeout = {1, 0};
 #else
 	int                  epollfd, nev;
-	struct epoll_event   ev, events[MAX_SOCK_EVENTS];
+	struct epoll_event   ev, events[listener->max_clients];
 #endif
 	struct xerr          e;
 	int                  fd, evfd;
@@ -402,10 +401,10 @@ tlsev_run(struct tlsev_listener *listener)
 		}
 
 #ifdef __OpenBSD__
-		nev = kevent(kq, ch, chn, ev, MAX_SOCK_EVENTS, &timeout);
+		nev = kevent(kq, ch, chn, ev, listener->max_clients, &timeout);
 		chn = 0;
 #else
-		nev = epoll_wait(epollfd, events, MAX_SOCK_EVENTS, 1000);
+		nev = epoll_wait(epollfd, events, listener->max_clients, 1000);
 #endif
 		if (nev == -1) {
 			if (errno != EINTR) {
@@ -605,10 +604,13 @@ tlsev_run(struct tlsev_listener *listener)
 				if (r == -1) {
 					xlog(LOG_ERR, &e, "write on fd %d",
 					    t->fd);
-					// TODO: cleanup/close here
+#ifndef __OpenBSD__
+					del_epoll_fd(epollfd, t->fd);
+#endif
+					if (tlsev_close(listener, t) != -1)
+						active_clients--;
 					continue;
 				}
-
 #ifdef __OpenBSD__
 				if (r == 0)
 					EV_SET(&ch[chn++], t->fd, EVFILT_WRITE,

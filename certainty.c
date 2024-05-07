@@ -774,7 +774,7 @@ do_daemon(const char **argv)
 	if (geteuid() == 0) {
 		if (drop_privileges(certainty_conf.unpriv_group,
 		    certainty_conf.unpriv_user, &e) == -1) {
-			xlog(LOG_ERR, &e, "");
+			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
 	}
@@ -807,8 +807,8 @@ do_daemon(const char **argv)
 #endif
 
 	if ((ctx = SSL_CTX_new(TLS_method())) == NULL) {
-		// TODO: xlog...
-		ERR_print_errors_fp(stderr);
+		xlog(LOG_ERR, NULL, "SSL_CTX_new: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
 		exit(1);
 	}
 
@@ -818,12 +818,13 @@ do_daemon(const char **argv)
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback_daemon);
 
 	if (SSL_CTX_use_certificate(ctx, ca_crt) != 1) {
-		// TODO: xlog...
-		ERR_print_errors_fp(stderr);
+		xlog(LOG_ERR, NULL, "SSL_CTX_use_certificate: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
 		exit(1);
 	}
 	if (SSL_CTX_use_PrivateKey(ctx, priv_key) != 1) {
-		ERR_print_errors_fp(stderr);
+		xlog(LOG_ERR, NULL, "SSL_CTX_use_PrivateKey: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
 		exit(1);
 	}
 

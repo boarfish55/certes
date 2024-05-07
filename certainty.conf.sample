@@ -8,7 +8,7 @@ serial_file: /home/plalonde/prog/certainty/ca/serial
 min_serial: 0x01
 max_serial: 0xff
 port: 9790
-listen_backlog: 128
+listen_backlog: 1024
 prefork: 4
-max_clients: 2
+max_clients: 1000
 socket_timeout: 10
