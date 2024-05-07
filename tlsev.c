@@ -87,6 +87,12 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
 	return 0;
 }
 
+void
+tlsev_destroy(struct tlsev_listener *l)
+{
+	idxheap_free(&l->tlsev_store);
+}
+
 X509 *
 tlsev_peer_cert(struct tlsev *t)
 {

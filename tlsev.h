@@ -47,6 +47,7 @@ int                  tlsev_init(struct tlsev_listener *, SSL_CTX *, int,
 			 int (*in_cb)(struct tlsev *, const char *,
 			 size_t, void *),
 			 void (*in_cb_data_free)(void *));
+void                 tlsev_destroy(struct tlsev_listener *);
 void                 tlsev_run(struct tlsev_listener *);
 void                 tlsev_shutdown(struct tlsev_listener *);
 X509                *tlsev_peer_cert(struct tlsev *);

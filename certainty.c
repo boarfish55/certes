@@ -863,6 +863,7 @@ do_daemon(const char **argv)
 
 	if (certainty_conf.prefork <= 0 || foreground) {
 		tlsev_run(&listener);
+		SSL_CTX_free(ctx);
 		return 0;
 	}
 
@@ -873,8 +874,8 @@ do_daemon(const char **argv)
 		} else if (pid == 0) {
 			setproctitle("listener");
 			tlsev_run(&listener);
-			/* Never reached */
-			exit(1);
+			SSL_CTX_free(ctx);
+			exit(0);
 		}
 	}
 
@@ -897,8 +898,8 @@ do_daemon(const char **argv)
 			} else if (pid == 0) {
 				setproctitle("listener");
 				tlsev_run(&listener);
-				/* Never reached */
-				exit(1);
+				SSL_CTX_free(ctx);
+				exit(0);
 			} else {
 				n_children++;
 			}
@@ -938,6 +939,7 @@ do_daemon(const char **argv)
 				break;
 		}
 	}
+	SSL_CTX_free(ctx);
 	xlog(LOG_NOTICE, NULL, "all children exited");
 	return 0;
 }
@@ -951,7 +953,7 @@ cleanup()
 int
 main(int argc, char **argv)
 {
-	int          opt;
+	int          opt, r;
 	char        *command;
 	X509_LOOKUP *lookup;
 	FILE        *f;
@@ -1069,7 +1071,9 @@ main(int argc, char **argv)
 		}
 		return sign(argv[optind], (const char **)argv + optind + 1);
 	} else if (strcmp(command, "daemon") == 0) {
-		return do_daemon((const char **)argv + optind + 1);
+		r = do_daemon((const char **)argv + optind + 1);
+		tlsev_destroy(&listener);
+		return r;
 	}
 
 	usage();
