@@ -735,6 +735,12 @@ handle_signals(int sig)
 }
 
 int
+daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void *data)
+{
+	return tlsev_reply(t, buf, n);
+}
+
+int
 do_daemon(const char **argv)
 {
 	SSL_CTX             *ctx;
@@ -845,7 +851,8 @@ do_daemon(const char **argv)
 	}
 
 	ssl_data_idx = SSL_get_ex_new_index(0, "tlsev_idx", NULL, NULL, NULL);
-	tlsev_init(ssl_data_idx, certainty_conf.socket_timeout);
+	tlsev_init(ssl_data_idx, certainty_conf.socket_timeout,
+	    &daemon_in_cb, NULL);
 
 	if (certainty_conf.prefork <= 0 || foreground) {
 		tlsev_run(lsock, ctx, certainty_conf.max_clients);

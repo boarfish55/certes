@@ -22,9 +22,11 @@ static struct idxheap tlsev_store;
 
 static volatile sig_atomic_t shutdown_triggered = 0;
 
-static int socket_timeout;
-static int tlsev_data_idx;
-static int next_id = 1;
+static int  socket_timeout;
+static int  tlsev_data_idx;
+static int  next_id = 1;
+static int  (*tlsev_in_cb)(struct tlsev *, const char *, size_t, void *);
+static void (*tlsev_in_cb_data_free)(void *);
 
 static int
 tlsev_timeout_cmp(const void *k1, const void *k2)
@@ -60,7 +62,7 @@ tlsev_hash(const void *t)
 	return ((struct tlsev *)t)->fd;
 }
 
-void
+static void
 tlsev_free(struct tlsev *t)
 {
 	if (t->peer_cert != NULL)
@@ -72,15 +74,15 @@ tlsev_free(struct tlsev *t)
 	free(t);
 }
 
-// TODO: pass a callback for when we have bytes to read, where we pass
-//       the session ID, client cert, as well as return buffers with
-//       the response if any.
-//       But if we do that, the entire response is returned.
 void
-tlsev_init(int ssl_data_idx, int timeout)
+tlsev_init(int ssl_data_idx, int timeout,
+    int (*in_cb)(struct tlsev *, const char *, size_t, void *),
+    void (*in_cb_data_free)(void *))
 {
 	socket_timeout = timeout;
 	tlsev_data_idx = ssl_data_idx;
+	tlsev_in_cb = in_cb;
+	tlsev_in_cb_data_free = in_cb_data_free;
 
 	if (idxheap_init(&tlsev_store, TLSEV_STORE_BUCKETS,
 	    &tlsev_timeout_cmp, &tlsev_match,
@@ -90,7 +92,19 @@ tlsev_init(int ssl_data_idx, int timeout)
 	}
 }
 
-int
+X509 *
+tlsev_peer_cert(struct tlsev *t)
+{
+	return t->peer_cert;
+}
+
+struct sockaddr_in6 *
+tlsev_peer(struct tlsev *t)
+{
+	return &t->peer_addr;
+}
+
+static int
 tlsev_create(int fd, SSL_CTX *ctx, struct sockaddr_in6 *peer, struct xerr *e)
 {
 	struct tlsev *t;
@@ -137,10 +151,13 @@ tlsev_create(int fd, SSL_CTX *ctx, struct sockaddr_in6 *peer, struct xerr *e)
 	return 0;
 }
 
-int
+static int
 tlsev_close(struct tlsev *t)
 {
 	int r;
+
+	if (tlsev_in_cb_data_free != NULL)
+		tlsev_in_cb_data_free(t->in_cb_data);
 
 	if ((struct tlsev *)idxheap_removek(&tlsev_store, t) != t)
 		abort();
@@ -148,11 +165,13 @@ tlsev_close(struct tlsev *t)
 	xlog(LOG_INFO, NULL, "closing fd %d", t->fd);
 	if ((r = close(t->fd)) == -1)
 		xlog_strerror(LOG_ERR, errno, "close: %d", t->fd);
+	if (t->retry_buf != NULL)
+		free(t->retry_buf);
 	tlsev_free(t);
 	return r;
 }
 
-struct tlsev *
+static struct tlsev *
 tlsev_get(int fd)
 {
 	struct tlsev key;
@@ -160,7 +179,7 @@ tlsev_get(int fd)
 	return idxheap_lookup(&tlsev_store, &key);
 }
 
-int
+static int
 tlsev_in(struct tlsev *t, struct xerr *e)
 {
 	char    buf[4096];
@@ -172,11 +191,6 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 	if (idxheap_update(&tlsev_store, t) == NULL)
 		xlog(LOG_ERR, NULL, "%s: idxheap_update: returned NULL "
 		    "for fd %d", __func__, t->fd);
-
-	/* Don't read more if we're already full */
-	if (SSL_is_init_finished(t->ssl) &&
-	    t->in_len == sizeof(t->in_buf))
-		return t->in_len;
 
 	n = read(t->fd, buf, sizeof(buf));
 	if (n == -1)
@@ -211,8 +225,7 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 		t->peer_cert = SSL_get_peer_certificate(t->ssl);
 	}
 
-	if ((r = SSL_read(t->ssl, t->in_buf + t->in_len,
-	    sizeof(t->in_buf) - t->in_len)) <= 0) {
+	if ((r = SSL_read(t->ssl, buf, sizeof(buf))) <= 0) {
 		r = SSL_get_error(t->ssl, r);
 		switch (r) {
 		case SSL_ERROR_WANT_READ:
@@ -223,17 +236,22 @@ tlsev_in(struct tlsev *t, struct xerr *e)
 			return XERRF(e, XLOG_SSL, r, "SSL_read: %s",
 			    ERR_error_string(r, NULL));
 		}
-	} else
-		t->in_len += r;
-	// TODO: maybe return 0 when the request isn't complete?
-	return t->in_len;
+	} else {
+		if ((r = tlsev_in_cb(t, buf, r, t->in_cb_data)) == -1) {
+			r = SSL_get_error(t->ssl, r);
+			return XERRF(e, XLOG_SSL, r, "SSL_write: %s",
+			    ERR_error_string(r, NULL));
+		}
+	}
+	return 0;
 }
 
-int
+static int
 tlsev_out(struct tlsev *t, struct xerr *e)
 {
 	ssize_t n;
-	int     r, to_write, pending;
+	int     r, pending;
+	char    buf[4096];
 
 	clock_gettime(CLOCK_MONOTONIC, &t->timeout_at);
 	t->timeout_at.tv_sec += socket_timeout;
@@ -244,53 +262,50 @@ tlsev_out(struct tlsev *t, struct xerr *e)
 	if ((pending = BIO_pending(t->w)) < 0)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_pending");
 
-	to_write = (pending > sizeof(t->retry_buf) - t->retry_len)
-	    ? sizeof(t->retry_buf) - t->retry_len
-	    : pending;
-	r = BIO_read(t->w, t->retry_buf, to_write);
-	if (r < 0)
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
-	t->retry_len += r;
-	pending -= r;
-
-	if (t->retry_len > 0) {
+	if (t->retry_buf != NULL) {
 		n = write(t->fd, t->retry_buf, t->retry_len);
 		if (n == -1) {
 			return XERRF(e, XLOG_ERRNO, errno, "write");
 		} else if (n < t->retry_len) {
 			t->retry_len -= n;
 			memmove(t->retry_buf, t->retry_buf + n, t->retry_len);
-		} else
+			return pending + t->retry_len;
+		} else {
 			t->retry_len = 0;
+			free(t->retry_buf);
+			t->retry_buf = NULL;
+		}
+	}
+
+	r = BIO_read(t->w, buf, (pending > sizeof(buf))
+	    ? sizeof(buf)
+	    : pending);
+	if (r < 0)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
+	pending -= r;
+
+	if (r > 0) {
+		n = write(t->fd, buf, r);
+		if (n == -1) {
+			return XERRF(e, XLOG_ERRNO, errno, "write");
+		} else if (n < r) {
+			if ((t->retry_buf = malloc(r - n)) == NULL)
+				return XERRF(e, XLOG_ERRNO, errno, "malloc");
+			memcpy(t->retry_buf, buf + n, r - n);
+			t->retry_len = r - n;
+		}
 	}
 
 	return pending + t->retry_len;
 }
 
 int
-tlsev_read(struct tlsev *t, char *buf, int len, struct xerr *e)
+tlsev_reply(struct tlsev *t, const char *buf, int len)
 {
-	int to_copy = (len > t->in_len) ? t->in_len : len;
-	memcpy(buf, t->in_buf, to_copy);
-	memmove(t->in_buf, t->in_buf + to_copy, t->in_len - to_copy);
-	t->in_len -= to_copy;
-	return to_copy;
+	return SSL_write(t->ssl, buf, len);
 }
 
-int
-tlsev_write(struct tlsev *t, const char *buf, int len, struct xerr *e)
-{
-	// TODO: might need a limit here, because mem BIOs don't have one
-	int r = SSL_write(t->ssl, buf, len);
-	if (r < 0) {
-		r = SSL_get_error(t->ssl, r);
-		return XERRF(e, XLOG_SSL, r, "SSL_write: %s",
-		    ERR_error_string(r, NULL));
-	}
-	return r;
-}
-
-int
+static int
 tlsev_bio_pending(struct tlsev *t, int *r, int *w, struct xerr *e)
 {
 	if (r != NULL && (*r = BIO_pending(t->r)) == -1)
@@ -314,6 +329,7 @@ del_epoll_fd(int epollfd, int fd)
 }
 #endif
 
+// TODO: move run args to tlsev_init()
 void
 tlsev_run(int lsock, SSL_CTX *ctx, int max_clients)
 {
@@ -545,38 +561,6 @@ tlsev_run(int lsock, SSL_CTX *ctx, int max_clients)
 					continue;
 				}
 
-				if (r > 0) {
-					// TODO: here's where we need to process
-					// pending read bytes; we should wait
-					// until we have a full request
-					// buffered; then we block until
-					// processed.
-
-					// Just echo...
-					char buf[4096];
-					r = tlsev_read(t, buf,
-					    sizeof(buf),xerrz(&e));
-					if (r == -1) {
-						xlog(LOG_ERR, &e,
-						    "fd=%d", t->fd);
-					} else {
-						// TODO: writing back
-						// may need to be elsewhere,
-						// but we have to be careful
-						// not to grow the w BIO too
-						// much.
-						// Maybe disable polling
-						// until we write the request
-						// back, if the BIO has too
-						// much data
-						if (tlsev_write(t, buf, r,
-						    xerrz(&e)) == -1) {
-							xlog(LOG_ERR, &e,
-							    "fd=%d", t->fd);
-						}
-					}
-				}
-
 				if ((r = tlsev_bio_pending(t, NULL, &wpending,
 				    xerrz(&e))) == -1) {
 					xlog(LOG_ERR, &e, "fd=%d", t->fd);
@@ -615,6 +599,7 @@ tlsev_run(int lsock, SSL_CTX *ctx, int max_clients)
 				if (r == -1) {
 					xlog(LOG_ERR, &e, "write on fd %d",
 					    t->fd);
+					// TODO: cleanup/close here
 					continue;
 				}
 
