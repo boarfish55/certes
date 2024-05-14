@@ -65,7 +65,7 @@ tlsev_free(struct tlsev *t)
 int
 tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
     int socket_timeout, int max_clients, int ssl_data_idx,
-    int (*in_cb)(struct tlsev *, const char *, size_t, void *),
+    int (*in_cb)(struct tlsev *, const char *, size_t, void **),
     void (*in_cb_data_free)(void *))
 {
 	l->ctx = ctx;
@@ -165,8 +165,10 @@ tlsev_close(struct tlsev_listener *l, struct tlsev *t)
 {
 	int r;
 
-	if (l->tlsev_in_cb_data_free != NULL)
+	if (l->tlsev_in_cb_data_free != NULL && t->in_cb_data != NULL) {
 		l->tlsev_in_cb_data_free(t->in_cb_data);
+		t->in_cb_data = NULL;
+	}
 
 	if ((struct tlsev *)idxheap_removek(&l->tlsev_store, t) != t)
 		abort();
@@ -247,10 +249,9 @@ tlsev_in(struct tlsev_listener *l, struct tlsev *t, struct xerr *e)
 		}
 	} else {
 		if ((r = l->tlsev_in_cb(t, buf, r,
-		    t->in_cb_data)) == -1) {
-			r = SSL_get_error(t->ssl, r);
-			return XERRF(e, XLOG_SSL, r, "SSL_write: %s",
-			    ERR_error_string(r, NULL));
+		    &t->in_cb_data)) == -1) {
+			return XERRF(e, XLOG_APP, XLOG_CALLBACK_ERR,
+			    "t->in_cb_data failed");
 		}
 	}
 	return 0;
@@ -312,7 +313,13 @@ tlsev_out(struct tlsev_listener *l, struct tlsev *t, struct xerr *e)
 int
 tlsev_reply(struct tlsev *t, const char *buf, int len)
 {
-	return SSL_write(t->ssl, buf, len);
+	int r;
+	if ((r = SSL_write(t->ssl, buf, len)) <= 0) {
+		xlog(LOG_ERR, NULL, "%s: SSL_write: %s", __func__,
+		    ERR_error_string(SSL_get_error(t->ssl, r), NULL));
+		return -1;
+	}
+	return r;
 }
 
 static int
@@ -555,8 +562,8 @@ tlsev_run(struct tlsev_listener *listener)
 			if (evtype & TLSEV_READ){
 				r = tlsev_in(listener, t, xerrz(&e));
 				if (r == -1) {
-					if (xerr_is(&e, XLOG_SSL,
-					    SSL_ERROR_SSL)) {
+					if (xerr_is(&e, XLOG_APP,
+					    XLOG_CALLBACK_ERR)) {
 						xlog(LOG_WARNING, &e,
 						    "fd=%d", t->fd);
 					} else if (!xerr_is(&e, XLOG_APP,

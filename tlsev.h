@@ -38,14 +38,14 @@ struct tlsev_listener {
 	struct idxheap         tlsev_store;
 	volatile sig_atomic_t  shutdown_triggered;
 
-	int  (*tlsev_in_cb)(struct tlsev *, const char *, size_t, void *);
+	int  (*tlsev_in_cb)(struct tlsev *, const char *, size_t, void **);
 	void (*tlsev_in_cb_data_free)(void *);
 };
 
 int                  tlsev_init(struct tlsev_listener *, SSL_CTX *, int,
                          int, int, int,
 			 int (*in_cb)(struct tlsev *, const char *,
-			 size_t, void *),
+			 size_t, void **),
 			 void (*in_cb_data_free)(void *));
 void                 tlsev_destroy(struct tlsev_listener *);
 void                 tlsev_run(struct tlsev_listener *);

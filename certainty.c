@@ -24,6 +24,7 @@
 #include <syslog.h>
 #include <unistd.h>
 #include "config_vars.h"
+#include "mdr_certainty.h"
 #include "util.h"
 #include "tlsev.h"
 #include "xlog.h"
@@ -736,10 +737,102 @@ handle_signals(int sig)
 	tlsev_shutdown(&listener);
 }
 
+struct daemon_in_cb_data {
+	size_t      len;
+	char       *buf;
+	size_t      buf_sz;
+	struct mdr  msg;
+};
+
+void free_daemon_in_cb_data(void *data) {
+	struct daemon_in_cb_data *cb_data = (struct daemon_in_cb_data *)data;
+	if (cb_data->buf != NULL)
+		free(cb_data->buf);
+	free(cb_data);
+}
+
 int
-daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void *data)
+daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 {
-	return tlsev_reply(t, buf, n);
+	struct daemon_in_cb_data *cb_data = (struct daemon_in_cb_data *)(*data);
+	void                     *tmp;
+	char                      echo[1024];
+	int                       r;
+
+	if (cb_data == NULL) {
+		cb_data = malloc(sizeof(struct daemon_in_cb_data));
+		if (cb_data == NULL) {
+			xlog_strerror(LOG_ERR, errno, "%s: malloc", __func__);
+			return -1;
+		}
+		bzero(cb_data, sizeof(struct daemon_in_cb_data));
+		cb_data->buf = malloc(n);
+		if (cb_data->buf == NULL) {
+			free(cb_data);
+			cb_data = NULL;
+			xlog_strerror(LOG_ERR, errno, "%s: malloc", __func__);
+			return -1;
+		}
+		cb_data->buf_sz = n;
+	} else {
+		tmp = realloc(cb_data->buf, cb_data->buf_sz + n);
+		if (tmp == NULL) {
+			xlog_strerror(LOG_ERR, errno, "%s: realloc", __func__);
+			free_daemon_in_cb_data(*data);
+			return -1;
+		}
+		cb_data->buf = tmp;
+		cb_data->buf_sz += n;
+	}
+
+	memcpy(cb_data->buf + cb_data->len, buf, n);
+	cb_data->len += n;
+
+	if (mdr_unpack_hdr(&cb_data->msg, cb_data->buf,
+	    cb_data->len) == MDR_FAIL) {
+		if (errno == EAGAIN)
+			return 0;
+		xlog_strerror(LOG_ERR, errno, "daemon_in_cb: mdr_decode");
+		return -1;
+	}
+
+	if (mdr_size(&cb_data->msg) > 16384) {
+		xlog(LOG_NOTICE, NULL,
+		    "%s: request too large", __func__);
+		return -1;
+	}
+
+	if (mdr_pending(&cb_data->msg))
+		return 0;
+
+	if (mdr_namespace(&cb_data->msg) != MDR_NS_CERTAINTY) {
+		xlog(LOG_NOTICE, NULL,
+		    "%s: unknown request received", __func__);
+		return -1;
+	}
+
+	switch (mdr_id(&cb_data->msg)) {
+	case MDR_ID_CERTAINTY_BOOTSTRAP:
+		if (mdr_unpack_hdr(&cb_data->msg,
+		    echo, sizeof(echo)) == MDR_FAIL)
+			return -1;
+		r = tlsev_reply(t, mdr_buf(&cb_data->msg),
+		    mdr_size(&cb_data->msg));
+		if (r == -1)
+			return -1;
+		// TODO: loop if (r < n), or have some kind of retry
+		memmove(cb_data->buf, cb_data->buf + mdr_size(&cb_data->msg),
+			cb_data->len - mdr_size(&cb_data->msg));
+		cb_data->len -= mdr_size(&cb_data->msg);
+		break;
+	default:
+		xlog(LOG_NOTICE, NULL,
+		    "%s: unknown request received: %u",
+		    __func__, mdr_id(&cb_data->msg));
+		return -1;
+	}
+
+	return 0;
 }
 
 int
@@ -856,7 +949,7 @@ do_daemon(const char **argv)
 	ssl_data_idx = SSL_get_ex_new_index(0, "tlsev_idx", NULL, NULL, NULL);
 	if (tlsev_init(&listener, ctx, lsock, certainty_conf.socket_timeout,
 	    certainty_conf.max_clients, ssl_data_idx,
-	    &daemon_in_cb, NULL) == -1) {
+	    &daemon_in_cb, &free_daemon_in_cb_data) == -1) {
 		xlog_strerror(LOG_ERR, errno, "tlsev_init");
 		exit(1);
 	}

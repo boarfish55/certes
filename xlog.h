@@ -20,7 +20,8 @@ enum xerr_code {
 	XLOG_NOENT,        /* Entity not found */
 	XLOG_OVERFLOW,     /* Value too large for container */
 	XLOG_SHORTIO,      /* Short read/write */
-	XLOG_WOULDBLOCK    /* Operation would block but is set non-blocking */
+	XLOG_WOULDBLOCK,   /* Operation would block but is set non-blocking */
+	XLOG_CALLBACK_ERR  /* Callback error */
 };
 
 #define XLOG_ALL     0xFFFF
