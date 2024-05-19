@@ -123,7 +123,9 @@ mdr_pending(struct mdr *m)
 		errno = EINVAL;
 		return UINT64_MAX;
 	}
-	return mdr_size(m) - mdr_tail_bytes(m) - mdr_tell(m);
+	if (m->buf_sz >= (mdr_size(m) - mdr_tail_bytes(m)))
+		return 0;
+	return mdr_size(m) - mdr_tail_bytes(m) - m->buf_sz;
 }
 
 int
@@ -251,6 +253,30 @@ mdr_pack_hdr(struct mdr *m, uint32_t flags, uint16_t namespace, uint16_t id,
 	*m->version = htobe16(version);
 
 	return mdr_update_size(m);
+}
+
+uint64_t
+mdr_pack_int64(struct mdr *m, int64_t v)
+{
+	return mdr_pack_uint64(m, (uint64_t)v);
+}
+
+uint64_t
+mdr_pack_int32(struct mdr *m, int32_t v)
+{
+	return mdr_pack_uint32(m, (uint32_t)v);
+}
+
+uint64_t
+mdr_pack_int16(struct mdr *m, int16_t v)
+{
+	return mdr_pack_uint16(m, (uint16_t)v);
+}
+
+uint64_t
+mdr_pack_int8(struct mdr *m, int8_t v)
+{
+	return mdr_pack_uint8(m, (uint8_t)v);
 }
 
 uint64_t
@@ -553,6 +579,61 @@ mdr_unpack_hdr(struct mdr *m, char *buf, size_t buf_sz)
 	}
 
 	return mdr_tell(m);
+}
+
+void
+mdr_print(struct mdr *m)
+{
+	char *b;
+	int   i;
+
+	if (m == NULL)
+		return;
+
+	printf("  size:        %lu\n", mdr_size(m));
+	printf("  namespace:   %u\n", mdr_namespace(m));
+	printf("  id:          %u\n", mdr_id(m));
+	printf("  version:     %u\n", mdr_version(m));
+	if (mdr_flags(m) & MDR_F_TAIL_BYTES)
+		printf("  tail bytes:  %lu\n", mdr_tail_bytes(m));
+	printf("\n");
+	printf("  payload (%lu bytes):\n",
+	    mdr_size(m) - mdr_hdr_size(mdr_flags(m)) - mdr_tail_bytes(m));
+
+	for (b = mdr_buf(m) + mdr_hdr_size(mdr_flags(m)), i = 0;
+	    b - (char *)mdr_buf(m) < mdr_size(m) - mdr_tail_bytes(m);
+	    b++, i++) {
+		if (i % 8 == 0)
+			printf("\n   ");
+		else if (i % 4 == 0)
+			printf(" ");
+		printf(" %02x", (unsigned char)*b);
+	}
+	printf("\n");
+}
+
+uint64_t
+mdr_unpack_int8(struct mdr *m, int8_t *v)
+{
+	return mdr_unpack_uint8(m, (uint8_t *)v);
+}
+
+uint64_t
+mdr_unpack_int16(struct mdr *m, int16_t *v)
+{
+	return mdr_unpack_uint16(m, (uint16_t *)v);
+}
+
+uint64_t
+mdr_unpack_int32(struct mdr *m, int32_t *v)
+{
+	return mdr_unpack_uint32(m, (uint32_t *)v);
+}
+
+uint64_t
+mdr_unpack_int64(struct mdr *m, int64_t *v)
+{
+	return mdr_unpack_uint64(m, (uint64_t *)v);
 }
 
 uint64_t

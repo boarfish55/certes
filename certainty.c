@@ -758,6 +758,7 @@ daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 	void                     *tmp;
 	char                      echo[1024];
 	int                       r;
+	uint64_t                  echo_sz;
 
 	if (cb_data == NULL) {
 		cb_data = malloc(sizeof(struct daemon_in_cb_data));
@@ -813,8 +814,9 @@ daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 
 	switch (mdr_id(&cb_data->msg)) {
 	case MDR_ID_CERTAINTY_BOOTSTRAP:
-		if (mdr_unpack_hdr(&cb_data->msg,
-		    echo, sizeof(echo)) == MDR_FAIL)
+		echo_sz = sizeof(echo);
+		if (mdr_unpack_string(&cb_data->msg,
+		    echo, &echo_sz) == MDR_FAIL)
 			return -1;
 		r = tlsev_reply(t, mdr_buf(&cb_data->msg),
 		    mdr_size(&cb_data->msg));
