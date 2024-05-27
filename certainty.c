@@ -1,4 +1,6 @@
 #include <sys/file.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -34,9 +36,9 @@
 const char *program = "certainty";
 const char *daemon_name = "certaintyd";
 int         NID_overnet_roles;
-X509_STORE *store;
-EVP_PKEY   *priv_key;
-X509       *ca_crt;
+X509_STORE *store = NULL;
+EVP_PKEY   *priv_key = NULL;
+X509       *ca_crt = NULL;
 
 struct tlsev_listener listener;
 
@@ -53,6 +55,7 @@ extern int   optind, opterr, optopt;
 struct {
 	char *unpriv_user;
 	char *unpriv_group;
+	int   enable_coredumps;
 
 	char  pid_file[PATH_MAX];
 	char  ca_file[PATH_MAX];
@@ -72,6 +75,7 @@ struct {
 } certainty_conf = {
 	"_certainty",
 	"_certainty",
+	0,
 	"/var/run/certainty.pid",
 	"ca/overnet.pem",
 	"ca/overnet.crl",
@@ -98,6 +102,12 @@ struct config_vars certainty_config_vars[] = {
 		CONFIG_VARS_GRNAM,
 		&certainty_conf.unpriv_group,
 		0
+	},
+	{
+		"enable_coredumps",
+		CONFIG_VARS_BOOLINT,
+		&certainty_conf.enable_coredumps,
+		sizeof(certainty_conf.enable_coredumps)
 	},
 	{
 		"pid_file",
@@ -797,6 +807,12 @@ daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 		return -1;
 	}
 
+	if (mdr_namespace(&cb_data->msg) != MDR_NS_CERTAINTY) {
+		xlog(LOG_NOTICE, NULL,
+		    "%s: unknown request namespace", __func__);
+		return -1;
+	}
+
 	if (mdr_size(&cb_data->msg) > 16384) {
 		xlog(LOG_NOTICE, NULL,
 		    "%s: request too large", __func__);
@@ -805,12 +821,6 @@ daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 
 	if (mdr_pending(&cb_data->msg))
 		return 0;
-
-	if (mdr_namespace(&cb_data->msg) != MDR_NS_CERTAINTY) {
-		xlog(LOG_NOTICE, NULL,
-		    "%s: unknown request received", __func__);
-		return -1;
-	}
 
 	switch (mdr_id(&cb_data->msg)) {
 	case MDR_ID_CERTAINTY_BOOTSTRAP:
@@ -849,6 +859,7 @@ do_daemon(const char **argv)
 	int                  wstatus;
 	pid_t                pid;
 	struct sigaction     act;
+	struct rlimit        zero_core = {0, 0};
 
 	sigemptyset(&act.sa_mask);
 	act.sa_flags = 0;
@@ -857,6 +868,12 @@ do_daemon(const char **argv)
 	    sigaction(SIGTERM, &act, NULL) == -1) {
 		err(1, "sigaction");
 	}
+
+	// TODO: Any child should be forked prior to loading private key
+	// but after pledge/unveil.
+	if (!certainty_conf.enable_coredumps &&
+	    setrlimit(RLIMIT_CORE, &zero_core) == -1)
+			err(1, "setrlimit");
 
 	if (!foreground) {
 		if (daemonize(daemon_name, certainty_conf.pid_file,
@@ -908,7 +925,7 @@ do_daemon(const char **argv)
 	}
 
 	SSL_CTX_set_security_level(ctx, 3);
-	SSL_CTX_set_cert_store(ctx, store);
+	SSL_CTX_set1_cert_store(ctx, store);
 	SSL_CTX_set_options(ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback_daemon);
 
@@ -959,17 +976,20 @@ do_daemon(const char **argv)
 	if (certainty_conf.prefork <= 0 || foreground) {
 		tlsev_run(&listener);
 		SSL_CTX_free(ctx);
-		return 0;
+		tlsev_destroy(&listener);
+		exit(0);
 	}
 
 	for (n_children = 0; n_children < certainty_conf.prefork;
 	    n_children++) {
 		if ((pid = fork()) == -1) {
 			xlog_strerror(LOG_ERR, errno, "fork");
+			exit(1);
 		} else if (pid == 0) {
 			setproctitle("listener");
 			tlsev_run(&listener);
 			SSL_CTX_free(ctx);
+			tlsev_destroy(&listener);
 			exit(0);
 		}
 	}
@@ -994,6 +1014,7 @@ do_daemon(const char **argv)
 				setproctitle("listener");
 				tlsev_run(&listener);
 				SSL_CTX_free(ctx);
+				tlsev_destroy(&listener);
 				exit(0);
 			} else {
 				n_children++;
@@ -1035,24 +1056,32 @@ do_daemon(const char **argv)
 		}
 	}
 	SSL_CTX_free(ctx);
+	tlsev_destroy(&listener);
 	xlog(LOG_NOTICE, NULL, "all children exited");
-	return 0;
+	exit(0);
 }
 
 void
 cleanup()
 {
 	config_vars_free(certainty_config_vars);
+	if (store != NULL)
+		X509_STORE_free(store);
+	if (ca_crt != NULL)
+		X509_free(ca_crt);
+	if (priv_key != NULL)
+		EVP_PKEY_free(priv_key);
 }
 
 int
 main(int argc, char **argv)
 {
-	int          opt, r;
+	int          opt;
 	char        *command;
 	X509_LOOKUP *lookup;
 	FILE        *f;
 	size_t       sz;
+	int          pkey_sz;
 
 	while ((opt = getopt(argc, argv, "c:hfd")) != -1) {
 		switch (opt) {
@@ -1108,6 +1137,8 @@ main(int argc, char **argv)
 	if (NID_overnet_roles == NID_undef)
 		err(1, "OBJ_create");
 
+	// TODO: this should be moved into each command that needs it, after
+	// forking children if needed.
 	if ((f = fopen(certainty_conf.key_file, "r")) == NULL)
 		err(1, "fopen");
 	if ((priv_key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
@@ -1115,6 +1146,13 @@ main(int argc, char **argv)
 		exit(1);
 	}
 	fclose(f);
+
+	if (!(pkey_sz = EVP_PKEY_size(priv_key))) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (mlock(priv_key, pkey_sz) == -1)
+		err(1, "mlock");
 
 	if ((f = fopen(certainty_conf.ca_file, "r")) == NULL)
 		err(1, "fopen");
@@ -1166,9 +1204,8 @@ main(int argc, char **argv)
 		}
 		return sign(argv[optind], (const char **)argv + optind + 1);
 	} else if (strcmp(command, "daemon") == 0) {
-		r = do_daemon((const char **)argv + optind + 1);
-		tlsev_destroy(&listener);
-		return r;
+		/* Does not return */
+		do_daemon((const char **)argv + optind + 1);
 	}
 
 	usage();

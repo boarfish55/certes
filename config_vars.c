@@ -204,6 +204,7 @@ config_vars_read(const char *cfg_path, struct config_vars *cfg_vars)
 			    p, line_n);
 		}
 	}
+	fclose(cfg);
 	return 0;
 }
 

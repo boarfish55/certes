@@ -1,5 +1,6 @@
 #unpriv_user: plalonde
 #unpriv_group: plalonde
+enable_coredumps: true
 pid_file: /tmp/certainty.pid
 ca_file: /home/plalonde/prog/certainty/ca/overnet.pem
 crl_file: /home/plalonde/prog/certainty/ca/overnet.crl
