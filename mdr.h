@@ -92,6 +92,8 @@ uint64_t mdr_pack_string(struct mdr *, const char *);
 uint64_t mdr_pack_mdr(struct mdr *, struct mdr *);
 uint64_t mdr_packf(struct mdr *, const char *, ...);
 
+uint64_t mdr_unpack_from_fd(struct mdr *, int, char *, size_t);
+uint64_t mdr_unpack_all(struct mdr *, char *, size_t, size_t);
 uint64_t mdr_unpack_hdr(struct mdr *, char *, size_t);
 uint64_t mdr_unpack_int8(struct mdr *, int8_t *);
 uint64_t mdr_unpack_int16(struct mdr *, int16_t *);

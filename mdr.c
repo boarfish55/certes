@@ -4,7 +4,28 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "mdr.h"
+
+static ssize_t
+readall(int fd, void *buf, size_t count)
+{
+        ssize_t r;
+        ssize_t n = 0;
+
+        while (n < count) {
+                r = read(fd, buf + n, count - n);
+                if (r == -1) {
+                        if (errno == EINTR)
+                                continue;
+                        return -1;
+                } else if (r == 0) {
+                        return n;
+                }
+                n += r;
+        }
+        return n;
+}
 
 static int
 mdr_can_fit(struct mdr *m, size_t n)
@@ -201,7 +222,7 @@ uint64_t
 mdr_pack_hdr(struct mdr *m, uint32_t flags, uint16_t namespace, uint16_t id,
     uint16_t version, char *buf, size_t buf_sz)
 {
-	if (m == NULL || (buf == NULL && buf_sz > 0)) {
+	if (m == NULL) {
 		errno = EINVAL;
 		return UINT64_MAX;
 	}
@@ -215,7 +236,7 @@ mdr_pack_hdr(struct mdr *m, uint32_t flags, uint16_t namespace, uint16_t id,
 		m->buf_sz = buf_sz;
 		m->dyn = 0;
 	} else {
-		if ((m->buf = malloc(mdr_hdr_size(flags))) == NULL)
+		if ((m->buf = malloc(mdr_hdr_size(flags) + buf_sz)) == NULL)
 			return UINT64_MAX;
 		m->buf_sz = mdr_hdr_size(flags);
 		m->dyn = 1;
@@ -525,6 +546,69 @@ mdr_packf(struct mdr *m, const char *spec, ...)
 	}
 	va_end(ap);
 
+	return mdr_tell(m);
+}
+
+/*
+ * fd must be blocking.
+ */
+uint64_t
+mdr_unpack_from_fd(struct mdr *m, int fd, char *buf, size_t buf_sz)
+{
+	int r;
+
+	if (m == NULL || buf == NULL) {
+		errno = EINVAL;
+		return UINT64_MAX;
+	}
+
+	if (buf_sz < mdr_hdr_size(0)) {
+		errno = EINVAL;
+		return UINT64_MAX;
+	}
+
+	r = readall(fd, buf, mdr_hdr_size(0));
+	if (r == -1) {
+		return -1;
+	} else if (r == 0) {
+		errno = EPIPE;
+		return -1;
+	}
+
+	if (mdr_unpack_hdr(m, buf, buf_sz) == UINT64_MAX)
+		return UINT64_MAX;
+
+	if (mdr_size(m) > buf_sz) {
+		errno = EOVERFLOW;
+		return UINT64_MAX;
+	}
+
+	r = readall(fd, buf + r, mdr_size(m) - r);
+	if (r == -1) {
+		return -1;
+	} else if (r == 0) {
+		errno = EPIPE;
+		return -1;
+	}
+
+	return mdr_tell(m);
+}
+
+uint64_t
+mdr_unpack_all(struct mdr *m, char *buf, size_t buf_sz, size_t max_sz)
+{
+	if (mdr_unpack_hdr(m, buf, buf_sz) == UINT64_MAX)
+		return UINT64_MAX;
+
+	if (max_sz > 0 && mdr_size(m) > max_sz) {
+		errno = EOVERFLOW;
+		return UINT64_MAX;
+	}
+
+	if (mdr_pending(m) > 0) {
+		errno = EAGAIN;
+		return UINT64_MAX;
+	}
 	return mdr_tell(m);
 }
 
