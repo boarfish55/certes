@@ -335,6 +335,8 @@ tlsev_close(struct tlsev_listener *l, struct tlsev *t)
 		xlog_strerror(LOG_ERR, errno, "close: %d", t->fd);
 	if (t->retry_buf != NULL)
 		free(t->retry_buf);
+	if (t->peer_cert != NULL)
+		X509_free(t->peer_cert);
 	tlsev_free(t);
 	return r;
 }
@@ -390,7 +392,7 @@ tlsev_in(struct tlsev_listener *l, struct tlsev *t, struct xerr *e)
 				    ERR_error_string(r, NULL));
 			}
 		}
-		t->peer_cert = SSL_get0_peer_certificate(t->ssl);
+		t->peer_cert = SSL_get_peer_certificate(t->ssl);
 	}
 
 	if ((r = SSL_read(t->ssl, buf, sizeof(buf))) <= 0) {
