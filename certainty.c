@@ -888,11 +888,18 @@ backend_cb(int fd)
 		goto unpack_fail;
 	}
 
+	if (mdr_id(&reply) != MDR_ID_CERTAINTY_BEMSG) {
+		xlog(LOG_ERR, NULL,
+		    "%s: unexpected message ID from backend", __func__);
+		goto unpack_fail;
+	}
+
 	if (mdr_unpack_uint64(&reply, &id) == MDR_FAIL) {
 		xlog_strerror(LOG_ERR, errno,
 		    "%s: mdr_unpack_uint64", __func__);
 		goto unpack_fail;
 	}
+
 	if (mdr_unpack_int32(&reply, &tlsfd) == MDR_FAIL) {
 		xlog_strerror(LOG_ERR, errno,
 		    "%s: mdr_unpack_uint64", __func__);
