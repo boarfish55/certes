@@ -18,3 +18,4 @@ max_payload_size: 16384
 backend: /bin/cat
 backend_uid: plalonde
 backend_gid: plalonde
+backend_promises: stdio rpath flock

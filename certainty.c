@@ -79,6 +79,7 @@ struct {
 	char  backend[PATH_MAX];
 	char *backend_uid;
 	char *backend_gid;
+	char *backend_promises;
 } certainty_conf = {
 	"_certainty",
 	"_certainty",
@@ -98,7 +99,8 @@ struct {
 	16384,
 	"/bin/cat",
 	"_certainty",
-	"_certainty"
+	"_certainty",
+	"stdio rpath flock"
 };
 
 struct config_vars certainty_config_vars[] = {
@@ -215,6 +217,12 @@ struct config_vars certainty_config_vars[] = {
 		CONFIG_VARS_GRNAM,
 		&certainty_conf.backend_gid,
 		0
+	},
+	{
+		"backend_promises",
+		CONFIG_VARS_STRING,
+		&certainty_conf.backend_promises,
+		sizeof(certainty_conf.backend_promises)
 	},
 	CONFIG_VARS_LAST
 };
@@ -1046,12 +1054,12 @@ do_daemon(const char **argv)
 		    "unveil: %s", certainty_conf.ca_file);
 		exit(1);
 	}
-	if (unveil(certainty_conf.ca_file, "rw") == -1) {
+	if (unveil(certainty_conf.ca_file, "r") == -1) {
 		xlog_strerror(LOG_ERR, errno,
 		    "unveil: %s", certainty_conf.ca_file);
 		exit(1);
 	}
-	if (unveil(certainty_conf.crl_file, "rw") == -1) {
+	if (unveil(certainty_conf.crl_file, "r") == -1) {
 		xlog_strerror(LOG_ERR, errno,
 		    "unveil: %s", certainty_conf.crl_file);
 		exit(1);
@@ -1061,12 +1069,8 @@ do_daemon(const char **argv)
 		    "unveil: %s", certainty_conf.key_file);
 		exit(1);
 	}
-	if (unveil(certainty_conf.serial_file, "rw") == -1) {
-		xlog_strerror(LOG_ERR, errno,
-		    "unveil: %s", certainty_conf.serial_file);
-		exit(1);
-	}
-	if (pledge("stdio rpath wpath cpath inet dns proc exec", "stdio rpath flock") == -1) {
+	if (pledge("stdio rpath wpath cpath inet dns proc exec",
+	    certainty_conf.backend_promises) == -1) {
 		xlog_strerror(LOG_ERR, errno, "pledge");
 		exit(1);
 	}
