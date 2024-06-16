@@ -121,7 +121,6 @@ drop_privileges(const char *user, const char *group, struct xerr *e)
 	return 0;
 }
 
-#define CLOSE_X(fd) close_x(fd, #fd, __func__, __LINE__)
 void
 close_x(int fd, const char *fd_name, const char *fn, int line)
 {
@@ -144,26 +143,6 @@ writeall(int fd, const void *buf, size_t count)
 			return -1;
 		}
 		n += w;
-	}
-	return n;
-}
-
-ssize_t
-readall(int fd, void *buf, size_t count)
-{
-	ssize_t r;
-	ssize_t n = 0;
-
-	while (n < count) {
-		r = read(fd, buf + n, count - n);
-		if (r == -1) {
-			if (errno == EINTR)
-				continue;
-			return -1;
-		} else if (r == 0) {
-			return n;
-		}
-		n += r;
 	}
 	return n;
 }
