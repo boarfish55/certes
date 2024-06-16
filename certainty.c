@@ -1066,7 +1066,7 @@ do_daemon(const char **argv)
 		    "unveil: %s", certainty_conf.serial_file);
 		exit(1);
 	}
-	if (pledge("stdio rpath wpath cpath inet flock dns proc exec", "stdio rpath") == -1) {
+	if (pledge("stdio rpath wpath cpath inet dns proc exec", "stdio rpath flock") == -1) {
 		xlog_strerror(LOG_ERR, errno, "pledge");
 		exit(1);
 	}
@@ -1100,7 +1100,12 @@ do_daemon(const char **argv)
 	}
 
 	load_keys();
-
+#ifdef __OpenBSD__
+	if (pledge("stdio rpath wpath cpath inet dns proc", NULL) == -1) {
+		xlog_strerror(LOG_ERR, errno, "pledge");
+		exit(1);
+	}
+#endif
 	if ((ctx = SSL_CTX_new(TLS_method())) == NULL) {
 		xlog(LOG_ERR, NULL, "SSL_CTX_new: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
