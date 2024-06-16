@@ -1303,6 +1303,7 @@ main(int argc, char **argv)
 	} else if (strcmp(command, "daemon") == 0) {
 		/* Does not return */
 		do_daemon((const char **)argv + optind + 1);
+		status = 1;
 	} else {
 		usage();
 		status = 1;
