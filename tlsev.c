@@ -532,7 +532,6 @@ tlsev_run(struct tlsev_listener *l)
 	int                  nev;
 #ifdef __OpenBSD__
 	struct timespec      timeout = {1, 0};
-	struct kevent        ch;
 #else
 	struct epoll_event   ev;
 #endif
@@ -554,7 +553,7 @@ tlsev_run(struct tlsev_listener *l)
 			    "accepting new connections", l->active_clients);
 			l->accepting = 1;
 #ifdef __OpenBSD__
-			EV_SET(&ch[l->chn++], l->lsock, EVFILT_READ,
+			EV_SET(&l->ch[l->chn++], l->lsock, EVFILT_READ,
 			    EV_ENABLE, 0, 0, 0);
 #else
 			bzero(&ev, sizeof(ev));

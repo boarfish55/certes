@@ -986,8 +986,6 @@ void
 cleanup()
 {
 	config_vars_free(certainty_config_vars);
-	if (store != NULL)
-		X509_STORE_free(store);
 	if (ca_crt != NULL)
 		X509_free(ca_crt);
 	if (priv_key != NULL)
@@ -1088,7 +1086,7 @@ do_daemon(const char **argv)
 	}
 
 	SSL_CTX_set_security_level(ctx, 3);
-	SSL_CTX_set1_cert_store(ctx, store);
+	SSL_CTX_set_cert_store(ctx, store);
 	SSL_CTX_set_options(ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback_daemon);
 
@@ -1305,8 +1303,10 @@ main(int argc, char **argv)
 	} else if (strcmp(command, "daemon") == 0) {
 		/* Does not return */
 		do_daemon((const char **)argv + optind + 1);
-	} else
+	} else {
 		usage();
+		status = 1;
+	}
 
 	cleanup();
 	return status;
