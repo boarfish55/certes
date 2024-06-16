@@ -39,14 +39,16 @@ idxheap_heapfix(struct idxheap *ih, int i)
 	for (;;) {
 		/* Left child */
 		left = i * 2 + 1;
-		if (left < ih->n && ih->cmp(ih->h[left], ih->h[i]) > 0)
+		if (left < ih->n && ih->cmp(ih->h[left]->data,
+		    ih->h[i]->data) > 0)
 			move = left;
 		else
 			move = i;
 
 		/* Right child */
 		right = i * 2 + 2;
-		if (right < ih->n && ih->cmp(ih->h[right], ih->h[move]) > 0)
+		if (right < ih->n && ih->cmp(ih->h[right]->data,
+		    ih->h[move]->data) > 0)
 			move = right;
 
 		if (move == i)
@@ -218,7 +220,8 @@ idxheap_lookup(struct idxheap *ih, const void *key)
 void *
 idxheap_update(struct idxheap *ih, const void *key)
 {
-	return idxheap_lookup_internal(ih, key, 1);
+	struct idxheap_item *p = idxheap_lookup_internal(ih, key, 1);
+	return (p == NULL) ? NULL : p->data;
 }
 
 void *
