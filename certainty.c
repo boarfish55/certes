@@ -943,8 +943,15 @@ load_keys()
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
+#ifndef __OpenBSD__
+	/*
+	 * pledge(2) doesn't allow mlock().
+	 * Swap on OpenBSD is encrypted by default so this is
+	 * fine.
+	 */
 	if (mlock(priv_key, pkey_sz) == -1)
 		err(1, "mlock");
+#endif
 
 	if ((f = fopen(certainty_conf.ca_file, "r")) == NULL)
 		err(1, "fopen");
@@ -1024,6 +1031,21 @@ do_daemon(const char **argv)
 		}
 	}
 #ifdef __OpenBSD__
+	if (unveil(certainty_conf.backend, "x") == -1) {
+		xlog_strerror(LOG_ERR, errno,
+		    "unveil: %s", certainty_conf.ca_file);
+		exit(1);
+	}
+	if (unveil("/dev/null", "rw") == -1) {
+		xlog_strerror(LOG_ERR, errno,
+		    "unveil: %s", certainty_conf.ca_file);
+		exit(1);
+	}
+	if (unveil("/", "rx") == -1) {
+		xlog_strerror(LOG_ERR, errno,
+		    "unveil: %s", certainty_conf.ca_file);
+		exit(1);
+	}
 	if (unveil(certainty_conf.ca_file, "rw") == -1) {
 		xlog_strerror(LOG_ERR, errno,
 		    "unveil: %s", certainty_conf.ca_file);
@@ -1044,7 +1066,7 @@ do_daemon(const char **argv)
 		    "unveil: %s", certainty_conf.serial_file);
 		exit(1);
 	}
-	if (pledge("stdio rpath wpath cpath inet flock dns proc", "") == -1) {
+	if (pledge("stdio rpath wpath cpath inet flock dns proc exec", "stdio rpath") == -1) {
 		xlog_strerror(LOG_ERR, errno, "pledge");
 		exit(1);
 	}
