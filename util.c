@@ -98,21 +98,26 @@ drop_privileges(const char *user, const char *group, struct xerr *e)
 	struct group  *gr;
 	struct passwd *pw;
 
-	if ((gr = getgrnam(group)) == NULL)
-		return XERRF(e, XLOG_ERRNO, errno, "getgrnam %s", group);
+	if (group != NULL) {
+		if ((gr = getgrnam(group)) == NULL)
+			return XERRF(e, XLOG_ERRNO, errno,
+			    "getgrnam %s", group);
 
-	if (setgid(gr->gr_gid) == -1)
-		return XERRF(e, XLOG_ERRNO, errno, "setgid");
-	if (setegid(gr->gr_gid) == -1)
-		return XERRF(e, XLOG_ERRNO, errno, "setegid");
+		if (setgid(gr->gr_gid) == -1)
+			return XERRF(e, XLOG_ERRNO, errno, "setgid");
+		if (setegid(gr->gr_gid) == -1)
+			return XERRF(e, XLOG_ERRNO, errno, "setegid");
+	}
 
-	if ((pw = getpwnam(user)) == NULL)
-		return XERRF(e, XLOG_ERRNO, errno, "getpwnam %s", user);
+	if (user != NULL) {
+		if ((pw = getpwnam(user)) == NULL)
+			return XERRF(e, XLOG_ERRNO, errno, "getpwnam %s", user);
 
-	if (setuid(pw->pw_uid) == -1)
-		return XERRF(e, XLOG_ERRNO, errno, "setuid");
-	if (seteuid(pw->pw_uid) == -1)
-		return XERRF(e, XLOG_ERRNO, errno, "seteuid");
+		if (setuid(pw->pw_uid) == -1)
+			return XERRF(e, XLOG_ERRNO, errno, "setuid");
+		if (seteuid(pw->pw_uid) == -1)
+			return XERRF(e, XLOG_ERRNO, errno, "seteuid");
+	}
 	return 0;
 }
 
@@ -164,7 +169,8 @@ readall(int fd, void *buf, size_t count)
 }
 
 int
-spawn(char *const argv[], int *stdin, int *stdout, struct xerr *e)
+spawn(char *const argv[], int *stdin, int *stdout, const char *user,
+    const char *group, struct xerr *e)
 {
 	pid_t pid;
 	int   p_in[2];
@@ -219,6 +225,13 @@ spawn(char *const argv[], int *stdin, int *stdout, struct xerr *e)
 		if (chdir("/") == -1) {
 			XERRF(e, XLOG_ERRNO, errno, "chdir");
 			_exit(1);
+		}
+
+		if (geteuid() == 0) {
+			if (drop_privileges(user, group, xerrz(e)) == -1) {
+				xlog(LOG_ERR, e, "drop_privileges");
+				_exit(1);
+			}
 		}
 
 		if (execv(argv[0], argv) == -1) {

@@ -12,7 +12,8 @@ ssize_t readall(int, void *, size_t);
 
 #define CLOSE_X(fd) close_x(fd, #fd, __func__, __LINE__)
 void   close_x(int, const char *, const char *, int);
-int    spawn(char *const argv[], int *, int *, struct xerr *);
+int    spawn(char *const[], int *, int *, const char *,
+           const char *, struct xerr *);
 char **cmdargv(char *);
 
 #endif

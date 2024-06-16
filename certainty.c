@@ -41,9 +41,11 @@ EVP_PKEY   *priv_key = NULL;
 X509       *ca_crt = NULL;
 
 struct tlsev_listener listener;
+struct tlsev_fd_cb    backend_reader;
 
 volatile sig_atomic_t shutdown_triggered = 0;
 
+int  backend_wfd;
 int  foreground = 0;
 int  debug = 0;
 int  ssl_data_idx;
@@ -53,8 +55,8 @@ extern char *optarg;
 extern int   optind, opterr, optopt;
 
 struct {
-	char *unpriv_user;
-	char *unpriv_group;
+	char *uid;
+	char *gid;
 	int   enable_coredumps;
 
 	char  pid_file[PATH_MAX];
@@ -72,6 +74,11 @@ struct {
 	uint64_t prefork;
 	uint64_t max_clients;
 	uint64_t socket_timeout;
+	uint64_t max_payload_size;
+
+	char  backend[PATH_MAX];
+	char *backend_uid;
+	char *backend_gid;
 } certainty_conf = {
 	"_certainty",
 	"_certainty",
@@ -87,20 +94,24 @@ struct {
 	128,
 	4,
 	1000,
-	10
+	10,
+	16384,
+	"/bin/cat",
+	"_certainty",
+	"_certainty"
 };
 
 struct config_vars certainty_config_vars[] = {
 	{
-		"unpriv_user",
+		"uid",
 		CONFIG_VARS_PWNAM,
-		&certainty_conf.unpriv_user,
+		&certainty_conf.uid,
 		0
 	},
 	{
-		"unpriv_group",
+		"gid",
 		CONFIG_VARS_GRNAM,
-		&certainty_conf.unpriv_group,
+		&certainty_conf.gid,
 		0
 	},
 	{
@@ -181,8 +192,34 @@ struct config_vars certainty_config_vars[] = {
 		&certainty_conf.socket_timeout,
 		sizeof(certainty_conf.socket_timeout)
 	},
+	{
+		"max_payload_size",
+		CONFIG_VARS_ULONG,
+		&certainty_conf.max_payload_size,
+		sizeof(certainty_conf.max_payload_size)
+	},
+	{
+		"backend",
+		CONFIG_VARS_STRING,
+		&certainty_conf.backend,
+		sizeof(certainty_conf.backend)
+	},
+	{
+		"backend_uid",
+		CONFIG_VARS_PWNAM,
+		&certainty_conf.backend_uid,
+		0
+	},
+	{
+		"backend_gid",
+		CONFIG_VARS_GRNAM,
+		&certainty_conf.backend_gid,
+		0
+	},
 	CONFIG_VARS_LAST
 };
+
+void load_keys();
 
 /*
  *  The verification callback can be used to customise the operation of
@@ -554,6 +591,8 @@ sign(const char *cert_path, const char **roles)
 	X509V3_CTX      ctx;
 	int             san_idx;
 
+	load_keys();
+
 	if ((f = fopen(cert_path, "r")) == NULL)
 		err(1, "fopen");
 	if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
@@ -766,17 +805,17 @@ daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 {
 	struct daemon_in_cb_data *cb_data = (struct daemon_in_cb_data *)(*data);
 	void                     *tmp;
-	char                      echo[1024];
-	int                       r;
-	uint64_t                  echo_sz;
+	struct mdr                bemsg;
+	int                       status;
 
 	if (cb_data == NULL) {
-		cb_data = malloc(sizeof(struct daemon_in_cb_data));
-		if (cb_data == NULL) {
+		*data = malloc(sizeof(struct daemon_in_cb_data));
+		if (*data == NULL) {
 			xlog_strerror(LOG_ERR, errno, "%s: malloc", __func__);
 			return -1;
 		}
-		bzero(cb_data, sizeof(struct daemon_in_cb_data));
+		bzero(*data, sizeof(struct daemon_in_cb_data));
+		cb_data = (struct daemon_in_cb_data *)(*data);
 		cb_data->buf = malloc(n);
 		if (cb_data->buf == NULL) {
 			free(cb_data);
@@ -785,81 +824,191 @@ daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 			return -1;
 		}
 		cb_data->buf_sz = n;
-	} else {
-		tmp = realloc(cb_data->buf, cb_data->buf_sz + n);
+	} else if (cb_data->len + n > cb_data->buf_sz) {
+		tmp = realloc(cb_data->buf, cb_data->len + n);
 		if (tmp == NULL) {
 			xlog_strerror(LOG_ERR, errno, "%s: realloc", __func__);
 			free_daemon_in_cb_data(*data);
 			return -1;
 		}
 		cb_data->buf = tmp;
-		cb_data->buf_sz += n;
+		cb_data->buf_sz = cb_data->len + n;
 	}
 
 	memcpy(cb_data->buf + cb_data->len, buf, n);
 	cb_data->len += n;
 
-	if (mdr_unpack_hdr(&cb_data->msg, cb_data->buf,
-	    cb_data->len) == MDR_FAIL) {
+	if (mdr_unpack_all(&cb_data->msg, cb_data->buf,
+	    cb_data->len, certainty_conf.max_payload_size) == MDR_FAIL) {
 		if (errno == EAGAIN)
 			return 0;
-		xlog_strerror(LOG_ERR, errno, "daemon_in_cb: mdr_decode");
+		xlog_strerror(LOG_ERR, errno, "%s: mdr_decode", __func__);
 		return -1;
 	}
 
-	if (mdr_namespace(&cb_data->msg) != MDR_NS_CERTAINTY) {
-		xlog(LOG_NOTICE, NULL,
-		    "%s: unknown request namespace", __func__);
-		return -1;
+	if ((status = pack_bemsg(&bemsg, tlsev_id(t), tlsev_fd(t), &cb_data->msg,
+	    tlsev_peer_cert(t))) == 0) {
+		if ((status = writeall(backend_wfd, mdr_buf(&bemsg),
+		    mdr_size(&bemsg))) == -1) {
+			xlog_strerror(LOG_ERR, errno, "%s: writeall", __func__);
+		}
 	}
 
-	if (mdr_size(&cb_data->msg) > 16384) {
-		xlog(LOG_NOTICE, NULL,
-		    "%s: request too large", __func__);
-		return -1;
+	mdr_free(&bemsg);
+
+	memmove(cb_data->buf, cb_data->buf + mdr_size(&cb_data->msg),
+	    cb_data->len - mdr_size(&cb_data->msg));
+	cb_data->len -= mdr_size(&cb_data->msg);
+	return status;
+}
+
+int
+backend_cb(int fd)
+{
+	struct mdr    reply, msg;
+	char          reply_buf[certainty_conf.max_payload_size + 4096];
+	char          msg_buf[certainty_conf.max_payload_size];
+	uint64_t      msg_buf_sz = sizeof(msg_buf);
+	struct tlsev *t;
+	uint64_t      id;
+	int           tlsfd;
+
+	if (mdr_unpack_from_fd(&reply, fd,
+	    reply_buf, sizeof(reply_buf)) == MDR_FAIL) {
+		xlog_strerror(LOG_ERR, errno,
+		    "%s: mdr_unpack_from_fd", __func__);
+		goto unpack_fail;
 	}
 
-	if (mdr_pending(&cb_data->msg))
-		return 0;
-
-	switch (mdr_id(&cb_data->msg)) {
-	case MDR_ID_CERTAINTY_BOOTSTRAP:
-		echo_sz = sizeof(echo);
-		if (mdr_unpack_string(&cb_data->msg,
-		    echo, &echo_sz) == MDR_FAIL)
-			return -1;
-		r = tlsev_reply(t, mdr_buf(&cb_data->msg),
-		    mdr_size(&cb_data->msg));
-		if (r == -1)
-			return -1;
-		// TODO: loop if (r < n), or have some kind of retry
-		memmove(cb_data->buf, cb_data->buf + mdr_size(&cb_data->msg),
-			cb_data->len - mdr_size(&cb_data->msg));
-		cb_data->len -= mdr_size(&cb_data->msg);
-		break;
-	default:
-		xlog(LOG_NOTICE, NULL,
-		    "%s: unknown request received: %u",
-		    __func__, mdr_id(&cb_data->msg));
-		return -1;
+	if (mdr_unpack_uint64(&reply, &id) == MDR_FAIL) {
+		xlog_strerror(LOG_ERR, errno,
+		    "%s: mdr_unpack_uint64", __func__);
+		goto unpack_fail;
+	}
+	if (mdr_unpack_int32(&reply, &tlsfd) == MDR_FAIL) {
+		xlog_strerror(LOG_ERR, errno,
+		    "%s: mdr_unpack_uint64", __func__);
+		goto unpack_fail;
 	}
 
+	if ((t = tlsev_get(&listener, tlsfd)) == NULL) {
+		xlog(LOG_ERR, NULL,
+		    "%s: tlsev_get on fd %d not found", __func__, fd);
+		return 1;
+	}
+
+	if (tlsev_id(t) != id) {
+		xlog(LOG_ERR, NULL,
+		    "%s: received reply from backend for a client that is "
+		    " gone on fd %d", __func__, tlsfd);
+		return 1;
+	}
+
+	if (mdr_unpack_mdr(&reply, &msg, msg_buf, &msg_buf_sz) == MDR_FAIL) {
+		xlog_strerror(LOG_ERR, errno,
+		    "%s: mdr_unpack_uint64", __func__);
+		goto unpack_fail;
+	}
+
+	if (msg_buf_sz > sizeof(msg_buf)) {
+		xlog(LOG_ERR, NULL,
+		    "%s: received oversized reply from backend", __func__);
+		return 1;
+	}
+
+	return tlsev_reply(t, mdr_buf(&msg), mdr_size(&msg));
+
+unpack_fail:
+	tlsev_shutdown(&listener);
+	shutdown_triggered = 1;
 	return 0;
+}
+
+void
+load_keys()
+{
+	FILE        *f;
+	int          pkey_sz;
+	X509_LOOKUP *lookup;
+
+	if ((f = fopen(certainty_conf.key_file, "r")) == NULL)
+		err(1, "fopen");
+	if ((priv_key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+
+	if (!(pkey_sz = EVP_PKEY_size(priv_key))) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (mlock(priv_key, pkey_sz) == -1)
+		err(1, "mlock");
+
+	if ((f = fopen(certainty_conf.ca_file, "r")) == NULL)
+		err(1, "fopen");
+	if ((ca_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+
+	if ((store = X509_STORE_new()) == NULL)
+		err(1, "X509_STORE_new");
+	//X509_STORE_set_verify_cb_func(store, verify_callback);
+	if ((lookup = X509_STORE_add_lookup(store, X509_LOOKUP_file())) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (!X509_load_cert_file(lookup, certainty_conf.ca_file,
+	    X509_FILETYPE_PEM)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (!X509_load_crl_file(lookup, certainty_conf.crl_file,
+	    X509_FILETYPE_PEM)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	if (!X509_STORE_set_flags(store, X509_V_FLAG_X509_STRICT|
+	    X509_V_FLAG_CRL_CHECK|X509_V_FLAG_CRL_CHECK_ALL)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	/*
+	 * We're not calling X509_LOOKUP_free() as this causes a segfault
+	 * if we try reusing X509_LOOKUP_file().
+	 */
+}
+
+void
+cleanup()
+{
+	config_vars_free(certainty_config_vars);
+	if (store != NULL)
+		X509_STORE_free(store);
+	if (ca_crt != NULL)
+		X509_free(ca_crt);
+	if (priv_key != NULL)
+		EVP_PKEY_free(priv_key);
 }
 
 int
 do_daemon(const char **argv)
 {
-	SSL_CTX             *ctx;
-	struct xerr          e;
-	int                  lsock;
-	struct sockaddr_in6  sa;
-	int                  one = 1;
-	int                  n_children;
-	int                  wstatus;
-	pid_t                pid;
-	struct sigaction     act;
-	struct rlimit        zero_core = {0, 0};
+	SSL_CTX              *ctx;
+	struct xerr           e;
+	int                   lsock;
+	struct sockaddr_in6   sa;
+	int                   one = 1;
+	int                   n_children;
+	int                   wstatus;
+	pid_t                 pid;
+	struct sigaction      act;
+	struct rlimit         zero_core = {0, 0};
+	char                **backend_argv;
+	int                   status;
 
 	sigemptyset(&act.sa_mask);
 	act.sa_flags = 0;
@@ -869,12 +1018,6 @@ do_daemon(const char **argv)
 		err(1, "sigaction");
 	}
 
-	// TODO: Any child should be forked prior to loading private key
-	// but after pledge/unveil.
-	if (!certainty_conf.enable_coredumps &&
-	    setrlimit(RLIMIT_CORE, &zero_core) == -1)
-			err(1, "setrlimit");
-
 	if (!foreground) {
 		if (daemonize(daemon_name, certainty_conf.pid_file,
 		    0, 0, &e) == -1) {
@@ -882,15 +1025,6 @@ do_daemon(const char **argv)
 			exit(1);
 		}
 	}
-
-	if (geteuid() == 0) {
-		if (drop_privileges(certainty_conf.unpriv_group,
-		    certainty_conf.unpriv_user, &e) == -1) {
-			xlog(LOG_ERR, &e, __func__);
-			exit(1);
-		}
-	}
-
 #ifdef __OpenBSD__
 	if (unveil(certainty_conf.ca_file, "rw") == -1) {
 		xlog_strerror(LOG_ERR, errno,
@@ -917,6 +1051,35 @@ do_daemon(const char **argv)
 		exit(1);
 	}
 #endif
+	backend_argv = cmdargv(certainty_conf.backend);
+	if (backend_argv == NULL) {
+		xlog_strerror(LOG_ERR, errno, "cmdargv");
+		exit(1);
+	}
+
+	bzero(&backend_reader, sizeof(backend_reader));
+	backend_reader.cb = &backend_cb;
+	if (spawn(backend_argv, &backend_wfd, &backend_reader.fd,
+	    certainty_conf.backend_uid, certainty_conf.backend_gid,
+	    xerrz(&e)) == -1) {
+		xlog(LOG_ERR, &e, __func__);
+		exit(1);
+	}
+	free(backend_argv);
+
+	if (!certainty_conf.enable_coredumps &&
+	    setrlimit(RLIMIT_CORE, &zero_core) == -1)
+			err(1, "setrlimit");
+
+	if (geteuid() == 0) {
+		if (drop_privileges(certainty_conf.gid,
+		    certainty_conf.uid, &e) == -1) {
+			xlog(LOG_ERR, &e, __func__);
+			exit(1);
+		}
+	}
+
+	load_keys();
 
 	if ((ctx = SSL_CTX_new(TLS_method())) == NULL) {
 		xlog(LOG_ERR, NULL, "SSL_CTX_new: %s",
@@ -973,11 +1136,17 @@ do_daemon(const char **argv)
 		exit(1);
 	}
 
+	if (tlsev_add_fd_cb(&listener, &backend_reader)) {
+		xlog_strerror(LOG_ERR, errno, "tlsev_add_fd_cb");
+		exit(1);
+	}
+
 	if (certainty_conf.prefork <= 0 || foreground) {
-		tlsev_run(&listener);
+		status = tlsev_run(&listener);
 		SSL_CTX_free(ctx);
 		tlsev_destroy(&listener);
-		exit(0);
+		cleanup();
+		exit(status);
 	}
 
 	for (n_children = 0; n_children < certainty_conf.prefork;
@@ -987,10 +1156,11 @@ do_daemon(const char **argv)
 			exit(1);
 		} else if (pid == 0) {
 			setproctitle("listener");
-			tlsev_run(&listener);
+			status = tlsev_run(&listener);
 			SSL_CTX_free(ctx);
 			tlsev_destroy(&listener);
-			exit(0);
+			cleanup();
+			exit(status);
 		}
 	}
 
@@ -1012,10 +1182,10 @@ do_daemon(const char **argv)
 				xlog_strerror(LOG_ERR, errno, "fork");
 			} else if (pid == 0) {
 				setproctitle("listener");
-				tlsev_run(&listener);
+				status = tlsev_run(&listener);
 				SSL_CTX_free(ctx);
 				tlsev_destroy(&listener);
-				exit(0);
+				exit(status);
 			} else {
 				n_children++;
 			}
@@ -1057,31 +1227,17 @@ do_daemon(const char **argv)
 	}
 	SSL_CTX_free(ctx);
 	tlsev_destroy(&listener);
+	cleanup();
 	xlog(LOG_NOTICE, NULL, "all children exited");
 	exit(0);
-}
-
-void
-cleanup()
-{
-	config_vars_free(certainty_config_vars);
-	if (store != NULL)
-		X509_STORE_free(store);
-	if (ca_crt != NULL)
-		X509_free(ca_crt);
-	if (priv_key != NULL)
-		EVP_PKEY_free(priv_key);
 }
 
 int
 main(int argc, char **argv)
 {
-	int          opt;
-	char        *command;
-	X509_LOOKUP *lookup;
-	FILE        *f;
-	size_t       sz;
-	int          pkey_sz;
+	int     opt, status;
+	char   *command;
+	size_t  sz;
 
 	while ((opt = getopt(argc, argv, "c:hfd")) != -1) {
 		switch (opt) {
@@ -1103,7 +1259,6 @@ main(int argc, char **argv)
 
 	if (config_vars_read(config_file_path, certainty_config_vars) == -1)
 		err(1, "config_vars_read");
-	atexit(&cleanup);
 
 	if (strncmp(certainty_conf.min_serial, "0x", 2) != 0)
 		errx(1, "min_serial does not begin with \"0x\"");
@@ -1137,77 +1292,22 @@ main(int argc, char **argv)
 	if (NID_overnet_roles == NID_undef)
 		err(1, "OBJ_create");
 
-	// TODO: this should be moved into each command that needs it, after
-	// forking children if needed.
-	if ((f = fopen(certainty_conf.key_file, "r")) == NULL)
-		err(1, "fopen");
-	if ((priv_key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	fclose(f);
-
-	if (!(pkey_sz = EVP_PKEY_size(priv_key))) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	if (mlock(priv_key, pkey_sz) == -1)
-		err(1, "mlock");
-
-	if ((f = fopen(certainty_conf.ca_file, "r")) == NULL)
-		err(1, "fopen");
-	if ((ca_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	fclose(f);
-
-	if ((store = X509_STORE_new()) == NULL)
-		err(1, "X509_STORE_new");
-	//X509_STORE_set_verify_cb_func(store, verify_callback);
-	if ((lookup = X509_STORE_add_lookup(store, X509_LOOKUP_file())) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	if (!X509_load_cert_file(lookup, certainty_conf.ca_file,
-	    X509_FILETYPE_PEM)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	if (!X509_load_crl_file(lookup, certainty_conf.crl_file,
-	    X509_FILETYPE_PEM)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	if (!X509_STORE_set_flags(store, X509_V_FLAG_X509_STRICT|
-	    X509_V_FLAG_CRL_CHECK|X509_V_FLAG_CRL_CHECK_ALL)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	/*
-	 * We're not calling X509_LOOKUP_free() as this causes a segfault
-	 * if we try reusing X509_LOOKUP_file().
-	 */
-
 	command = argv[optind++];
 
 	if (strcmp(command, "verify") == 0) {
-		if (optind >= argc) {
+		if (optind >= argc)
 			errx(1, "no certificate file provided");
-			exit(1);
-		}
-		return verify(argv[optind++]);
+		status = verify(argv[optind++]);
 	} else if (strcmp(command, "sign") == 0) {
-		if (optind >= argc) {
+		if (optind >= argc)
 			errx(1, "no certificate file provided");
-			exit(1);
-		}
-		return sign(argv[optind], (const char **)argv + optind + 1);
+		status = sign(argv[optind], (const char **)argv + optind + 1);
 	} else if (strcmp(command, "daemon") == 0) {
 		/* Does not return */
 		do_daemon((const char **)argv + optind + 1);
-	}
+	} else
+		usage();
 
-	usage();
-	return 1;
+	cleanup();
+	return status;
 }
