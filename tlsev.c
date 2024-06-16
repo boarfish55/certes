@@ -112,7 +112,7 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
 		idxheap_free(&l->tlsev_store);
 		return -1;
 	}
-	l->ev = malloc(sizeof(struct kevent) * l->max_events);
+	l->events = malloc(sizeof(struct kevent) * l->max_events);
 	if (l->ch == NULL) {
 		free(l->ch);
 		idxheap_free(&l->tlsev_store);
@@ -120,14 +120,14 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
 	}
 	if ((l->kq = kqueue()) == -1) {
 		free(l->ch);
-		free(l->ev);
+		free(l->events);
 		idxheap_free(&l->tlsev_store);
 		return -1;
 	}
 	EV_SET(&ch, l->lsock, EVFILT_READ, EV_ADD, 0, 0, 0);
 	if (kevent(l->kq, &ch, 1, NULL, 0, NULL) == -1) {
 		free(l->ch);
-		free(l->ev);
+		free(l->events);
 		idxheap_free(&l->tlsev_store);
 		close(l->kq);
 		return -1;

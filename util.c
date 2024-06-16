@@ -169,7 +169,7 @@ readall(int fd, void *buf, size_t count)
 }
 
 int
-spawn(char *const argv[], int *stdin, int *stdout, const char *user,
+spawn(char *const argv[], int *in, int *out, const char *user,
     const char *group, struct xerr *e)
 {
 	pid_t pid;
@@ -179,7 +179,7 @@ spawn(char *const argv[], int *stdin, int *stdout, const char *user,
 
 	if (pipe(p_in) == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "pipe");
-	*stdin = p_in[1];
+	*in = p_in[1];
 
 	if (pipe(p_out) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "pipe");
@@ -187,7 +187,7 @@ spawn(char *const argv[], int *stdin, int *stdout, const char *user,
 		CLOSE_X(p_in[1]);
 		return -1;
 	}
-	*stdout = p_out[0];
+	*out = p_out[0];
 
 	if ((pid = fork()) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "fork");
