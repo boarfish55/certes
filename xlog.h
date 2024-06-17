@@ -19,6 +19,7 @@ enum xerr_code {
 	XLOG_INVAL,        /* An invalid value was obtained */
 	XLOG_NOENT,        /* Entity not found */
 	XLOG_OVERFLOW,     /* Value too large for container */
+	XLOG_RANGE,        /* Value exceeds allowed range */
 	XLOG_SHORTIO,      /* Short read/write */
 	XLOG_WOULDBLOCK,   /* Operation would block but is set non-blocking */
 	XLOG_CALLBACK_ERR  /* Callback error */

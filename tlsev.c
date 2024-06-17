@@ -579,7 +579,7 @@ tlsev_run(struct tlsev_listener *l)
 		if (nev == -1) {
 			if (errno != EINTR) {
 #ifdef __OpenBSD__
-				xlog_strerror(LOG_ERR, errno, "kqueue");
+				xlog_strerror(LOG_ERR, errno, "kevent");
 #else
 				xlog_strerror(LOG_ERR, errno, "epoll_wait");
 #endif

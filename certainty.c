@@ -42,10 +42,9 @@ X509       *ca_crt = NULL;
 
 struct tlsev_listener listener;
 struct tlsev_fd_cb    backend_reader;
-
+int                   backend_wfd;
 volatile sig_atomic_t shutdown_triggered = 0;
 
-int  backend_wfd;
 int  foreground = 0;
 int  debug = 0;
 int  ssl_data_idx;
@@ -79,7 +78,7 @@ struct {
 	char  backend[PATH_MAX];
 	char *backend_uid;
 	char *backend_gid;
-	char *backend_promises;
+	char  backend_promises[LINE_MAX];
 } certainty_conf = {
 	"_certainty",
 	"_certainty",
@@ -1015,6 +1014,45 @@ cleanup()
 }
 
 int
+run(SSL_CTX *ctx, int lsock)
+{
+	int                  status;
+	struct xerr          e;
+	char               **backend_argv;
+
+	backend_argv = cmdargv(certainty_conf.backend);
+	if (backend_argv == NULL) {
+		xlog_strerror(LOG_ERR, errno, "cmdargv");
+		return 1;
+	}
+
+	bzero(&backend_reader, sizeof(backend_reader));
+	backend_reader.cb = &backend_cb;
+	if (spawn(backend_argv, &backend_wfd, &backend_reader.fd,
+	    certainty_conf.backend_uid, certainty_conf.backend_gid,
+	    xerrz(&e)) == -1) {
+		xlog(LOG_ERR, &e, __func__);
+		return 1;
+	}
+	free(backend_argv);
+
+	if (tlsev_init(&listener, ctx, lsock, certainty_conf.socket_timeout,
+	    certainty_conf.max_clients, ssl_data_idx, &daemon_in_cb,
+	    &free_daemon_in_cb_data) == -1) {
+		xlog_strerror(LOG_ERR, errno, "tlsev_init");
+		return 1;
+	}
+	if (tlsev_add_fd_cb(&listener, &backend_reader)) {
+		xlog_strerror(LOG_ERR, errno, "tlsev_add_fd_cb");
+		return 1;
+	}
+	status = tlsev_run(&listener);
+	SSL_CTX_free(ctx);
+	tlsev_destroy(&listener);
+	return status;
+}
+
+int
 do_daemon(const char **argv)
 {
 	SSL_CTX              *ctx;
@@ -1027,7 +1065,6 @@ do_daemon(const char **argv)
 	pid_t                 pid;
 	struct sigaction      act;
 	struct rlimit         zero_core = {0, 0};
-	char                **backend_argv;
 	int                   status;
 
 	sigemptyset(&act.sa_mask);
@@ -1082,22 +1119,6 @@ do_daemon(const char **argv)
 		exit(1);
 	}
 #endif
-	backend_argv = cmdargv(certainty_conf.backend);
-	if (backend_argv == NULL) {
-		xlog_strerror(LOG_ERR, errno, "cmdargv");
-		exit(1);
-	}
-
-	bzero(&backend_reader, sizeof(backend_reader));
-	backend_reader.cb = &backend_cb;
-	if (spawn(backend_argv, &backend_wfd, &backend_reader.fd,
-	    certainty_conf.backend_uid, certainty_conf.backend_gid,
-	    xerrz(&e)) == -1) {
-		xlog(LOG_ERR, &e, __func__);
-		exit(1);
-	}
-	free(backend_argv);
-
 	if (!certainty_conf.enable_coredumps &&
 	    setrlimit(RLIMIT_CORE, &zero_core) == -1)
 			err(1, "setrlimit");
@@ -1111,12 +1132,7 @@ do_daemon(const char **argv)
 	}
 
 	load_keys();
-#ifdef __OpenBSD__
-	if (pledge("stdio rpath wpath cpath inet dns proc", NULL) == -1) {
-		xlog_strerror(LOG_ERR, errno, "pledge");
-		exit(1);
-	}
-#endif
+
 	if ((ctx = SSL_CTX_new(TLS_method())) == NULL) {
 		xlog(LOG_ERR, NULL, "SSL_CTX_new: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
@@ -1165,22 +1181,9 @@ do_daemon(const char **argv)
 	}
 
 	ssl_data_idx = SSL_get_ex_new_index(0, "tlsev_idx", NULL, NULL, NULL);
-	if (tlsev_init(&listener, ctx, lsock, certainty_conf.socket_timeout,
-	    certainty_conf.max_clients, ssl_data_idx,
-	    &daemon_in_cb, &free_daemon_in_cb_data) == -1) {
-		xlog_strerror(LOG_ERR, errno, "tlsev_init");
-		exit(1);
-	}
-
-	if (tlsev_add_fd_cb(&listener, &backend_reader)) {
-		xlog_strerror(LOG_ERR, errno, "tlsev_add_fd_cb");
-		exit(1);
-	}
 
 	if (certainty_conf.prefork <= 0 || foreground) {
-		status = tlsev_run(&listener);
-		SSL_CTX_free(ctx);
-		tlsev_destroy(&listener);
+		status = run(ctx, lsock);
 		cleanup();
 		exit(status);
 	}
@@ -1192,9 +1195,7 @@ do_daemon(const char **argv)
 			exit(1);
 		} else if (pid == 0) {
 			setproctitle("listener");
-			status = tlsev_run(&listener);
-			SSL_CTX_free(ctx);
-			tlsev_destroy(&listener);
+			status = run(ctx, lsock);
 			cleanup();
 			exit(status);
 		}
@@ -1218,10 +1219,7 @@ do_daemon(const char **argv)
 				xlog_strerror(LOG_ERR, errno, "fork");
 			} else if (pid == 0) {
 				setproctitle("listener");
-				status = tlsev_run(&listener);
-				SSL_CTX_free(ctx);
-				tlsev_destroy(&listener);
-				exit(status);
+				exit(run(ctx, lsock));
 			} else {
 				n_children++;
 			}

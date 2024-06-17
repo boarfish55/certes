@@ -53,32 +53,31 @@ config_vars_get_allocstring(void *dst, size_t sz, const char *v, struct xerr *e)
 {
 	char **pdst = (char **)dst;
 
-	if (strlen(v) >= sz) {
-		errno = ERANGE;
-		return -1;
-	}
+	if (strlen(v) >= sz)
+		return XERRF(e, XLOG_APP, XLOG_RANGE,
+		    "variable length greater than limit");
 
 	if ((*pdst = malloc(sz)) == NULL)
 		return XERRF(e, XLOG_ERRNO, errno, "malloc");
 
-	if (strlcpy(*pdst, v, sz) >= sz) {
-		errno = ERANGE;
-		return -1;
-	}
+	if (strlcpy(*pdst, v, sz) >= sz)
+		return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "value too large to fit in variable");
+
 	return 0;
 }
 
 static int
 config_vars_get_string(void *dst, size_t sz, const char *v, struct xerr *e)
 {
-	if (strlen(v) >= sz) {
-		errno = ERANGE;
-		return -1;
-	}
-	if (strlcpy((char *)dst, v, sz) >= sz) {
-		errno = ERANGE;
-		return -1;
-	}
+	if (strlen(v) >= sz)
+		return XERRF(e, XLOG_APP, XLOG_RANGE,
+		    "variable length greater than limit");
+
+	if (strlcpy((char *)dst, v, sz) >= sz)
+		return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "value too large to fit in variable");
+
 	return 0;
 }
 
@@ -90,8 +89,8 @@ config_vars_get_boolint(void *dst, size_t sz, const char *v, struct xerr *e)
 	} else if (strcmp(v, "no") == 0 || strcmp(v, "false") == 0) {
 		*((int *)dst) = 0;
 	} else {
-		errno = EINVAL;
-		return -1;
+		return XERRF(e, XLOG_APP, XLOG_INVAL,
+		    "value is not a valid boolean");
 	}
 	return 0;
 }
