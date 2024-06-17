@@ -1113,7 +1113,7 @@ do_daemon(const char **argv)
 		    "unveil: %s", certainty_conf.key_file);
 		exit(1);
 	}
-	if (pledge("stdio rpath wpath cpath inet dns proc exec",
+	if (pledge("stdio rpath wpath cpath id inet dns proc exec",
 	    certainty_conf.backend_promises) == -1) {
 		xlog_strerror(LOG_ERR, errno, "pledge");
 		exit(1);
@@ -1123,6 +1123,9 @@ do_daemon(const char **argv)
 	    setrlimit(RLIMIT_CORE, &zero_core) == -1)
 			err(1, "setrlimit");
 
+	// TODO: we can't drop privs here, or else we can set uid/gid
+	// on the backend. We'll need something to spawn, then maybe
+	// pass back the pipe fds over a unix socket?
 	if (geteuid() == 0) {
 		if (drop_privileges(certainty_conf.gid,
 		    certainty_conf.uid, &e) == -1) {
