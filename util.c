@@ -224,7 +224,9 @@ spawnproc_init(struct spawnproc *sp, const char *execpromises,
 	sigemptyset(&act.sa_mask);
 	act.sa_flags = 0;
 	act.sa_handler = spawnproc_reap;
-	if (sigaction(SIGCHLD, &act, NULL) == -1)
+	if (sigaction(SIGCHLD, &act, NULL) == -1 ||
+	    sigaction(SIGINT, &act, NULL) == -1 ||
+	    sigaction(SIGTERM, &act, NULL) == -1)
 		return -1;
 #ifdef __OpenBSD__
 	bpstart = binpaths;

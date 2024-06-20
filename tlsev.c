@@ -628,7 +628,9 @@ tlsev_run(struct tlsev_listener *l)
 				if ((fd = accept(l->lsock,
 				    (struct sockaddr *)&peer,
 				    &peerlen)) == -1) {
-					xlog_strerror(LOG_ERR, errno, "accept");
+					if (errno != EINTR)
+						xlog_strerror(LOG_ERR,
+						    errno, "accept");
 					continue;
 				}
 

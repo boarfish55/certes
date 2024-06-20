@@ -966,15 +966,9 @@ load_keys()
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
-#ifndef __OpenBSD__
-	/*
-	 * pledge(2) doesn't allow mlock().
-	 * Swap on OpenBSD is encrypted by default so this is
-	 * fine.
-	 */
+
 	if (mlock(priv_key, pkey_sz) == -1)
 		err(1, "mlock");
-#endif
 
 	if ((f = fopen(certainty_conf.ca_file, "r")) == NULL)
 		err(1, "fopen");
@@ -1091,21 +1085,26 @@ do_daemon(const char **argv)
 			exit(1);
 		}
 	}
+
 	if (spawnproc_init(&sproc, certainty_conf.backend_promises,
 	    certainty_conf.backend_unveils) == -1)
 		err(1, "spawnproc_init");
+
+	load_keys();
+
+	if (!certainty_conf.enable_coredumps &&
+	    setrlimit(RLIMIT_CORE, &zero_core) == -1)
+			err(1, "setrlimit");
+
+	if (geteuid() == 0) {
+		if (drop_privileges(certainty_conf.gid,
+		    certainty_conf.uid, &e) == -1) {
+			xlog(LOG_ERR, &e, __func__);
+			exit(1);
+		}
+	}
 #ifdef __OpenBSD__
 	if (unveil(certainty_conf.backend, "x") == -1) {
-		xlog_strerror(LOG_ERR, errno,
-		    "unveil: %s", certainty_conf.ca_file);
-		exit(1);
-	}
-	if (unveil("/dev/null", "rw") == -1) {
-		xlog_strerror(LOG_ERR, errno,
-		    "unveil: %s", certainty_conf.ca_file);
-		exit(1);
-	}
-	if (unveil("/", "rx") == -1) {
 		xlog_strerror(LOG_ERR, errno,
 		    "unveil: %s", certainty_conf.ca_file);
 		exit(1);
@@ -1120,34 +1119,11 @@ do_daemon(const char **argv)
 		    "unveil: %s", certainty_conf.crl_file);
 		exit(1);
 	}
-	if (unveil(certainty_conf.key_file, "r") == -1) {
-		xlog_strerror(LOG_ERR, errno,
-		    "unveil: %s", certainty_conf.key_file);
-		exit(1);
-	}
-	if (pledge("stdio rpath wpath cpath recvfd id inet dns proc",
-	    "") == -1) {
+	if (pledge("stdio rpath cpath recvfd inet dns proc", "") == -1) {
 		xlog_strerror(LOG_ERR, errno, "pledge");
 		exit(1);
 	}
 #endif
-	if (!certainty_conf.enable_coredumps &&
-	    setrlimit(RLIMIT_CORE, &zero_core) == -1)
-			err(1, "setrlimit");
-
-	// TODO: we can't drop privs here, or else we can set uid/gid
-	// on the backend. We'll need something to spawn, then maybe
-	// pass back the pipe fds over a unix socket?
-	if (geteuid() == 0) {
-		if (drop_privileges(certainty_conf.gid,
-		    certainty_conf.uid, &e) == -1) {
-			xlog(LOG_ERR, &e, __func__);
-			exit(1);
-		}
-	}
-
-	load_keys();
-
 	if ((ctx = SSL_CTX_new(TLS_method())) == NULL) {
 		xlog(LOG_ERR, NULL, "SSL_CTX_new: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
