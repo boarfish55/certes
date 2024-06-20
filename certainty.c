@@ -40,6 +40,7 @@ X509_STORE *store = NULL;
 EVP_PKEY   *priv_key = NULL;
 X509       *ca_crt = NULL;
 
+struct spawnproc      sproc;
 struct tlsev_listener listener;
 struct tlsev_fd_cb    backend_reader;
 int                   backend_wfd;
@@ -79,6 +80,7 @@ struct {
 	char *backend_uid;
 	char *backend_gid;
 	char  backend_promises[LINE_MAX];
+	char  backend_unveils[LINE_MAX];
 } certainty_conf = {
 	"_certainty",
 	"_certainty",
@@ -99,7 +101,8 @@ struct {
 	"/bin/cat",
 	"_certainty",
 	"_certainty",
-	"stdio rpath flock"
+	"stdio rpath flock",
+	"/bin:/usr/bin"
 };
 
 struct config_vars certainty_config_vars[] = {
@@ -222,6 +225,12 @@ struct config_vars certainty_config_vars[] = {
 		CONFIG_VARS_STRING,
 		&certainty_conf.backend_promises,
 		sizeof(certainty_conf.backend_promises)
+	},
+	{
+		"backend_unveils",
+		CONFIG_VARS_STRING,
+		&certainty_conf.backend_unveils,
+		sizeof(certainty_conf.backend_unveils)
 	},
 	CONFIG_VARS_LAST
 };
@@ -1028,9 +1037,9 @@ run(SSL_CTX *ctx, int lsock)
 
 	bzero(&backend_reader, sizeof(backend_reader));
 	backend_reader.cb = &backend_cb;
-	if (spawn(backend_argv, &backend_wfd, &backend_reader.fd,
-	    certainty_conf.backend_uid, certainty_conf.backend_gid,
-	    xerrz(&e)) == -1) {
+	if (spawnproc_exec(&sproc, backend_argv, &backend_wfd,
+	    &backend_reader.fd, certainty_conf.backend_uid,
+	    certainty_conf.backend_gid, xerrz(&e)) == -1) {
 		xlog(LOG_ERR, &e, __func__);
 		return 1;
 	}
@@ -1082,6 +1091,9 @@ do_daemon(const char **argv)
 			exit(1);
 		}
 	}
+	if (spawnproc_init(&sproc, certainty_conf.backend_promises,
+	    certainty_conf.backend_unveils) == -1)
+		err(1, "spawnproc_init");
 #ifdef __OpenBSD__
 	if (unveil(certainty_conf.backend, "x") == -1) {
 		xlog_strerror(LOG_ERR, errno,
@@ -1113,8 +1125,8 @@ do_daemon(const char **argv)
 		    "unveil: %s", certainty_conf.key_file);
 		exit(1);
 	}
-	if (pledge("stdio rpath wpath cpath id inet dns proc exec",
-	    certainty_conf.backend_promises) == -1) {
+	if (pledge("stdio rpath wpath cpath recvfd id inet dns proc",
+	    "") == -1) {
 		xlog_strerror(LOG_ERR, errno, "pledge");
 		exit(1);
 	}

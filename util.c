@@ -1,9 +1,12 @@
 #include <sys/file.h>
+#include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -130,6 +133,26 @@ close_x(int fd, const char *fd_name, const char *fn, int line)
 }
 
 ssize_t
+readall(int fd, void *buf, size_t count)
+{
+        ssize_t r;
+        ssize_t n = 0;
+
+        while (n < count) {
+                r = read(fd, buf + n, count - n);
+                if (r == -1) {
+                        if (errno == EINTR)
+                                continue;
+                        return -1;
+                } else if (r == 0) {
+                        return n;
+                }
+                n += r;
+        }
+        return n;
+}
+
+ssize_t
 writeall(int fd, const void *buf, size_t count)
 {
 	ssize_t w;
@@ -145,6 +168,309 @@ writeall(int fd, const void *buf, size_t count)
 		n += w;
 	}
 	return n;
+}
+
+static void
+spawnproc_reap(int sig)
+{
+	while (waitpid(-1, NULL, WNOHANG) > 0);
+}
+
+int
+spawnproc_init(struct spawnproc *sp, const char *execpromises,
+    const char *binpaths)
+{
+	int                sv[2], r;
+	pid_t              pid;
+#ifdef __OpenBSD__
+	const char        *bpstart, *bpend;
+	char               binpath[PATH_MAX];
+#endif
+	char              *buf, *a, *start, *user, *group;
+	char             **argv, **tmp;
+	int                argvlen, argvi;
+	int                status;
+	size_t             sz;
+	struct sigaction   act;
+	long               max = (sysconf(_SC_ARG_MAX) * 2) + (32 * 2);
+	struct xerr        e;
+	int                fds[2];
+	struct iovec       iov[1];
+	struct msghdr      msg;
+	struct cmsghdr    *cmsg;
+	union {
+		struct cmsghdr hdr;
+		unsigned char  buf[CMSG_SPACE(sizeof(int) * 2)];
+	} cmsgbuf;
+
+	if (socketpair(AF_LOCAL, SOCK_STREAM, 0, sv) == -1)
+		return -1;
+
+	sp->sock = sv[0];
+
+	if ((pid = fork()) == -1) {
+		return -1;
+	} else if (pid > 0) {
+		close(sv[1]);
+		return 0;
+	}
+	close(sv[0]);
+
+	setproctitle("executor");
+
+	if (chdir("/") == -1)
+		return -1;
+
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0;
+	act.sa_handler = spawnproc_reap;
+	if (sigaction(SIGCHLD, &act, NULL) == -1)
+		return -1;
+#ifdef __OpenBSD__
+	bpstart = binpaths;
+	bpend = NULL;
+	for (bpstart = binpaths; bpstart != NULL; bpstart = bpend) {
+		bpend = strchr(bpstart, ':');
+		if (bpend == NULL) {
+			strlcpy(binpath, bpstart, sizeof(binpath));
+		} else {
+			strlcpy(binpath, bpstart,
+			    (bpend - bpstart + 1 > sizeof(binpath))
+			    ? sizeof(binpath) : bpend - bpstart + 1);
+			bpend++;
+		}
+		if (unveil(binpath, "x") == -1)
+			return -1;
+	}
+	if (pledge("stdio rpath id proc exec sendfd", execpromises) == -1)
+		return -1;
+#endif
+	if ((buf = malloc(max)) == NULL)
+		return -1;
+	argvlen = 16;
+	if ((argv = malloc(argvlen * sizeof(char *))) == NULL)
+		return -1;
+
+	for (;;) {
+		r = readall(sv[1], &sz, sizeof(size_t));
+		if (r == -1) {
+			xlog_strerror(LOG_ERR, errno, "%s: readall", __func__);
+			_exit(1);
+		}
+		if (r == 0) {
+			xlog(LOG_NOTICE, NULL, "%s: socket closed; exiting",
+			    __func__);
+			goto end;
+		}
+
+		r = readall(sv[1], buf, sz);
+		if (r == -1) {
+			xlog_strerror(LOG_ERR, errno, "%s: readall", __func__);
+			_exit(1);
+		}
+		if (r == 0) {
+			xlog(LOG_NOTICE, NULL, "%s: socket closed; exiting",
+			    __func__);
+			goto end;
+		}
+
+		for (a = buf, start = a, argvi = 0; a - buf < sz; a++) {
+			if (*a != '\0')
+				continue;
+			if (argvi == 0) {
+				user = start;
+				start = a + 1;
+				argvi++;
+				continue;
+			} else if (argvi == 1) {
+				group = start;
+				start = a + 1;
+				argvi++;
+				continue;
+			}
+
+			if (argvi + 1 >= argvlen) {
+				argvlen *= 2;
+				tmp = realloc(argv,
+				    argvlen * sizeof(char *));
+				if (tmp == NULL) {
+					xlog_strerror(LOG_ERR, errno,
+					    "%s: realloc", __func__);
+					_exit(1);
+				}
+				if (tmp != argv)
+					argv = tmp;
+			}
+			argv[argvi - 2] = start;
+			argvi++;
+			start = a + 1;
+		}
+		/*
+		 * We should have enough space for NULL since we realloc() at
+		 * argvi + 1.
+		 */
+		argv[argvi - 2] = NULL;
+
+		status = spawn(argv, &fds[0], &fds[1], user, group, xerrz(&e));
+		if (status == -1) {
+			xlog(LOG_ERR, &e, "%s: spawn", __func__);
+			if (e.sp == XLOG_ERRNO)
+				status = e.code;
+			fds[0] = -1;
+			fds[1] = -1;
+		}
+		iov[0].iov_base = &status;
+		iov[0].iov_len = sizeof(int);
+		bzero(&msg, sizeof(msg));
+		bzero(&cmsgbuf, sizeof(cmsgbuf));
+		msg.msg_iov = iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = cmsgbuf.buf;
+		msg.msg_controllen = sizeof(cmsgbuf.buf);
+
+		cmsg = CMSG_FIRSTHDR(&msg);
+		cmsg->cmsg_len = CMSG_LEN(sizeof(fds));
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		memcpy(CMSG_DATA(cmsg), fds, sizeof(fds));
+again:
+		if (sendmsg(sv[1], &msg, 0) == -1) {
+			if (errno == -1)
+				goto again;
+			xlog_strerror(LOG_ERR, errno, "%s: sendmsg (%d)",
+			    __func__, errno);
+			_exit(1);
+		}
+		close(fds[0]);
+		close(fds[1]);
+	}
+end:
+	free(buf);
+	free(argv);
+	_exit(0);
+
+	/* Never reached */
+	return 0;
+}
+
+int
+spawnproc_close(struct spawnproc *sp)
+{
+	return close(sp->sock);
+}
+
+int
+spawnproc_exec(struct spawnproc *sp, char *const argv[], int *in, int *out,
+    const char *user, const char *group, struct xerr *e)
+{
+	char           *buf, *p;
+	size_t          len = 0;
+	int             status, r, received, i;
+	/*
+	 * Give enough room for ARG_MAX and a uid/gid, each with accompaying
+	 * \0 character.
+	 */
+	long            max = (sysconf(_SC_ARG_MAX) * 2) + (32 * 2);
+	int             fds[2];
+	struct msghdr   msg;
+	struct cmsghdr *cmsg;
+	struct iovec    iov[1];
+	union {
+		struct cmsghdr hdr;
+		unsigned char  buf[CMSG_SPACE(sizeof(int) * 2)];
+	} cmsgbuf;
+
+	if (argv == NULL || argv[0] == NULL)
+		return XERRF(e, XLOG_APP, XLOG_INVAL, "argv is empty");
+
+	if (user != NULL)
+		len += strlen(user) + 1;
+	if (group != NULL)
+		len += strlen(group) + 1;
+	for (i = 0; argv[i] != NULL; i++) {
+		len += strlen(argv[i]) + 1;
+		if (len > max)
+			return XERRF(e, XLOG_APP, XLOG_INVAL,
+			    "total length of command exceeds allowed value");
+	}
+
+	if ((buf = malloc(len)) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "malloc");
+	p = buf;
+
+	len = strlen(user);
+	memcpy(p, user, len);
+	p += len;
+	*p++ = '\0';
+
+	len = strlen(group);
+	memcpy(p, group, len);
+	p += len;
+	*p++ = '\0';
+
+	for (i = 0; argv[i] != NULL; i++) {
+		len = strlen(argv[i]);
+		memcpy(p, argv[i], len);
+		p += len;
+		*p++ = '\0';
+	}
+
+	len = p - buf;
+	if (writeall(sp->sock, &len, sizeof(len)) == -1) {
+		free(buf);
+		return XERRF(e, XLOG_ERRNO, errno, "writeall");
+	}
+	if (writeall(sp->sock, buf, len) == -1) {
+		free(buf);
+		return XERRF(e, XLOG_ERRNO, errno, "writeall");
+	}
+	free(buf);
+
+	iov[0].iov_base = &status;
+	iov[0].iov_len = sizeof(int);
+
+	bzero(&msg, sizeof(msg));
+	bzero(&cmsgbuf, sizeof(cmsgbuf));
+	msg.msg_control = &cmsgbuf.buf;
+	msg.msg_controllen = sizeof(cmsgbuf.buf);
+	msg.msg_iov = iov;
+	msg.msg_iovlen = 1;
+
+	received = 0;
+	while (received < sizeof(int)) {
+		if ((r = recvmsg(sp->sock, &msg,
+		    MSG_WAITALL|MSG_CMSG_CLOEXEC)) == -1) {
+			if (errno == EINTR)
+				continue;
+			return XERRF(e, XLOG_ERRNO, errno, "recvmsg");
+		}
+
+		if (r == 0)
+			return XERRF(e, XLOG_APP, XLOG_EOF, "recvmsg");
+
+		received += r;
+		if (received < sizeof(int)) {
+			iov[0].iov_base = ((char *)&status) + received;
+			iov[0].iov_len = sizeof(int) - received;
+		}
+	}
+	if ((msg.msg_flags & MSG_TRUNC) || (msg.msg_flags & MSG_CTRUNC))
+		return XERRF(e, XLOG_APP, XLOG_IO,
+		    "recvmsg: control message truncated");
+
+	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+	    cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+		if (cmsg->cmsg_len == CMSG_LEN(sizeof(fds)) &&
+		    cmsg->cmsg_level == SOL_SOCKET &&
+		    cmsg->cmsg_type == SCM_RIGHTS) {
+			memcpy(fds, CMSG_DATA(cmsg), sizeof(fds));
+			*in = fds[0];
+			*out = fds[1];
+		}
+		break;
+	}
+
+	return status;
 }
 
 int
@@ -201,11 +527,6 @@ spawn(char *const argv[], int *in, int *out, const char *user,
 		if (null_fd > 2)
 			close(null_fd);
 
-		if (chdir("/") == -1) {
-			XERRF(e, XLOG_ERRNO, errno, "chdir");
-			_exit(1);
-		}
-
 		if (geteuid() == 0) {
 			if (drop_privileges(user, group, xerrz(e)) == -1) {
 				xlog(LOG_ERR, e, "drop_privileges");
@@ -214,7 +535,7 @@ spawn(char *const argv[], int *in, int *out, const char *user,
 		}
 
 		if (execv(argv[0], argv) == -1) {
-			XERRF(e, XLOG_ERRNO, errno, "execv: %s", argv[0]);
+			xlog_strerror(LOG_ERR, errno, "execv: %s", argv[0]);
 			_exit(1);
 		}
 	}

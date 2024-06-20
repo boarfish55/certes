@@ -19,3 +19,4 @@ backend: /bin/cat
 backend_uid: plalonde
 backend_gid: plalonde
 backend_promises: stdio rpath flock
+backend_unveils: /bin:/home/plalonde
