@@ -72,19 +72,20 @@ del_epoll_fd(int epollfd, int fd)
 #endif
 
 int
-tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
-    int socket_timeout, int max_clients, int ssl_data_idx,
+tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int *lsock,
+    size_t lsock_len, int socket_timeout, int max_clients, int ssl_data_idx,
     int (*in_cb)(struct tlsev *, const char *, size_t, void **),
     void (*in_cb_data_free)(void *))
 {
+	int                n;
 #ifdef __OpenBSD__
-	struct kevent      ch;
+	struct kevent      ch[lsock_len];
 #else
 	struct epoll_event ev;
 #endif
 	bzero(l, sizeof(struct tlsev_listener));
 	l->ctx = ctx;
-	l->lsock = lsock;
+	l->lsock_len = lsock_len;
 	l->socket_timeout = socket_timeout;
 	l->tlsev_data_idx = ssl_data_idx;
 	l->next_id = 1;
@@ -99,34 +100,45 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
 	    &tlsev_timeout_cmp, &tlsev_match,
 	    (void(*)(void *))&tlsev_free, &tlsev_hash))
 		return -1;
+
+	l->lsock = malloc(sizeof(int) * l->lsock_len);
+	if (l->lsock == NULL) {
+		idxheap_free(&l->tlsev_store);
+		return -1;
+	}
+	memcpy(l->lsock, lsock, sizeof(int) * l->lsock_len);
 #ifdef __OpenBSD__
 	/*
 	 * See tlsev_run() to count how many changes can accumulte and l->ch:
 	 *   - Up to one event per filter
-	 *   - And 2 more for disabling reads on the listening socket and
+	 *   - And more for disabling reads on the listening sockets and
 	 *     adding the new client, or when reenabling the listening socket.
 	 */
-	// TODO: +n listening sockets
-	l->max_events = l->max_clients + 2;
+	l->max_events = l->max_clients + l->lsock_len + 1;
 	l->ch = malloc(sizeof(struct kevent) * l->max_events);
 	if (l->ch == NULL) {
+		free(l->lsock);
 		idxheap_free(&l->tlsev_store);
 		return -1;
 	}
 	l->events = malloc(sizeof(struct kevent) * l->max_events);
 	if (l->ch == NULL) {
+		free(l->lsock);
 		free(l->ch);
 		idxheap_free(&l->tlsev_store);
 		return -1;
 	}
 	if ((l->kq = kqueue()) == -1) {
+		free(l->lsock);
 		free(l->ch);
 		free(l->events);
 		idxheap_free(&l->tlsev_store);
 		return -1;
 	}
-	EV_SET(&ch, l->lsock, EVFILT_READ, EV_ADD, 0, 0, 0);
-	if (kevent(l->kq, &ch, 1, NULL, 0, NULL) == -1) {
+	for (n = 0; n < l->lsock_len; n++)
+		EV_SET(ch[n], l->lsock[n], EVFILT_READ, EV_ADD, 0, 0, 0);
+	if (kevent(l->kq, ch, l->lsock_len, NULL, 0, NULL) == -1) {
+		free(l->lsock);
 		free(l->ch);
 		free(l->events);
 		idxheap_free(&l->tlsev_store);
@@ -135,26 +147,31 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
 	}
 #else
 	/* Up to max_clients events, plus listening socket */
-	// TODO: +n listening sockets
-	l->max_events = l->max_clients + 1;
+	l->max_events = l->max_clients + l->lsock_len;
 	l->events = malloc(sizeof(struct epoll_event) * l->max_events);
 	if (l->events == NULL) {
+		free(l->lsock);
 		idxheap_free(&l->tlsev_store);
 		return -1;
 	}
 	if ((l->epollfd = epoll_create1(0)) == -1) {
 		idxheap_free(&l->tlsev_store);
+		free(l->lsock);
 		free(l->events);
 		return -1;
 	}
-	bzero(&ev, sizeof(ev));
-	ev.events = EPOLLIN;
-	ev.data.fd = l->lsock;
-	if (epoll_ctl(l->epollfd, EPOLL_CTL_ADD, l->lsock, &ev) == -1) {
-		idxheap_free(&l->tlsev_store);
-		free(l->events);
-		close(l->epollfd);
-		return -1;
+	for (n = 0; n < l->lsock_len; n++) {
+		bzero(&ev, sizeof(ev));
+		ev.events = EPOLLIN;
+		ev.data.fd = l->lsock[n];
+		if (epoll_ctl(l->epollfd, EPOLL_CTL_ADD,
+		    l->lsock[n], &ev) == -1) {
+			idxheap_free(&l->tlsev_store);
+			free(l->lsock);
+			free(l->events);
+			close(l->epollfd);
+			return -1;
+		}
 	}
 #endif
 	return 0;
@@ -235,6 +252,8 @@ tlsev_destroy(struct tlsev_listener *l)
 		free(l->fd_callbacks);
 	if (l->events)
 		free(l->events);
+	if (l->lsock)
+		free(l->lsock);
 #ifdef __OpenBSD__
 	if (l->ch)
 		free(l->ch);
@@ -524,6 +543,34 @@ tlsev_bio_pending(struct tlsev *t, int *r, int *w, struct xerr *e)
 	return 0;
 }
 
+static int
+tlsev_toggle_listen(struct tlsev_listener *l, int on)
+{
+	int i;
+#ifndef __OpenBSD__
+	struct epoll_event   ev;
+#endif
+
+#ifdef __OpenBSD__
+	for (i = 0; i < l->lsock_len; i++)
+		EV_SET(&l->ch[l->chn++], l->lsock[i], EVFILT_READ,
+		    (on == 1) ? EV_ENABLE : EV_DISABLE, 0, 0, 0);
+#else
+	for (i = 0; i < l->lsock_len; i++) {
+		bzero(&ev, sizeof(ev));
+		ev.events = EPOLLIN;
+		ev.data.fd = l->lsock[i];
+		if (epoll_ctl(l->epollfd,
+		    (on == 1) ? EPOLL_CTL_ADD : EPOLL_CTL_DEL,
+		    l->lsock[i], &ev) == -1) {
+			xlog_strerror(LOG_ERR, errno, "epoll_ctl: lsock");
+			return -1;
+		}
+	}
+#endif
+	return 0;
+}
+
 int
 tlsev_run(struct tlsev_listener *l)
 {
@@ -546,7 +593,7 @@ tlsev_run(struct tlsev_listener *l)
 	char                 hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
 	struct tlsev        *t;
 	struct timespec      now;
-	int                  cleanup;
+	int                  cleanup, is_listen;
 
 	while (!l->shutdown_triggered || l->active_clients > 0) {
 		if (!l->accepting && l->active_clients < l->max_clients) {
@@ -554,23 +601,11 @@ tlsev_run(struct tlsev_listener *l)
 			    "active_clients=%d; "
 			    "accepting new connections", l->active_clients);
 			l->accepting = 1;
-#ifdef __OpenBSD__
-			EV_SET(&l->ch[l->chn++], l->lsock, EVFILT_READ,
-			    EV_ENABLE, 0, 0, 0);
-#else
-			bzero(&ev, sizeof(ev));
-			ev.events = EPOLLIN;
-			ev.data.fd = l->lsock;
-			if (epoll_ctl(l->epollfd, EPOLL_CTL_ADD, l->lsock,
-			    &ev) == -1) {
-				xlog_strerror(LOG_ERR, errno,
-				    "epoll_ctl: lsock");
-				close(l->lsock);
+			if (tlsev_toggle_listen(l, 1) == -1) {
+				tlsev_toggle_listen(l, 0);
 				l->shutdown_triggered = 1;
 			}
-#endif
 		}
-
 #ifdef __OpenBSD__
 		nev = kevent(l->kq, l->ch, l->chn,
 		    l->events, l->max_events, &timeout);
@@ -587,14 +622,14 @@ tlsev_run(struct tlsev_listener *l)
 #endif
 				return -1;
 			}
-			if (l->shutdown_triggered && l->lsock > -1) {
+			if (l->shutdown_triggered && l->lsock_len > 0) {
 #ifndef __OpenBSD__
-				if (l->accepting &&
-				    del_epoll_fd(l->epollfd, l->lsock) == -1)
-					return -1;
+				if (l->accepting)
+					tlsev_toggle_listen(l, 0);
 #endif
-				close(l->lsock);
-				l->lsock = -1;
+				for (i = 0; i < l->lsock_len; i++)
+					close(l->lsock[i]);
+				l->lsock_len = 0;
 			}
 			continue;
 		}
@@ -626,8 +661,15 @@ tlsev_run(struct tlsev_listener *l)
 #else
 			evfd = l->events[n].data.fd;
 #endif
-			if (evfd == l->lsock) {
-				if ((fd = accept(l->lsock,
+			is_listen = 0;
+			for (i = 0; i < l->lsock_len; i++) {
+				if (evfd == l->lsock[i]) {
+					is_listen = 1;
+					break;
+				}
+			}
+			if (is_listen) {
+				if ((fd = accept(evfd,
 				    (struct sockaddr *)&peer,
 				    &peerlen)) == -1) {
 					if (errno != EINTR)
@@ -659,12 +701,8 @@ tlsev_run(struct tlsev_listener *l)
 					    "not accepting new connections",
 					    l->active_clients);
 					l->accepting = 0;
-#ifdef __OpenBSD__
-					EV_SET(&l->ch[l->chn++], l->lsock,
-					    EVFILT_READ, EV_DISABLE, 0, 0, 0);
-#else
-					del_epoll_fd(l->epollfd, l->lsock);
-#endif
+					if (tlsev_toggle_listen(l, 0))
+						l->shutdown_triggered = 1;
 				}
 
 #ifdef __OpenBSD__

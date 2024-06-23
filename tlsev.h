@@ -18,7 +18,8 @@ struct tlsev_fd_cb {
 
 struct tlsev_listener {
 	SSL_CTX               *ctx;
-	int                    lsock;
+	int                   *lsock;
+	size_t                 lsock_len;
 	int                    socket_timeout;
 	int                    tlsev_data_idx;
 	uint64_t               next_id;
@@ -71,8 +72,8 @@ struct tlsev {
 	void                  *in_cb_data;
 };
 
-int                  tlsev_init(struct tlsev_listener *, SSL_CTX *, int,
-                         int, int, int,
+int                  tlsev_init(struct tlsev_listener *, SSL_CTX *, int *,
+                         size_t, int, int, int,
 			 int (*in_cb)(struct tlsev *, const char *,
 			 size_t, void **),
 			 void (*in_cb_data_free)(void *));

@@ -1051,7 +1051,7 @@ cleanup()
 }
 
 int
-run(SSL_CTX *ctx, int lsock)
+run(SSL_CTX *ctx, int *lsock, size_t lsock_len)
 {
 	int                  status;
 	struct xerr          e;
@@ -1074,9 +1074,9 @@ run(SSL_CTX *ctx, int lsock)
 	}
 	free(backend_argv);
 
-	if (tlsev_init(&listener, ctx, lsock, certainty_conf.socket_timeout,
-	    certainty_conf.max_clients, ssl_data_idx, &daemon_in_cb,
-	    &free_daemon_in_cb_data) == -1) {
+	if (tlsev_init(&listener, ctx, lsock, lsock_len,
+	    certainty_conf.socket_timeout, certainty_conf.max_clients,
+	    ssl_data_idx, &daemon_in_cb, &free_daemon_in_cb_data) == -1) {
 		xlog_strerror(LOG_ERR, errno, "tlsev_init");
 		return 1;
 	}
@@ -1091,21 +1091,64 @@ run(SSL_CTX *ctx, int lsock)
 }
 
 int
+get_listen_socket(int domain, int type, unsigned short port)
+{
+	int                 fd;
+	struct sockaddr_in6 sa6;
+	struct sockaddr_in  sa;
+	int                 one = 1;
+
+	if ((fd = socket(domain, type, 0)) == -1) {
+		xlog_strerror(LOG_ERR, errno, "socket");
+		return -1;
+	}
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == -1) {
+		xlog_strerror(LOG_ERR, errno, "socket");
+		return -1;
+	}
+
+	if (domain == AF_INET6) {
+		bzero(&sa6, sizeof(sa6));
+		sa6.sin6_family = domain;
+		memcpy(&sa6.sin6_addr, &in6addr_any, sizeof(in6addr_any));
+		sa6.sin6_port = htons(port);
+		if (bind(fd, (struct sockaddr *)&sa6, sizeof(sa6)) == -1) {
+			xlog_strerror(LOG_ERR, errno, "bind");
+			return -1;
+		}
+	} else {
+		bzero(&sa, sizeof(sa));
+		sa.sin_family = domain;
+		sa.sin_port = htons(port);
+		if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) == -1) {
+			xlog_strerror(LOG_ERR, errno, "bind");
+			return -1;
+		}
+	}
+
+	if (listen(fd, certainty_conf.listen_backlog) == -1) {
+		xlog_strerror(LOG_ERR, errno, "listen");
+		return -1;
+	}
+
+	return fd;
+}
+
+int
 do_daemon(const char **argv)
 {
-	SSL_CTX              *ctx;
-	struct xerr           e;
-	int                   lsock;
-	struct sockaddr_in6   sa;
-	int                   one = 1;
-	int                   n_children;
-	int                   wstatus;
-	pid_t                 pid;
-	struct sigaction      act;
-	struct rlimit         zero_core = {0, 0};
-	int                   status;
-	char                 *aclend, *aclstart;
-	char                  acl[11];
+	SSL_CTX          *ctx;
+	struct xerr       e;
+	int               lsock[2];
+	size_t            lsock_len = 0;
+	int               n_children, i;
+	int               wstatus;
+	pid_t             pid;
+	struct sigaction  act;
+	struct rlimit     zero_core = {0, 0};
+	int               status;
+	char             *aclend, *aclstart;
+	char              acl[11];
 
 	sigemptyset(&act.sa_mask);
 	act.sa_flags = 0;
@@ -1210,35 +1253,27 @@ do_daemon(const char **argv)
 		exit(1);
 	}
 
-	if ((lsock = socket(AF_INET6, SOCK_STREAM, 0)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "socket");
+	lsock[lsock_len] = get_listen_socket(AF_INET6, SOCK_STREAM,
+	    certainty_conf.port);
+	if (lsock[lsock_len] == -1)
 		exit(1);
-	}
-
-	if (setsockopt(lsock, SOL_SOCKET,
-	    SO_REUSEADDR, &one, sizeof(one)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "socket");
+	lsock_len++;
+#ifdef __OpenBSD__
+	/*
+	 * On OpenBSD, we don't get v4 compatibility when creating a v6
+	 * listening socket. This function lets us create listening sockets by
+	 * family.
+	 */
+	lsock[lsock_len] = get_listen_socket(AF_INET, SOCK_STREAM,
+	    certainty_conf.port);
+	if (lsock[lsock_len] == -1)
 		exit(1);
-	}
-
-	bzero(&sa, sizeof(sa));
-	sa.sin6_family = AF_INET6;
-	memcpy(&sa.sin6_addr, &in6addr_any, sizeof(in6addr_any));
-	sa.sin6_port = htons(certainty_conf.port);
-	if (bind(lsock, (struct sockaddr *)&sa, sizeof(sa)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "bind");
-		exit(1);
-	}
-
-	if (listen(lsock, certainty_conf.listen_backlog) == -1) {
-		xlog_strerror(LOG_ERR, errno, "listen");
-		exit(1);
-	}
-
+	lsock_len++;
+#endif
 	ssl_data_idx = SSL_get_ex_new_index(0, "tlsev_idx", NULL, NULL, NULL);
 
 	if (certainty_conf.prefork <= 0 || foreground) {
-		status = run(ctx, lsock);
+		status = run(ctx, lsock, lsock_len);
 		exit(status);
 	}
 
@@ -1249,7 +1284,7 @@ do_daemon(const char **argv)
 			exit(1);
 		} else if (pid == 0) {
 			setproctitle("listener");
-			status = run(ctx, lsock);
+			status = run(ctx, lsock, lsock_len);
 			exit(status);
 		}
 	}
@@ -1272,7 +1307,7 @@ do_daemon(const char **argv)
 				xlog_strerror(LOG_ERR, errno, "fork");
 			} else if (pid == 0) {
 				setproctitle("listener");
-				exit(run(ctx, lsock));
+				exit(run(ctx, lsock, lsock_len));
 			} else {
 				n_children++;
 			}
@@ -1285,9 +1320,10 @@ do_daemon(const char **argv)
 			continue;
 		}
 
-		if (lsock > -1) {
-			close(lsock);
-			lsock = -1;
+		if (lsock_len > 0) {
+			for (i = 0; i < lsock_len; i++)
+			    close(lsock[i]);
+			lsock_len = 0;
 
 			sigemptyset(&act.sa_mask);
 			act.sa_flags = 0;
