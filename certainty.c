@@ -51,6 +51,9 @@ int  debug = 0;
 int  ssl_data_idx;
 char config_file_path[PATH_MAX] = "/etc/certainty.conf";
 
+uint32_t *allowed_mdr_namespaces = NULL;
+int       allowed_mdr_namespaces_count = 0;
+
 extern char *optarg;
 extern int   optind, opterr, optopt;
 
@@ -74,7 +77,9 @@ struct {
 	uint64_t prefork;
 	uint64_t max_clients;
 	uint64_t socket_timeout;
+
 	uint64_t max_payload_size;
+	char     allowed_mdr_namespaces[LINE_MAX];
 
 	char  backend[PATH_MAX];
 	char *backend_uid;
@@ -98,6 +103,7 @@ struct {
 	1000,
 	10,
 	16384,
+	"2",
 	"/bin/cat",
 	"_certainty",
 	"_certainty",
@@ -201,6 +207,12 @@ struct config_vars certainty_config_vars[] = {
 		CONFIG_VARS_ULONG,
 		&certainty_conf.max_payload_size,
 		sizeof(certainty_conf.max_payload_size)
+	},
+	{
+		"allowed_mdr_namespaces",
+		CONFIG_VARS_STRING,
+		&certainty_conf.allowed_mdr_namespaces,
+		sizeof(certainty_conf.allowed_mdr_namespaces)
 	},
 	{
 		"backend",
@@ -822,7 +834,7 @@ daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 	struct daemon_in_cb_data *cb_data = (struct daemon_in_cb_data *)(*data);
 	void                     *tmp;
 	struct mdr                bemsg;
-	int                       status;
+	int                       status, i;
 
 	if (cb_data == NULL) {
 		*data = malloc(sizeof(struct daemon_in_cb_data));
@@ -858,7 +870,21 @@ daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 	    cb_data->len, certainty_conf.max_payload_size) == MDR_FAIL) {
 		if (errno == EAGAIN)
 			return 0;
-		xlog_strerror(LOG_ERR, errno, "%s: mdr_decode", __func__);
+		xlog_strerror(LOG_ERR, errno, "%s: mdr_unpack_all", __func__);
+		return -1;
+	}
+
+	for (i = 0; i < allowed_mdr_namespaces_count; i++) {
+		if (mdr_namespace(&cb_data->msg) == allowed_mdr_namespaces[i]) {
+			xlog(LOG_NOTICE, NULL,
+			    "%s: matching namespace: %lu", __func__,
+			    allowed_mdr_namespaces[i]);
+			break;
+		}
+	}
+	if (i >= allowed_mdr_namespaces_count) {
+		xlog_strerror(LOG_ERR, errno,
+		    "%s: namespace not allowed", __func__);
 		return -1;
 	}
 
@@ -1010,10 +1036,18 @@ void
 cleanup()
 {
 	config_vars_free(certainty_config_vars);
-	if (ca_crt != NULL)
+	if (ca_crt != NULL) {
 		X509_free(ca_crt);
-	if (priv_key != NULL)
+		ca_crt = NULL;
+	}
+	if (priv_key != NULL) {
 		EVP_PKEY_free(priv_key);
+		priv_key = NULL;
+	}
+	if (allowed_mdr_namespaces != NULL) {
+		free(allowed_mdr_namespaces);
+		allowed_mdr_namespaces = NULL;
+	}
 }
 
 int
@@ -1034,6 +1068,7 @@ run(SSL_CTX *ctx, int lsock)
 	if (spawnproc_exec(&sproc, backend_argv, &backend_wfd,
 	    &backend_reader.fd, certainty_conf.backend_uid,
 	    certainty_conf.backend_gid, xerrz(&e)) == -1) {
+		free(backend_argv);
 		xlog(LOG_ERR, &e, __func__);
 		return 1;
 	}
@@ -1069,6 +1104,8 @@ do_daemon(const char **argv)
 	struct sigaction      act;
 	struct rlimit         zero_core = {0, 0};
 	int                   status;
+	char                 *aclend, *aclstart;
+	char                  acl[11];
 
 	sigemptyset(&act.sa_mask);
 	act.sa_flags = 0;
@@ -1124,6 +1161,33 @@ do_daemon(const char **argv)
 		exit(1);
 	}
 #endif
+	allowed_mdr_namespaces_count = config_vars_split_uint32(
+	    certainty_conf.allowed_mdr_namespaces, NULL, 0);
+	if (allowed_mdr_namespaces_count == -1)
+		err(1, "config_vars_split_uint32");
+	if (allowed_mdr_namespaces_count > 0) {
+		allowed_mdr_namespaces = malloc(sizeof(uint32_t) *
+		    allowed_mdr_namespaces_count + 1);
+		if (allowed_mdr_namespaces == NULL)
+			err(1, "malloc");
+		config_vars_split_uint32(
+		    certainty_conf.allowed_mdr_namespaces,
+		    allowed_mdr_namespaces, allowed_mdr_namespaces_count);
+	}
+
+	for (aclstart = certainty_conf.allowed_mdr_namespaces;
+	    aclstart != NULL && *aclstart != '\0'; aclstart = aclend) {
+		aclend = strchr(aclstart, ';');
+		if (aclend == NULL) {
+			strlcpy(acl, aclstart, sizeof(acl));
+		} else {
+			strlcpy(acl, aclstart,
+			    (aclend - aclstart + 1 >= sizeof(acl))
+			    ? sizeof(acl) : aclend - aclstart + 1);
+			aclend++;
+		}
+	}
+
 	if ((ctx = SSL_CTX_new(TLS_method())) == NULL) {
 		xlog(LOG_ERR, NULL, "SSL_CTX_new: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
@@ -1175,7 +1239,6 @@ do_daemon(const char **argv)
 
 	if (certainty_conf.prefork <= 0 || foreground) {
 		status = run(ctx, lsock);
-		cleanup();
 		exit(status);
 	}
 
@@ -1187,7 +1250,6 @@ do_daemon(const char **argv)
 		} else if (pid == 0) {
 			setproctitle("listener");
 			status = run(ctx, lsock);
-			cleanup();
 			exit(status);
 		}
 	}
@@ -1252,7 +1314,6 @@ do_daemon(const char **argv)
 	}
 	SSL_CTX_free(ctx);
 	tlsev_destroy(&listener);
-	cleanup();
 	xlog(LOG_NOTICE, NULL, "all children exited");
 	exit(0);
 }
@@ -1284,6 +1345,8 @@ main(int argc, char **argv)
 
 	if (config_vars_read(config_file_path, certainty_config_vars) == -1)
 		err(1, "config_vars_read");
+	if (atexit(&cleanup) != 0)
+		err(1, "atexit");
 
 	if (strncmp(certainty_conf.min_serial, "0x", 2) != 0)
 		errx(1, "min_serial does not begin with \"0x\"");
@@ -1335,7 +1398,5 @@ main(int argc, char **argv)
 		usage();
 		status = 1;
 	}
-
-	cleanup();
 	return status;
 }

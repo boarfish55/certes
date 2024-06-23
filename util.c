@@ -237,7 +237,7 @@ spawnproc_init(struct spawnproc *sp, const char *execpromises,
 			strlcpy(binpath, bpstart, sizeof(binpath));
 		} else {
 			strlcpy(binpath, bpstart,
-			    (bpend - bpstart + 1 > sizeof(binpath))
+			    (bpend - bpstart + 1 >= sizeof(binpath))
 			    ? sizeof(binpath) : bpend - bpstart + 1);
 			bpend++;
 		}
@@ -257,7 +257,7 @@ spawnproc_init(struct spawnproc *sp, const char *execpromises,
 		r = readall(sv[1], &sz, sizeof(size_t));
 		if (r == -1) {
 			xlog_strerror(LOG_ERR, errno, "%s: readall", __func__);
-			_exit(1);
+			exit(1);
 		}
 		if (r == 0) {
 			xlog(LOG_NOTICE, NULL, "%s: socket closed; exiting",
@@ -268,7 +268,7 @@ spawnproc_init(struct spawnproc *sp, const char *execpromises,
 		r = readall(sv[1], buf, sz);
 		if (r == -1) {
 			xlog_strerror(LOG_ERR, errno, "%s: readall", __func__);
-			_exit(1);
+			exit(1);
 		}
 		if (r == 0) {
 			xlog(LOG_NOTICE, NULL, "%s: socket closed; exiting",
@@ -298,7 +298,7 @@ spawnproc_init(struct spawnproc *sp, const char *execpromises,
 				if (tmp == NULL) {
 					xlog_strerror(LOG_ERR, errno,
 					    "%s: realloc", __func__);
-					_exit(1);
+					exit(1);
 				}
 				if (tmp != argv)
 					argv = tmp;
@@ -341,7 +341,7 @@ again:
 				goto again;
 			xlog_strerror(LOG_ERR, errno, "%s: sendmsg (%d)",
 			    __func__, errno);
-			_exit(1);
+			exit(1);
 		}
 		close(fds[0]);
 		close(fds[1]);
@@ -349,7 +349,7 @@ again:
 end:
 	free(buf);
 	free(argv);
-	_exit(0);
+	exit(0);
 
 	/* Never reached */
 	return 0;
@@ -509,14 +509,14 @@ spawn(char *const argv[], int *in, int *out, const char *user,
 		if (p_in[0] != STDIN_FILENO) {
 			if (dup2(p_in[0], STDIN_FILENO) == -1) {
 				XERRF(e, XLOG_ERRNO, errno, "dup2");
-				_exit(1);
+				exit(1);
 			}
 			CLOSE_X(p_in[0]);
 		}
 		if (p_out[1] != STDOUT_FILENO) {
 			if (dup2(p_out[1], STDOUT_FILENO) == -1) {
 				XERRF(e, XLOG_ERRNO, errno, "dup2");
-				_exit(1);
+				exit(1);
 			}
 			CLOSE_X(p_out[1]);
 		}
@@ -532,13 +532,13 @@ spawn(char *const argv[], int *in, int *out, const char *user,
 		if (geteuid() == 0) {
 			if (drop_privileges(user, group, xerrz(e)) == -1) {
 				xlog(LOG_ERR, e, "drop_privileges");
-				_exit(1);
+				exit(1);
 			}
 		}
 
 		if (execv(argv[0], argv) == -1) {
 			xlog_strerror(LOG_ERR, errno, "execv: %s", argv[0]);
-			_exit(1);
+			exit(1);
 		}
 	}
 

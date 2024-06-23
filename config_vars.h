@@ -21,5 +21,6 @@ struct config_vars {
 
 int  config_vars_read(const char *, struct config_vars *);
 void config_vars_free(struct config_vars *);
+int  config_vars_split_uint32(const char *, uint32_t *, size_t);
 
 #endif

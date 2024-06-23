@@ -14,6 +14,7 @@ prefork: 4
 max_clients: 1000
 socket_timeout: 10
 max_payload_size: 16384
+allowed_mdr_namespaces: 2
 
 backend: /bin/cat
 backend_uid: plalonde

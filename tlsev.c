@@ -106,6 +106,7 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
 	 *   - And 2 more for disabling reads on the listening socket and
 	 *     adding the new client, or when reenabling the listening socket.
 	 */
+	// TODO: +n listening sockets
 	l->max_events = l->max_clients + 2;
 	l->ch = malloc(sizeof(struct kevent) * l->max_events);
 	if (l->ch == NULL) {
@@ -134,6 +135,7 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int lsock,
 	}
 #else
 	/* Up to max_clients events, plus listening socket */
+	// TODO: +n listening sockets
 	l->max_events = l->max_clients + 1;
 	l->events = malloc(sizeof(struct epoll_event) * l->max_events);
 	if (l->events == NULL) {

@@ -107,19 +107,11 @@ config_vars_read(const char *cfg_path, struct config_vars *cfg_vars)
 	int                 r, known;
 	struct xerr         e;
 	long                pwnam_sz;
-	long                grnam_sz;
 
-	if ((pwnam_sz = sysconf(_SC_GETPW_R_SIZE_MAX)) == -1) {
-		xlog(LOG_WARNING, NULL,
-		    "sysconf(_SC_GETPW_R_SIZE_MAX)) failed; "
-		    "defaulting to 16384");
-		pwnam_sz = 16384;
-	}
-	if ((grnam_sz = sysconf(_SC_GETGR_R_SIZE_MAX)) == -1) {
-		xlog(LOG_WARNING, NULL,
-		    "sysconf(_SC_GETGR_R_SIZE_MAX)) failed; "
-		    "defaulting to 16384");
-		grnam_sz = 16384;
+	if ((pwnam_sz = sysconf(_SC_LOGIN_NAME_MAX)) == -1) {
+		xlog(LOG_WARNING, NULL, "sysconf(_SC_LOGIN_NAME_MAX)) failed; "
+		    "defaulting to 256");
+		pwnam_sz = 256;
 	}
 
 	if ((cfg = fopen(cfg_path, "r")) == NULL)
@@ -179,7 +171,7 @@ config_vars_read(const char *cfg_path, struct config_vars *cfg_vars)
 				    pwnam_sz, v, xerrz(&e));
 				break;
 			case CONFIG_VARS_GRNAM:
-				cv->dst_sz = grnam_sz;
+				cv->dst_sz = pwnam_sz;
 				r = config_vars_get_allocstring(cv->dst,
 				    cv->dst_sz, v, xerrz(&e));
 				break;
@@ -222,11 +214,45 @@ config_vars_free(struct config_vars *cfg_vars)
 		case CONFIG_VARS_PWNAM:
 		case CONFIG_VARS_GRNAM:
 			/* Only free if we actually allocated this variable */
-			if (cv->dst_sz > 0)
-				free(*((char **)cv->dst));
+			if (cv->dst_sz > 0) {
+				free(*(char **)cv->dst);
+				cv->dst = NULL;
+				cv->dst_sz = 0;
+			}
 			break;
 		default:
 			xlog(LOG_ERR, NULL, "unknown var %s", cv->name);
 		}
 	}
+}
+
+int
+config_vars_split_uint32(const char *str, uint32_t *dst, size_t sz)
+{
+	int         n = 0;
+	const char *start, *end;
+	char       *endptr;
+	char        istr[11];
+	uint32_t    v;
+
+	for (start = str; start != NULL && *start != '\0'; start = end) {
+		end = strchr(start, ';');
+		if (end == NULL) {
+			strlcpy(istr, start, sizeof(istr));
+		} else {
+			strlcpy(istr, start,
+			    (end - start + 1 >= sizeof(istr))
+			    ? sizeof(istr) : end - start + 1);
+			end++;
+		}
+		if ((v = strtoul(istr, &endptr, 10)) == ULONG_MAX ||
+		    *endptr != '\0') {
+			errno = EINVAL;
+			return -1;
+		}
+		if (dst != NULL && n < sz)
+			dst[n] = v;
+		n++;
+	}
+	return n;
 }
