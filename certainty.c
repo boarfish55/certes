@@ -261,18 +261,6 @@ void load_keys();
  *  checking is complete.
  */
 int
-verify_callback(int ok, X509_STORE_CTX *ctx)
-{
-	int e;
-	if (!ok) {
-		e = X509_STORE_CTX_get_error(ctx);
-		fprintf(stderr, "error: %s\n",
-		    X509_verify_cert_error_string(e));
-	}
-	return ok;
-}
-
-int
 verify_callback_daemon(int ok, X509_STORE_CTX *ctx)
 {
 	int           e;
@@ -1006,7 +994,6 @@ load_keys()
 
 	if ((store = X509_STORE_new()) == NULL)
 		err(1, "X509_STORE_new");
-	//X509_STORE_set_verify_cb_func(store, verify_callback);
 	if ((lookup = X509_STORE_add_lookup(store, X509_LOOKUP_file())) == NULL) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
@@ -1087,6 +1074,7 @@ run(SSL_CTX *ctx, int *lsock, size_t lsock_len)
 	status = tlsev_run(&listener);
 	SSL_CTX_free(ctx);
 	tlsev_destroy(&listener);
+	cleanup();
 	return status;
 }
 
@@ -1146,7 +1134,6 @@ do_daemon(const char **argv)
 	pid_t             pid;
 	struct sigaction  act;
 	struct rlimit     zero_core = {0, 0};
-	int               status;
 	char             *aclend, *aclstart;
 	char              acl[11];
 
@@ -1272,10 +1259,8 @@ do_daemon(const char **argv)
 #endif
 	ssl_data_idx = SSL_get_ex_new_index(0, "tlsev_idx", NULL, NULL, NULL);
 
-	if (certainty_conf.prefork <= 0 || foreground) {
-		status = run(ctx, lsock, lsock_len);
-		exit(status);
-	}
+	if (certainty_conf.prefork <= 0 || foreground)
+		exit(run(ctx, lsock, lsock_len));
 
 	for (n_children = 0; n_children < certainty_conf.prefork;
 	    n_children++) {
@@ -1284,8 +1269,7 @@ do_daemon(const char **argv)
 			exit(1);
 		} else if (pid == 0) {
 			setproctitle("listener");
-			status = run(ctx, lsock, lsock_len);
-			exit(status);
+			exit(run(ctx, lsock, lsock_len));
 		}
 	}
 
@@ -1381,8 +1365,6 @@ main(int argc, char **argv)
 
 	if (config_vars_read(config_file_path, certainty_config_vars) == -1)
 		err(1, "config_vars_read");
-	if (atexit(&cleanup) != 0)
-		err(1, "atexit");
 
 	if (strncmp(certainty_conf.min_serial, "0x", 2) != 0)
 		errx(1, "min_serial does not begin with \"0x\"");
@@ -1434,5 +1416,6 @@ main(int argc, char **argv)
 		usage();
 		status = 1;
 	}
+	cleanup();
 	return status;
 }
