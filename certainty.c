@@ -863,12 +863,8 @@ daemon_in_cb(struct tlsev *t, const char *buf, size_t n, void **data)
 	}
 
 	for (i = 0; i < allowed_mdr_namespaces_count; i++) {
-		if (mdr_namespace(&cb_data->msg) == allowed_mdr_namespaces[i]) {
-			xlog(LOG_NOTICE, NULL,
-			    "%s: matching namespace: %lu", __func__,
-			    allowed_mdr_namespaces[i]);
+		if (mdr_namespace(&cb_data->msg) == allowed_mdr_namespaces[i])
 			break;
-		}
 	}
 	if (i >= allowed_mdr_namespaces_count) {
 		xlog_strerror(LOG_ERR, errno,

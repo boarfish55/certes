@@ -136,7 +136,7 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int *lsock,
 		return -1;
 	}
 	for (n = 0; n < l->lsock_len; n++)
-		EV_SET(ch[n], l->lsock[n], EVFILT_READ, EV_ADD, 0, 0, 0);
+		EV_SET(&ch[n], l->lsock[n], EVFILT_READ, EV_ADD, 0, 0, 0);
 	if (kevent(l->kq, ch, l->lsock_len, NULL, 0, NULL) == -1) {
 		free(l->lsock);
 		free(l->ch);
