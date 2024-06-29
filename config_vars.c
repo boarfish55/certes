@@ -229,11 +229,11 @@ config_vars_free(struct config_vars *cfg_vars)
 int
 config_vars_split_uint32(const char *str, uint32_t *dst, size_t sz)
 {
-	int         n = 0;
-	const char *start, *end;
-	char       *endptr;
-	char        istr[11];
-	uint32_t    v;
+	int            n = 0;
+	const char    *start, *end;
+	char          *endptr;
+	char           istr[11];
+	unsigned long  v;
 
 	for (start = str; start != NULL && *start != '\0'; start = end) {
 		end = strchr(start, ';');
