@@ -16,6 +16,8 @@
 #include "tlsev.h"
 #include "idxheap.h"
 
+#define MAX_EVENTS 1000000000
+
 static int
 tlsev_timeout_cmp(const void *k1, const void *k2)
 {
@@ -83,6 +85,17 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int *lsock,
 #else
 	struct epoll_event ev;
 #endif
+	if (in_cb == NULL || l == NULL || ctx == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	if (socket_timeout < 0)
+		socket_timeout = 0;
+	if (max_clients < 0)
+		max_clients = 1000;
+	else if (max_clients > MAX_EVENTS)
+		max_clients = MAX_EVENTS;
+
 	bzero(l, sizeof(struct tlsev_listener));
 	l->ctx = ctx;
 	l->lsock_len = lsock_len;
@@ -114,11 +127,11 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int *lsock,
 #ifdef __OpenBSD__
 	/*
 	 * See tlsev_run() to count how many changes can accumulte and l->ch:
-	 *   - Up to one event per filter
+	 *   - Up to two events per filter (read/write on a client socket)
 	 *   - And more for disabling reads on the listening sockets and
 	 *     adding the new client, or when reenabling the listening socket.
 	 */
-	l->max_events = l->max_clients + l->lsock_len + 1;
+	l->max_events = (l->max_clients * 2) + l->lsock_len + 1;
 	l->ch = malloc(sizeof(struct kevent) * l->max_events);
 	if (l->ch == NULL) {
 		free(l->lsock);
@@ -199,6 +212,16 @@ tlsev_add_fd_cb(struct tlsev_listener *l, struct tlsev_fd_cb *fd_cb)
 	struct epoll_event  ev;
 #endif
 	void               *tmp;
+
+	if (l == NULL || fd_cb == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (l->max_events >= MAX_EVENTS) {
+		errno = EOVERFLOW;
+		return -1;
+	}
 
 	if (l->fd_callbacks_used >= l->fd_callbacks_sz) {
 		tmp = realloc(l->fd_callbacks,
