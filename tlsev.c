@@ -95,6 +95,10 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int *lsock,
 	l->max_clients = max_clients;
 	l->accepting = 1;
 
+	for (n = 0; n < lsock_len; n++)
+		if (fcntl(lsock[n], F_SETFL, O_NONBLOCK) == -1)
+			return -1;
+
 	if (idxheap_init(&l->tlsev_store,
 	    (max_clients / 2 < 1) ? 2 : max_clients / 2,
 	    &tlsev_timeout_cmp, &tlsev_match,
@@ -162,7 +166,7 @@ tlsev_init(struct tlsev_listener *l, SSL_CTX *ctx, int *lsock,
 	}
 	for (n = 0; n < l->lsock_len; n++) {
 		bzero(&ev, sizeof(ev));
-		ev.events = EPOLLIN;
+		ev.events = EPOLLIN|EPOLLEXCLUSIVE;
 		ev.data.fd = l->lsock[n];
 		if (epoll_ctl(l->epollfd, EPOLL_CTL_ADD,
 		    l->lsock[n], &ev) == -1) {
@@ -494,12 +498,9 @@ int
 tlsev_reply(struct tlsev *t, const char *buf, int len)
 {
 	int                r;
-#ifdef __OpenBSD__
-	struct kevent      ev;
-#else
+#ifndef __OpenBSD__
 	struct epoll_event ev;
 #endif
-
 	if ((r = SSL_write(t->ssl, buf, len)) <= 0) {
 		xlog(LOG_ERR, NULL, "%s: SSL_write: %s", __func__,
 		    ERR_error_string(SSL_get_error(t->ssl, r), NULL));
@@ -509,13 +510,12 @@ tlsev_reply(struct tlsev *t, const char *buf, int len)
 	if (r == 0)
 		return 0;
 
-	t->wpending = 1;
+	if (t->wpending > 0)
+		return 0;
+
 #ifdef __OpenBSD__
-	EV_SET(&ev, t->fd, EVFILT_WRITE, EV_ADD, 0, 0, 0);
-	if (kevent(t->listener->kq, &ev, 1, NULL, 0, NULL) == -1) {
-		xlog_strerror(LOG_ERR, errno, "kevent");
-		return -1;
-	}
+	EV_SET(&t->listener->ch[t->listener->chn++], t->fd,
+	    EVFILT_WRITE, EV_ADD, 0, 0, 0);
 #else
 	bzero(&ev, sizeof(ev));
 	ev.data.fd = t->fd;
@@ -528,6 +528,7 @@ tlsev_reply(struct tlsev *t, const char *buf, int len)
 		return -1;
 	}
 #endif
+	t->wpending = 1;
 	return r;
 }
 
@@ -558,7 +559,7 @@ tlsev_toggle_listen(struct tlsev_listener *l, int on)
 #else
 	for (i = 0; i < l->lsock_len; i++) {
 		bzero(&ev, sizeof(ev));
-		ev.events = EPOLLIN;
+		ev.events = (on == 1) ? EPOLLIN|EPOLLEXCLUSIVE : EPOLLIN;
 		ev.data.fd = l->lsock[i];
 		if (epoll_ctl(l->epollfd,
 		    (on == 1) ? EPOLL_CTL_ADD : EPOLL_CTL_DEL,
@@ -672,9 +673,19 @@ tlsev_run(struct tlsev_listener *l)
 				if ((fd = accept(evfd,
 				    (struct sockaddr *)&peer,
 				    &peerlen)) == -1) {
-					if (errno != EINTR)
-						xlog_strerror(LOG_ERR,
-						    errno, "accept");
+					if (errno == EINTR)
+						continue;
+
+					if (errno == EWOULDBLOCK) {
+						if (nev == 1)
+							// TODO: track how
+							// many times we unblock
+							// just for an accept()
+							// we didn't handle
+							;
+						continue;
+					}
+					xlog_strerror(LOG_ERR, errno, "accept");
 					continue;
 				}
 
