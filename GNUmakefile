@@ -8,8 +8,7 @@ LDFLAGS := $(shell pkg-config --libs libbsd-overlay libbsd-ctor \
 
 DEPFLAGS = -MMD -MP -MF $(DEPDIR)/$@.d
 
-SRCS = certainty.c config_vars.c xlog.c util.c tlsev.c idxheap.c mdr.c \
-       mdr_certainty.c
+SRCS = certainty.c config_vars.c xlog.c util.c mdr.c
 OBJS = $(SRCS:.c=.o)
 
 all: certainty
