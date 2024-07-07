@@ -1,23 +1,7 @@
-uid: plalonde
-gid: plalonde
 enable_coredumps: true
-pid_file: /tmp/certainty.pid
 ca_file: /home/plalonde/prog/certainty/ca/overnet.pem
 crl_file: /home/plalonde/prog/certainty/ca/overnet.crl
 key_file: /home/plalonde/prog/certainty/ca/private/overnet_key.pem
 serial_file: /home/plalonde/prog/certainty/ca/serial
 min_serial: 0x01
 max_serial: 0xff
-port: 9790
-listen_backlog: 1024
-prefork: 4
-max_clients: 1000
-socket_timeout: 10
-max_payload_size: 16384
-allowed_mdr_namespaces: 2
-
-backend: /bin/cat
-backend_uid: plalonde
-backend_gid: plalonde
-backend_promises: stdio rpath flock
-backend_unveils: /bin:/home/plalonde
