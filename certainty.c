@@ -679,10 +679,10 @@ mdrd_backend()
 		}
 
 		msg_sz = sizeof(msg_buf);
-		if (mdr_unpack_bemsg(&m, &id, &fd, &msg, msg_buf,
+		if (mdrd_unpack_bereq(&m, &id, &fd, &msg, msg_buf,
 		    &msg_sz, &peer_cert) == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
-			    "%s: mdr_unpack_bemsg", __func__);
+			    "%s: mdrd_unpack_bereq", __func__);
 			continue;
 		}
 
@@ -691,9 +691,23 @@ mdrd_backend()
 		    __func__, mdr_size(&m), mdr_id(&msg),
 		    mdr_size(&msg), id, fd);
 
-		if (verify(peer_cert) != 0)
-			// TODO: tell mdrd to close
-			continue;
+		if (verify(peer_cert) != 0) {
+			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
+			    MDRD_ST_CERTFAIL,
+			    MDRD_BERESP_F_CLOSE, NULL) == MDR_FAIL) {
+				xlog_strerror(LOG_ERR, errno,
+				    "%s: mdrd_pack_beresp", __func__);
+				return -1;
+			}
+		} else {
+			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
+			    MDRD_ST_OK, MDRD_BERESP_F_MSG,
+			    &msg) == MDR_FAIL) {
+				xlog_strerror(LOG_ERR, errno,
+				    "%s: mdrd_pack_beresp", __func__);
+				return -1;
+			}
+		}
 
 		if (writeall(1, mdr_buf(&m), mdr_size(&m)) < mdr_size(&m)) {
 			xlog_strerror(LOG_ERR, errno,

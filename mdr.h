@@ -53,8 +53,10 @@ struct mdr {
 #define MDR_NS_RESERVED 0x80000000
 
 /* IDs are 16 bits */
-#define MDR_ID_ECHO       0x0001
-#define MDR_ID_MDRD_BEMSG 0x0001
+#define MDR_ID_ECHO        0x0001
+#define MDR_ID_MDRD_ERROR  0x0001
+#define MDR_ID_MDRD_BEREQ  0x0002
+#define MDR_ID_MDRD_BERESP 0x0003
 
 struct mdr_echo {
 	struct mdr m;
