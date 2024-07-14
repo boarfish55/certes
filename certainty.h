@@ -1,0 +1,7 @@
+#ifndef CERTAINTY_H
+#define CERTAINTY_H
+
+#define CERTAINTY_MAX_ROLE_LENGTH 64
+#define CERTAINTY_MAX_ROLES       64
+
+#endif

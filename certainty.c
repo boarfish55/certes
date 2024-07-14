@@ -17,6 +17,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
+#include "certainty.h"
 #include "config_vars.h"
 #include "mdr_certainty.h"
 #include "mdr_mdrd.h"
@@ -105,24 +106,26 @@ struct config_vars certainty_config_vars[] = {
 
 void load_keys();
 
-int
-decode_overnet_roles(X509_EXTENSION *ext)
+ssize_t
+decode_overnet_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
 {
 	ASN1_OCTET_STRING   *asn1str;
 	STACK_OF(ASN1_TYPE) *seq;
 	ASN1_TYPE           *v;
+	ssize_t              i;
 
 	asn1str = X509_EXTENSION_get_data(ext);
 
 	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
 	    (const unsigned char **)&asn1str->data, asn1str->length);
-	while (sk_ASN1_TYPE_num(seq) > 0) {
+	for (i = 0; i < roles_len && sk_ASN1_TYPE_num(seq) > 0; i++) {
 		v = sk_ASN1_TYPE_shift(seq);
-		xlog(LOG_INFO, NULL, "role: %s\n", v->value.ia5string->data);
+		strlcpy(roles[i], (const char *)v->value.ia5string->data,
+		    CERTAINTY_MAX_ROLE_LENGTH);
 		free(v);
 	}
 	sk_ASN1_TYPE_free(seq);
-	return 0;
+	return i;
 }
 
 X509_EXTENSION *
@@ -206,12 +209,14 @@ usage()
 int
 verify(X509 *crt)
 {
-	int             roles_idx;
-	X509_EXTENSION *ex;
-	X509_NAME      *subject;
-	char            common_name[256];
-	int             r;
-	X509_STORE_CTX *ctx;
+	int              roles_idx;
+	X509_EXTENSION  *ex;
+	X509_NAME       *subject;
+	char             common_name[256];
+	int              r, i;
+	X509_STORE_CTX  *ctx;
+	char           **roles;
+	ssize_t          n;
 
 	subject = X509_get_subject_name(crt);
 	if (subject == NULL) {
@@ -259,7 +264,26 @@ verify(X509 *crt)
 		return -1;
 	}
 
-	return decode_overnet_roles(ex);
+	roles = malloc(CERTAINTY_MAX_ROLES *
+	    (sizeof(char *) + CERTAINTY_MAX_ROLE_LENGTH));
+	if (roles == NULL) {
+		xlog_strerror(LOG_ERR, errno, "%s: malloc", __func__);
+		return -1;
+	}
+	bzero(roles, CERTAINTY_MAX_ROLES *
+	    (sizeof(char *) + CERTAINTY_MAX_ROLE_LENGTH));
+	for (i = 0; i < CERTAINTY_MAX_ROLES; i++)
+		roles[i] = (char *)roles +
+		    (CERTAINTY_MAX_ROLES * sizeof(char *)) +
+		    (i * CERTAINTY_MAX_ROLE_LENGTH);
+
+	n = decode_overnet_roles(ex, roles, CERTAINTY_MAX_ROLES);
+	if (n == -1)
+		return -1;
+	for (i = 0; i < n; i++)
+		xlog(LOG_INFO, NULL, "role: %s\n", roles[i]);
+	free(roles);
+	return 0;
 }
 
 int
