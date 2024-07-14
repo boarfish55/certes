@@ -12,6 +12,7 @@
 #include <err.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -658,18 +659,26 @@ load_keys()
 int
 mdrd_backend()
 {
-	int         r;
-	struct mdr  m, msg;
-	char        buf[32768];
-	char        msg_buf[16384];
-	uint64_t    msg_sz;
-	uint64_t    id;
-	int         fd;
-	X509       *peer_cert;
+	int               r;
+	struct mdr        m, msg;
+	char              buf[32768];
+	char              msg_buf[16384];
+	uint64_t          msg_sz;
+	uint64_t          id;
+	int               fd;
+	X509             *peer_cert;
+	struct sigaction  act;
 
 	load_keys();
 
 	xlog_init(program, NULL, NULL, 1);
+
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0;
+	act.sa_handler = SIG_IGN;
+	if (sigaction(SIGINT, &act, NULL) == -1 ||
+	    sigaction(SIGTERM, &act, NULL) == -1)
+		return -1;
 
 	while ((r = mdr_unpack_from_fd(&m, 0, buf, sizeof(buf))) > 0) {
 		if (r == MDR_FAIL) {
@@ -729,6 +738,10 @@ cleanup()
 	if (priv_key != NULL) {
 		EVP_PKEY_free(priv_key);
 		priv_key = NULL;
+	}
+	if (store != NULL) {
+		X509_STORE_free(store);
+		store = NULL;
 	}
 }
 int
