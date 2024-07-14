@@ -3,7 +3,7 @@
 
 #include "mdr.h"
 
-#define MDR_NS_CERTAINTY 0x00000002
+#define MDR_NS_CERTAINTY 0x00000003
 
 #define MDR_ID_CERTAINTY_BOOTSTRAP 0x0001
 

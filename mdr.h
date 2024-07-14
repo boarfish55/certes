@@ -49,10 +49,12 @@ struct mdr {
  * future use, which in effect means the highest namespace is 0x7FFFFFFF.
  */
 #define MDR_NS_ECHO     0x00000001
+#define MDR_NS_MDRD     0x00000002
 #define MDR_NS_RESERVED 0x80000000
 
 /* IDs are 16 bits */
-#define MDR_ID_ECHO 0x0001
+#define MDR_ID_ECHO       0x0001
+#define MDR_ID_MDRD_BEMSG 0x0001
 
 struct mdr_echo {
 	struct mdr m;
@@ -108,7 +110,7 @@ ptrdiff_t mdr_unpack_tail_bytes(struct mdr *, uint64_t *);
 ptrdiff_t mdr_unpack_string(struct mdr *, char *, uint64_t *);
 ptrdiff_t mdr_unpack_mdr(struct mdr *, struct mdr *, char *, uint64_t *);
 ptrdiff_t mdr_unpackf(struct mdr *, const char *, ...);
-void     mdr_print(struct mdr *);
+void      mdr_print(struct mdr *);
 
 ptrdiff_t mdr_echo_encode(struct mdr_echo *);
 ptrdiff_t mdr_echo_decode(struct mdr_echo *, char *, uint64_t);

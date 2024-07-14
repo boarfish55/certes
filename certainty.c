@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include "config_vars.h"
 #include "mdr_certainty.h"
+#include "mdr_mdrd.h"
 #include "util.h"
 #include "xlog.h"
 
@@ -116,7 +117,7 @@ decode_overnet_roles(X509_EXTENSION *ext)
 	    (const unsigned char **)&asn1str->data, asn1str->length);
 	while (sk_ASN1_TYPE_num(seq) > 0) {
 		v = sk_ASN1_TYPE_shift(seq);
-		printf("role: %s\n", v->value.ia5string->data);
+		xlog(LOG_INFO, NULL, "role: %s\n", v->value.ia5string->data);
 		free(v);
 	}
 	sk_ASN1_TYPE_free(seq);
@@ -198,69 +199,63 @@ usage()
 	    "our\n");
 	printf("\t                                authority\n");
 	printf("\tsign <certificate> [roles...]   Re-signs the certificate\n");
+	printf("\tmdrd-backend                    Run as an mdrd backend\n");
 }
 
 int
-verify(const char *cert_path)
+verify(X509 *crt)
 {
 	int             roles_idx;
-	X509           *crt;
 	X509_EXTENSION *ex;
 	X509_NAME      *subject;
 	char            common_name[256];
-	FILE           *f;
 	int             r;
 	X509_STORE_CTX *ctx;
 
-	if ((f = fopen(cert_path, "r")) == NULL)
-		err(1, "fopen");
-	if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	fclose(f);
-
 	subject = X509_get_subject_name(crt);
 	if (subject == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		xlog(LOG_ERR, NULL, "X509_get_subject_name: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
+		return -1;
 	}
 
 	if (X509_NAME_get_text_by_NID(subject, NID_commonName,
 	    common_name, sizeof(common_name)) == -1) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		xlog(LOG_ERR, NULL, "X509_NAME_get_text_by_NID: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
+		return -1;
 	}
-
-	printf("Common name: %s\n", common_name);
 
 	// TODO: do a challenge on the client and its cert name. The peer
 	// IP on the connection should match one of the subjectAltNames, or
 	// the commonName of the cert. If there's no match, deny.
 
 	if ((ctx = X509_STORE_CTX_new()) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
+		return -1;
 	}
 	if (!X509_STORE_CTX_init(ctx, store, crt, NULL)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
+		return -1;
 	}
 
-	if ((r = X509_verify_cert(ctx)) < 0) {
-		ERR_print_errors_fp(stderr);
-		errx(1, "X509_verify_cert error");
-	} else if (r == 0) {
-		ERR_print_errors_fp(stderr);
-		errx(1, "X509_verify_cert failed");
+	if ((r = X509_verify_cert(ctx)) <= 0) {
+		xlog(LOG_ERR, NULL, "X509_verify_cert: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
+		return -1;
 	}
 
 	roles_idx = X509_get_ext_by_NID(crt, NID_overnet_roles, -1);
 	if (roles_idx == -1)
-		errx(1, "overnetRoles extension not found");
+		xlog(LOG_ERR, NULL,
+		    "%s: overnetRoles extension not found", __func__);
+
 	if ((ex = X509_get_ext(crt, roles_idx)) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		xlog(LOG_ERR, NULL, "X509_get_ext: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
+		return -1;
 	}
 
 	return decode_overnet_roles(ex);
@@ -660,6 +655,55 @@ load_keys()
 	 */
 }
 
+int
+mdrd_backend()
+{
+	int         r;
+	struct mdr  m, msg;
+	char        buf[32768];
+	char        msg_buf[16384];
+	uint64_t    msg_sz;
+	uint64_t    id;
+	int         fd;
+	X509       *peer_cert;
+
+	load_keys();
+
+	xlog_init(program, NULL, NULL, 1);
+
+	while ((r = mdr_unpack_from_fd(&m, 0, buf, sizeof(buf))) > 0) {
+		if (r == MDR_FAIL) {
+			xlog_strerror(LOG_ERR, errno,
+			    "%s: mdr_unpack_from_fd", __func__);
+			return -1;
+		}
+
+		msg_sz = sizeof(msg_buf);
+		if (mdr_unpack_bemsg(&m, &id, &fd, &msg, msg_buf,
+		    &msg_sz, &peer_cert) == MDR_FAIL) {
+			xlog_strerror(LOG_ERR, errno,
+			    "%s: mdr_unpack_bemsg", __func__);
+			continue;
+		}
+
+		xlog(LOG_INFO, NULL, "%s: received bemsg sz=%lu, msg_id=%lu, "
+		    "msg_sz=%lu, msg_id=%lu, fd=%d",
+		    __func__, mdr_size(&m), mdr_id(&msg),
+		    mdr_size(&msg), id, fd);
+
+		if (verify(peer_cert) != 0)
+			// TODO: tell mdrd to close
+			continue;
+
+		if (writeall(1, mdr_buf(&m), mdr_size(&m)) < mdr_size(&m)) {
+			xlog_strerror(LOG_ERR, errno,
+			    "%s: writeall", __func__);
+			return -1;
+		}
+	}
+	return 0;
+}
+
 void
 cleanup()
 {
@@ -679,6 +723,8 @@ main(int argc, char **argv)
 	int     opt, status;
 	char   *command;
 	size_t  sz;
+	FILE   *f;
+	X509   *crt;
 
 	while ((opt = getopt(argc, argv, "c:hd")) != -1) {
 		switch (opt) {
@@ -731,11 +777,20 @@ main(int argc, char **argv)
 	if (strcmp(command, "verify") == 0) {
 		if (optind >= argc)
 			errx(1, "no certificate file provided");
-		status = verify(argv[optind++]);
+		if ((f = fopen(argv[optind], "r")) == NULL)
+			err(1, "fopen");
+		if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+		fclose(f);
+		status = verify(crt);
 	} else if (strcmp(command, "sign") == 0) {
 		if (optind >= argc)
 			errx(1, "no certificate file provided");
 		status = sign(argv[optind], (const char **)argv + optind + 1);
+	} else if (strcmp(command, "mdrd-backend") == 0) {
+		status = mdrd_backend();
 	} else {
 		usage();
 		status = 1;
