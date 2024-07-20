@@ -434,7 +434,18 @@ mdr_pack_string(struct mdr *m, const char *bytes)
 ptrdiff_t
 mdr_pack_mdr(struct mdr *m, struct mdr *src)
 {
-	return mdr_pack_bytes(m, mdr_buf(src), mdr_size(src));
+	if (m == NULL || src == NULL) {
+		errno = EINVAL;
+		return MDR_FAIL;
+	}
+
+	if (!mdr_can_fit(m, mdr_size(src)))
+		return MDR_FAIL;
+
+	memcpy(m->pos, mdr_buf(src), mdr_size(src));
+	m->pos += mdr_size(src);
+
+	return mdr_update_size(m);
 }
 
 ptrdiff_t
@@ -895,20 +906,29 @@ mdr_unpack_string(struct mdr *m, char *bytes, uint64_t *bytes_sz)
 }
 
 ptrdiff_t
-mdr_unpack_mdr(struct mdr *m, struct mdr *msg, char *buf, uint64_t *buf_sz)
+mdr_unpack_mdr(struct mdr *m, struct mdr *dst, char *buf, uint64_t *buf_sz)
 {
-	uint64_t r, sz;
+	uint64_t sz;
 
-	if (m == NULL || msg == NULL || buf == NULL || buf_sz == NULL) {
+	if (m == NULL || dst == NULL || buf == NULL || buf_sz == NULL) {
 		errno = EINVAL;
 		return MDR_FAIL;
 	}
 
-	sz = *buf_sz;
-	if ((r = mdr_unpack_bytes(m, buf, buf_sz)) == MDR_FAIL)
+	if (m->buf_sz - mdr_tell(m) < sizeof(uint64_t)) {
+		errno = ERANGE;
 		return MDR_FAIL;
+	}
+	sz = be64toh(*(uint64_t *)m->pos);
 
-	return mdr_unpack_hdr(msg, buf, sz);
+	if (m->buf_sz - mdr_tell(m) < sz) {
+		errno = ERANGE;
+		return MDR_FAIL;
+	}
+	memcpy(buf, m->pos, sz);
+	m->pos += sz;
+
+	return mdr_unpack_hdr(dst, buf, sz);
 }
 
 ptrdiff_t
