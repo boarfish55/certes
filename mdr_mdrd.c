@@ -13,9 +13,17 @@ mdrd_unpack_bereq(struct mdr *m, uint64_t *id, int *fd, struct mdr *msg,
 
 	if (mdr_unpack_uint64(m, id) == MDR_FAIL ||
 	    mdr_unpack_int32(m, fd) == MDR_FAIL ||
-	    mdr_unpack_mdr(m, msg, msg_buf, msg_sz) == MDR_FAIL ||
-	    (pos = mdr_unpack_tail_bytes(m, &cert_len)) == MDR_FAIL)
+	    mdr_unpack_mdr(m, msg, msg_buf, msg_sz) == MDR_FAIL)
 		return MDR_FAIL;
+
+	if ((pos = mdr_unpack_tail_bytes(m, &cert_len)) == MDR_FAIL) {
+		if (errno != ENOENT) {
+			return MDR_FAIL;
+		} else {
+			*peer_cert = NULL;
+			return 0;
+		}
+	}
 
 	if (cert_len == 0) {
 		*peer_cert = NULL;

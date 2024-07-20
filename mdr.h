@@ -112,7 +112,7 @@ ptrdiff_t mdr_unpack_tail_bytes(struct mdr *, uint64_t *);
 ptrdiff_t mdr_unpack_string(struct mdr *, char *, uint64_t *);
 ptrdiff_t mdr_unpack_mdr(struct mdr *, struct mdr *, char *, uint64_t *);
 ptrdiff_t mdr_unpackf(struct mdr *, const char *, ...);
-void      mdr_print(struct mdr *);
+void      mdr_print(FILE *, struct mdr *);
 
 ptrdiff_t mdr_echo_encode(struct mdr_echo *);
 ptrdiff_t mdr_echo_decode(struct mdr_echo *, char *, uint64_t);

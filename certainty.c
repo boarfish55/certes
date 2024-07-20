@@ -690,7 +690,7 @@ mdrd_backend()
 	uint64_t          msg_sz;
 	uint64_t          id;
 	int               fd;
-	X509             *peer_cert;
+	X509             *peer_cert = NULL;
 	struct sigaction  act;
 
 	load_keys();
@@ -711,20 +711,33 @@ mdrd_backend()
 			return -1;
 		}
 
-		msg_sz = sizeof(msg_buf);
+		if (mdr_namespace(&m) != MDR_NS_MDRD ||
+		    mdr_id(&m) != MDR_ID_MDRD_BEREQ) {
+			xlog(LOG_NOTICE, NULL,
+			    "%s: invalid mdr namespace or id", __func__);
+			return -1;
+		}
+
+		msg_sz = mdr_size(&m) - r;
 		if (mdrd_unpack_bereq(&m, &id, &fd, &msg, msg_buf,
 		    &msg_sz, &peer_cert) == MDR_FAIL) {
-			xlog_strerror(LOG_ERR, errno,
-			    "%s: mdrd_unpack_bereq", __func__);
+			if (errno == EAGAIN)
+				xlog(LOG_ERR, NULL,
+				    "%s: mdrd_unpack_bereq: missing bytes "
+				    "in payload", __func__);
+			else
+				xlog_strerror(LOG_ERR, errno,
+				    "%s: mdrd_unpack_bereq", __func__);
 			continue;
 		}
 
-		xlog(LOG_INFO, NULL, "%s: received bemsg sz=%lu, msg_id=%lu, "
-		    "msg_sz=%lu, msg_id=%lu, fd=%d",
-		    __func__, mdr_size(&m), mdr_id(&msg),
-		    mdr_size(&msg), id, fd);
+		if (msg_sz > 0)
+			xlog(LOG_INFO, NULL, "%s: received bemsg sz=%lu, msg_id=%lu, "
+			    "msg_sz=%lu, msg_id=%lu, fd=%d",
+			    __func__, mdr_size(&m), mdr_id(&msg),
+			    mdr_size(&msg), id, fd);
 
-		if (verify(peer_cert) != 0) {
+		if (peer_cert == NULL || verify(peer_cert) != 0) {
 			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
 			    MDRD_ST_CERTFAIL,
 			    MDRD_BERESP_F_CLOSE, NULL) == MDR_FAIL) {

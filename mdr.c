@@ -569,18 +569,16 @@ mdr_unpack_from_fd(struct mdr *m, int fd, char *buf, size_t buf_sz)
 	}
 
 	r = readall(fd, buf, mdr_hdr_size(0));
-	if (r == -1) {
+	if (r == -1)
 		return -1;
-	} else if (r == 0) {
-		errno = EPIPE;
-		return -1;
-	}
+	else if (r == 0)
+		return 0;
 
 	if (mdr_unpack_hdr(m, buf, buf_sz) == MDR_FAIL)
 		return MDR_FAIL;
 
 	if (mdr_size(m) > buf_sz) {
-		errno = EOVERFLOW;
+		errno = EAGAIN;
 		return MDR_FAIL;
 	}
 
@@ -639,6 +637,13 @@ mdr_unpack_hdr(struct mdr *m, char *buf, size_t buf_sz)
 		return MDR_FAIL;
 	}
 
+	/*
+	 * Make sure we never try to unpack bytes past
+	 * the end of our message.
+	 */
+	if (m->buf_sz > mdr_size(m))
+		m->buf_sz = mdr_size(m);
+
 	m->flags = (uint32_t *)m->pos;
 	m->pos += sizeof(*m->flags);
 
@@ -667,7 +672,7 @@ mdr_unpack_hdr(struct mdr *m, char *buf, size_t buf_sz)
 }
 
 void
-mdr_print(struct mdr *m)
+mdr_print(FILE *out, struct mdr *m)
 {
 	char *b;
 	int   i;
@@ -675,26 +680,26 @@ mdr_print(struct mdr *m)
 	if (m == NULL)
 		return;
 
-	printf("  size:        %lu\n", mdr_size(m));
-	printf("  namespace:   %u\n", mdr_namespace(m));
-	printf("  id:          %u\n", mdr_id(m));
-	printf("  version:     %u\n", mdr_version(m));
+	fprintf(out, "  size:        %lu\n", mdr_size(m));
+	fprintf(out, "  namespace:   %u\n", mdr_namespace(m));
+	fprintf(out, "  id:          %u\n", mdr_id(m));
+	fprintf(out, "  version:     %u\n", mdr_version(m));
 	if (mdr_flags(m) & MDR_F_TAIL_BYTES)
-		printf("  tail bytes:  %lu\n", mdr_tail_bytes(m));
-	printf("\n");
-	printf("  payload (%lu bytes):\n",
+		fprintf(out, "  tail bytes:  %lu\n", mdr_tail_bytes(m));
+	fprintf(out, "\n");
+	fprintf(out, "  payload (%lu bytes):\n",
 	    mdr_size(m) - mdr_hdr_size(mdr_flags(m)) - mdr_tail_bytes(m));
 
 	for (b = mdr_buf(m) + mdr_hdr_size(mdr_flags(m)), i = 0;
 	    b - (char *)mdr_buf(m) < mdr_size(m) - mdr_tail_bytes(m);
 	    b++, i++) {
 		if (i % 8 == 0)
-			printf("\n   ");
+			fprintf(out, "\n   ");
 		else if (i % 4 == 0)
-			printf(" ");
-		printf(" %02x", (unsigned char)*b);
+			fprintf(out, " ");
+		fprintf(out, " %02x", (unsigned char)*b);
 	}
-	printf("\n");
+	fprintf(out, "\n");
 }
 
 ptrdiff_t
@@ -845,6 +850,11 @@ mdr_unpack_tail_bytes(struct mdr *m, uint64_t *bytes_sz)
 {
 	if (m == NULL || bytes_sz == NULL) {
 		errno = EINVAL;
+		return MDR_FAIL;
+	}
+
+	if (!(mdr_flags(m) & MDR_F_TAIL_BYTES)) {
+		errno = ENOENT;
 		return MDR_FAIL;
 	}
 
