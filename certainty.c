@@ -686,8 +686,6 @@ mdrd_backend()
 	int               r;
 	struct mdr        m, msg;
 	char              buf[32768];
-	char              msg_buf[16384];
-	uint64_t          msg_sz;
 	uint64_t          id;
 	int               fd;
 	X509             *peer_cert = NULL;
@@ -718,9 +716,8 @@ mdrd_backend()
 			return -1;
 		}
 
-		msg_sz = mdr_size(&m) - r;
-		if (mdrd_unpack_bereq(&m, &id, &fd, &msg, msg_buf,
-		    &msg_sz, &peer_cert) == MDR_FAIL) {
+		if (mdrd_unpack_bereq(&m, &id, &fd, &msg,
+		    &peer_cert) == MDR_FAIL) {
 			if (errno == EAGAIN)
 				xlog(LOG_ERR, NULL,
 				    "%s: mdrd_unpack_bereq: missing bytes "
@@ -730,12 +727,6 @@ mdrd_backend()
 				    "%s: mdrd_unpack_bereq", __func__);
 			continue;
 		}
-
-		if (msg_sz > 0)
-			xlog(LOG_INFO, NULL, "%s: received bemsg sz=%lu, msg_id=%lu, "
-			    "msg_sz=%lu, msg_id=%lu, fd=%d",
-			    __func__, mdr_size(&m), mdr_id(&msg),
-			    mdr_size(&msg), id, fd);
 
 		if (peer_cert == NULL || verify(peer_cert) != 0) {
 			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
