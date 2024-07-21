@@ -220,8 +220,29 @@ mdr_buf(struct mdr *m)
 }
 
 ptrdiff_t
-mdr_pack_hdr(struct mdr *m, uint32_t flags, uint16_t namespace, uint16_t id,
-    uint16_t version, char *buf, size_t buf_sz)
+mdr_pack(struct mdr *m, char *buf, size_t buf_sz, uint32_t flags,
+    uint16_t namespace, uint16_t id, uint16_t version, const char *spec, ...)
+{
+	ptrdiff_t r;
+	va_list   ap;
+
+	if (mdr_pack_hdr(m, buf, buf_sz, flags, namespace, id,
+	    version) == MDR_FAIL)
+		return MDR_FAIL;
+
+	va_start(ap, spec);
+	r = mdr_vpackf(m, spec, ap);
+	va_end(ap);
+
+	if (r == MDR_FAIL)
+		return MDR_FAIL;
+
+	return mdr_tell(m);
+}
+
+ptrdiff_t
+mdr_pack_hdr(struct mdr *m, char *buf, size_t buf_sz, uint32_t flags,
+    uint16_t namespace, uint16_t id, uint16_t version)
 {
 	if (m == NULL) {
 		errno = EINVAL;
@@ -449,9 +470,8 @@ mdr_pack_mdr(struct mdr *m, struct mdr *src)
 }
 
 ptrdiff_t
-mdr_packf(struct mdr *m, const char *spec, ...)
+mdr_vpackf(struct mdr *m, const char *spec, va_list ap)
 {
-	va_list     ap;
 	int         finish = 0;
 	const char *p, *prev;
 	const char *bytes;
@@ -475,7 +495,6 @@ mdr_packf(struct mdr *m, const char *spec, ...)
 	 *   i8, i16, i32, i64
 	 *   b, s
 	 */
-	va_start(ap, spec);
 	for (p = spec, prev = spec; !finish; p++) {
 		if (*p == '\0')
 			finish = 1;
@@ -491,19 +510,18 @@ mdr_packf(struct mdr *m, const char *spec, ...)
 			return MDR_FAIL;
 		}
 
-		if (strcmp(spbuf, "b") == 0) {
+		if (strcmp(spbuf, "m") == 0) {
+			if (mdr_pack_mdr(m, va_arg(ap, struct mdr *))
+			    == MDR_FAIL)
+				return MDR_FAIL;
+		} else if (strcmp(spbuf, "b") == 0) {
 			bytes = va_arg(ap, char *);
 			bytes_sz = va_arg(ap, uint64_t);
-			if (mdr_pack_bytes(m, bytes, bytes_sz) == MDR_FAIL) {
-				errno = EOVERFLOW;
+			if (mdr_pack_bytes(m, bytes, bytes_sz) == MDR_FAIL)
 				return MDR_FAIL;
-			}
 		} else if (strcmp(spbuf, "s") == 0) {
-			if (mdr_pack_string(m, va_arg(ap, char *))
-			    == MDR_FAIL) {
-				errno = EOVERFLOW;
+			if (mdr_pack_string(m, va_arg(ap, char *)) == MDR_FAIL)
 				return MDR_FAIL;
-			}
 		} else if (spbuf[0] == 'u' || spbuf[0] == 'i') {
 			if (strlen(spbuf) < 2) {
 				errno = EINVAL;
@@ -556,7 +574,27 @@ mdr_packf(struct mdr *m, const char *spec, ...)
 		}
 		prev = p + 1;
 	}
+
+	return mdr_tell(m);
+}
+
+ptrdiff_t
+mdr_packf(struct mdr *m, const char *spec, ...)
+{
+	va_list     ap;
+	ptrdiff_t   r;
+
+	if (m == NULL || spec == NULL) {
+		errno = EINVAL;
+		return MDR_FAIL;
+	}
+
+	va_start(ap, spec);
+	r = mdr_vpackf(m, spec, ap);
 	va_end(ap);
+
+	if (r == MDR_FAIL)
+		return MDR_FAIL;
 
 	return mdr_tell(m);
 }
@@ -906,11 +944,11 @@ mdr_unpack_string(struct mdr *m, char *bytes, uint64_t *bytes_sz)
 }
 
 ptrdiff_t
-mdr_unpack_mdr(struct mdr *m, struct mdr *dst, char *buf, uint64_t *buf_sz)
+mdr_unpack_mdr(struct mdr *m, struct mdr *dst)
 {
 	uint64_t sz;
 
-	if (m == NULL || dst == NULL || buf == NULL || buf_sz == NULL) {
+	if (m == NULL || dst == NULL) {
 		errno = EINVAL;
 		return MDR_FAIL;
 	}
@@ -925,16 +963,17 @@ mdr_unpack_mdr(struct mdr *m, struct mdr *dst, char *buf, uint64_t *buf_sz)
 		errno = ERANGE;
 		return MDR_FAIL;
 	}
-	memcpy(buf, m->pos, sz);
+
+	if (mdr_unpack_hdr(dst, m->pos, sz) == MDR_FAIL)
+		return MDR_FAIL;
 	m->pos += sz;
 
-	return mdr_unpack_hdr(dst, buf, sz);
+	return mdr_tell(m);
 }
 
 ptrdiff_t
-mdr_unpackf(struct mdr *m, const char *spec, ...)
+mdr_vunpackf(struct mdr *m, const char *spec, va_list ap)
 {
-	va_list     ap;
 	int         finish = 0;
 	const char *p, *prev;
 	char       *bytes, *end;
@@ -957,7 +996,6 @@ mdr_unpackf(struct mdr *m, const char *spec, ...)
 	 *   i8, i16, i32, i64
 	 *   b, s
 	 */
-	va_start(ap, spec);
 	for (p = spec, prev = spec; !finish; p++) {
 		if (*p == '\0')
 			finish = 1;
@@ -973,7 +1011,11 @@ mdr_unpackf(struct mdr *m, const char *spec, ...)
 			return MDR_FAIL;
 		}
 
-		if (strcmp(spbuf, "b") == 0) {
+		if (strcmp(spbuf, "m") == 0) {
+			if (mdr_unpack_mdr(m, va_arg(ap, struct mdr *))
+			    == MDR_FAIL)
+				return MDR_FAIL;
+		} else if (strcmp(spbuf, "b") == 0) {
 			bytes = va_arg(ap, char *);
 			bytes_sz = va_arg(ap, uint64_t *);
 			if (mdr_unpack_bytes(m, bytes, bytes_sz)
@@ -1028,28 +1070,65 @@ mdr_unpackf(struct mdr *m, const char *spec, ...)
 		}
 		prev = p + 1;
 	}
-	va_end(ap);
 
 	return mdr_tell(m);
 }
 
 ptrdiff_t
-mdr_echo_encode(struct mdr_echo *m)
+mdr_unpack(struct mdr *m, char *buf, size_t buf_sz, const char *spec, ...)
 {
-	uint64_t r;
+	va_list   ap;
+	ptrdiff_t r;
 
-	if ((r = mdr_pack_hdr(&m->m, 0, MDR_NS_ECHO, MDR_ID_ECHO, 0,
-	    NULL, 0)) == MDR_FAIL)
+	if (m == NULL || spec == NULL) {
+		errno = EINVAL;
 		return MDR_FAIL;
-	return mdr_pack_string(&m->m, m->echo);
+	}
+
+	if (mdr_unpack_hdr(m, buf, buf_sz) == MDR_FAIL)
+		return MDR_FAIL;
+
+	va_start(ap, spec);
+	r = mdr_vunpackf(m, spec, ap);
+	va_end(ap);
+
+	if (r == MDR_FAIL)
+		return MDR_FAIL;
+
+	return mdr_tell(m);
 }
 
 ptrdiff_t
-mdr_echo_decode(struct mdr_echo *m, char *buf, uint64_t sz)
+mdr_unpackf(struct mdr *m, const char *spec, ...)
 {
-	uint64_t r, len = sizeof(m->echo);
+	va_list   ap;
+	ptrdiff_t r;
 
-	if ((r = mdr_unpack_hdr(&m->m, buf, sz)) == MDR_FAIL)
+	if (m == NULL || spec == NULL) {
+		errno = EINVAL;
 		return MDR_FAIL;
-	return mdr_unpack_string(&m->m, m->echo, &len);
+	}
+
+	va_start(ap, spec);
+	r = mdr_vunpackf(m, spec, ap);
+	va_end(ap);
+
+	if (r == MDR_FAIL)
+		return MDR_FAIL;
+
+	return mdr_tell(m);
+}
+
+ptrdiff_t
+mdr_pack_echo(struct mdr *m, const char *echo)
+{
+	return mdr_pack(m, NULL, 0, 0, MDR_NS_ECHO,
+	    MDR_ID_ECHO, 0, "s", echo);
+}
+
+ptrdiff_t
+mdr_unpack_echo(struct mdr *m, char *buf, uint64_t sz, char *echo,
+    size_t *echo_sz)
+{
+	return mdr_unpack(m, buf, sz, "s", echo, echo_sz);
 }

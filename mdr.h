@@ -58,11 +58,6 @@ struct mdr {
 #define MDR_ID_MDRD_BEREQ  0x0002
 #define MDR_ID_MDRD_BERESP 0x0003
 
-struct mdr_echo {
-	struct mdr m;
-	char       echo[1024];
-};
-
 #define MDR_FAIL -1
 
 void      *mdr_buf(struct mdr *);
@@ -80,8 +75,10 @@ uint16_t mdr_id(struct mdr *);
 uint16_t mdr_version(struct mdr *);
 uint64_t mdr_tail_bytes(struct mdr *);
 
-ptrdiff_t mdr_pack_hdr(struct mdr *, uint32_t, uint16_t, uint16_t, uint16_t,
-              char *, size_t);
+ptrdiff_t mdr_pack(struct mdr *, char *, size_t, uint32_t,
+              uint16_t, uint16_t, uint16_t, const char *, ...);
+ptrdiff_t mdr_pack_hdr(struct mdr *, char *, size_t, uint32_t, uint16_t,
+              uint16_t, uint16_t);
 ptrdiff_t mdr_pack_int8(struct mdr *, int8_t);
 ptrdiff_t mdr_pack_int16(struct mdr *, int16_t);
 ptrdiff_t mdr_pack_int32(struct mdr *, int32_t);
@@ -95,7 +92,9 @@ ptrdiff_t mdr_pack_tail_bytes(struct mdr *, uint64_t);
 ptrdiff_t mdr_pack_string(struct mdr *, const char *);
 ptrdiff_t mdr_pack_mdr(struct mdr *, struct mdr *);
 ptrdiff_t mdr_packf(struct mdr *, const char *, ...);
+ptrdiff_t mdr_vpackf(struct mdr *, const char *, va_list);
 
+ptrdiff_t mdr_unpack(struct mdr *, char *, size_t, const char *, ...);
 ptrdiff_t mdr_unpack_from_fd(struct mdr *, int, char *, size_t);
 ptrdiff_t mdr_unpack_all(struct mdr *, char *, size_t, size_t);
 ptrdiff_t mdr_unpack_hdr(struct mdr *, char *, size_t);
@@ -110,11 +109,12 @@ ptrdiff_t mdr_unpack_uint64(struct mdr *, uint64_t *);
 ptrdiff_t mdr_unpack_bytes(struct mdr *, char *, uint64_t *);
 ptrdiff_t mdr_unpack_tail_bytes(struct mdr *, uint64_t *);
 ptrdiff_t mdr_unpack_string(struct mdr *, char *, uint64_t *);
-ptrdiff_t mdr_unpack_mdr(struct mdr *, struct mdr *, char *, uint64_t *);
+ptrdiff_t mdr_unpack_mdr(struct mdr *, struct mdr *);
 ptrdiff_t mdr_unpackf(struct mdr *, const char *, ...);
+ptrdiff_t mdr_vunpackf(struct mdr *, const char *, va_list);
 void      mdr_print(FILE *, struct mdr *);
 
-ptrdiff_t mdr_echo_encode(struct mdr_echo *);
-ptrdiff_t mdr_echo_decode(struct mdr_echo *, char *, uint64_t);
+ptrdiff_t mdr_pack_echo(struct mdr *, const char *);
+ptrdiff_t mdr_unpack_echo(struct mdr *, char *, size_t, char *, size_t *);
 
 #endif
