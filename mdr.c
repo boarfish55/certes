@@ -1127,7 +1127,7 @@ mdr_pack_echo(struct mdr *m, const char *echo)
 }
 
 ptrdiff_t
-mdr_unpack_echo(struct mdr *m, char *buf, uint64_t sz, char *echo,
+mdr_unpack_echo(struct mdr *m, char *buf, size_t sz, char *echo,
     size_t *echo_sz)
 {
 	return mdr_unpack(m, buf, sz, "s", echo, echo_sz);
