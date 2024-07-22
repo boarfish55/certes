@@ -207,14 +207,13 @@ usage()
 }
 
 int
-verify(X509 *crt)
+verify(X509_STORE_CTX *ctx, X509 *crt)
 {
 	int              roles_idx;
 	X509_EXTENSION  *ex;
 	X509_NAME       *subject;
 	char             common_name[256];
 	int              r, i;
-	X509_STORE_CTX  *ctx;
 	char           **roles;
 	ssize_t          n;
 
@@ -236,22 +235,20 @@ verify(X509 *crt)
 	// IP on the connection should match one of the subjectAltNames, or
 	// the commonName of the cert. If there's no match, deny.
 
-	if ((ctx = X509_STORE_CTX_new()) == NULL) {
-		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
-		    ERR_error_string(ERR_get_error(), NULL));
-		return -1;
-	}
 	if (!X509_STORE_CTX_init(ctx, store, crt, NULL)) {
+		X509_STORE_CTX_cleanup(ctx);
 		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
 		return -1;
 	}
 
 	if ((r = X509_verify_cert(ctx)) <= 0) {
+		X509_STORE_CTX_cleanup(ctx);
 		xlog(LOG_ERR, NULL, "X509_verify_cert: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
 		return -1;
 	}
+	X509_STORE_CTX_cleanup(ctx);
 
 	roles_idx = X509_get_ext_by_NID(crt, NID_overnet_roles, -1);
 	if (roles_idx == -1)
@@ -278,8 +275,10 @@ verify(X509 *crt)
 		    (i * CERTAINTY_MAX_ROLE_LENGTH);
 
 	n = decode_overnet_roles(ex, roles, CERTAINTY_MAX_ROLES);
-	if (n == -1)
+	if (n == -1) {
+		free(roles);
 		return -1;
+	}
 	for (i = 0; i < n; i++)
 		xlog(LOG_INFO, NULL, "role: %s\n", roles[i]);
 	free(roles);
@@ -689,9 +688,16 @@ mdrd_backend()
 	uint64_t          id;
 	int               fd;
 	X509             *peer_cert = NULL;
+	X509_STORE_CTX   *ctx;
 	struct sigaction  act;
 
 	load_keys();
+
+	if ((ctx = X509_STORE_CTX_new()) == NULL) {
+		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
+		return -1;
+	}
 
 	xlog_init(program, NULL, NULL, 1);
 
@@ -706,14 +712,14 @@ mdrd_backend()
 		if (r == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
 			    "%s: mdr_unpack_from_fd", __func__);
-			return -1;
+			goto fail;
 		}
 
 		if (mdr_namespace(&m) != MDR_NS_MDRD ||
 		    mdr_id(&m) != MDR_ID_MDRD_BEREQ) {
 			xlog(LOG_NOTICE, NULL,
 			    "%s: invalid mdr namespace or id", __func__);
-			return -1;
+			goto fail;
 		}
 
 		if (mdrd_unpack_bereq(&m, &id, &fd, &msg,
@@ -728,31 +734,40 @@ mdrd_backend()
 			continue;
 		}
 
-		if (peer_cert == NULL || verify(peer_cert) != 0) {
+		if (peer_cert == NULL || verify(ctx, peer_cert) != 0) {
+			if (peer_cert != NULL)
+				X509_free(peer_cert);
 			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
 			    MDRD_ST_CERTFAIL,
 			    MDRD_BERESP_F_CLOSE, NULL) == MDR_FAIL) {
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: mdrd_pack_beresp", __func__);
-				return -1;
+				goto fail;
 			}
 		} else {
+			// TODO: currently this only echoes back
+			// TODO: double-free?
+			X509_free(peer_cert);
 			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
 			    MDRD_ST_OK, MDRD_BERESP_F_MSG,
 			    &msg) == MDR_FAIL) {
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: mdrd_pack_beresp", __func__);
-				return -1;
+				goto fail;
 			}
 		}
 
-		if (writeall(1, mdr_buf(&m), mdr_size(&m)) < mdr_size(&m)) {
+		if (write(1, mdr_buf(&m), mdr_size(&m)) < mdr_size(&m)) {
 			xlog_strerror(LOG_ERR, errno,
 			    "%s: writeall", __func__);
-			return -1;
+			goto fail;
 		}
 	}
+	X509_STORE_CTX_free(ctx);
 	return 0;
+fail:
+	X509_STORE_CTX_free(ctx);
+	return -1;
 }
 
 void
@@ -772,14 +787,16 @@ cleanup()
 		store = NULL;
 	}
 }
+
 int
 main(int argc, char **argv)
 {
-	int     opt, status;
-	char   *command;
-	size_t  sz;
-	FILE   *f;
-	X509   *crt;
+	int             opt, status;
+	char           *command;
+	size_t          sz;
+	FILE           *f;
+	X509           *crt;
+	X509_STORE_CTX *ctx;
 
 	while ((opt = getopt(argc, argv, "c:hd")) != -1) {
 		switch (opt) {
@@ -839,7 +856,13 @@ main(int argc, char **argv)
 			exit(1);
 		}
 		fclose(f);
-		status = verify(crt);
+		if ((ctx = X509_STORE_CTX_new()) == NULL) {
+			xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
+			    ERR_error_string(ERR_get_error(), NULL));
+			return -1;
+		}
+		status = verify(ctx, crt);
+		X509_STORE_CTX_free(ctx);
 	} else if (strcmp(command, "sign") == 0) {
 		if (optind >= argc)
 			errx(1, "no certificate file provided");
