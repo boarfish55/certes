@@ -640,10 +640,11 @@ load_keys()
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
-
+#ifndef __OpenBSD__
+	/* pledge() doesn't allow mlock() */
 	if (mlock(priv_key, pkey_sz) == -1)
 		err(1, "mlock");
-
+#endif
 	if ((f = fopen(certainty_conf.ca_file, "r")) == NULL)
 		err(1, "fopen");
 	if ((ca_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
