@@ -113,18 +113,20 @@ decode_overnet_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
 	STACK_OF(ASN1_TYPE) *seq;
 	ASN1_TYPE           *v;
 	ssize_t              i;
+	const unsigned char *p;
 
 	asn1str = X509_EXTENSION_get_data(ext);
+	p = asn1str->data;
 
 	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
-	    (const unsigned char **)&asn1str->data, asn1str->length);
+	    (const unsigned char **)&p, asn1str->length);
 	for (i = 0; i < roles_len && sk_ASN1_TYPE_num(seq) > 0; i++) {
 		v = sk_ASN1_TYPE_shift(seq);
 		strlcpy(roles[i], (const char *)v->value.ia5string->data,
 		    CERTAINTY_MAX_ROLE_LENGTH);
-		free(v);
+		ASN1_TYPE_free(v);
 	}
-	sk_ASN1_TYPE_free(seq);
+	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
 	return i;
 }
 
@@ -267,6 +269,7 @@ verify(X509_STORE_CTX *ctx, X509 *crt)
 		xlog_strerror(LOG_ERR, errno, "%s: malloc", __func__);
 		return -1;
 	}
+
 	bzero(roles, CERTAINTY_MAX_ROLES *
 	    (sizeof(char *) + CERTAINTY_MAX_ROLE_LENGTH));
 	for (i = 0; i < CERTAINTY_MAX_ROLES; i++)
@@ -279,6 +282,7 @@ verify(X509_STORE_CTX *ctx, X509 *crt)
 		free(roles);
 		return -1;
 	}
+
 	for (i = 0; i < n; i++)
 		xlog(LOG_INFO, NULL, "role: %s\n", roles[i]);
 	free(roles);
@@ -747,7 +751,6 @@ mdrd_backend()
 			}
 		} else {
 			// TODO: currently this only echoes back
-			// TODO: double-free?
 			X509_free(peer_cert);
 			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
 			    MDRD_ST_OK, MDRD_BERESP_F_MSG,
