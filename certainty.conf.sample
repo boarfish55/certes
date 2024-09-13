@@ -1,7 +1,7 @@
-enable_coredumps: true
-ca_file: /home/plalonde/prog/certainty/ca/overnet.pem
-crl_file: /home/plalonde/prog/certainty/ca/overnet.crl
-key_file: /home/plalonde/prog/certainty/ca/private/overnet_key.pem
-serial_file: /home/plalonde/prog/certainty/ca/serial
-min_serial: 0x01
-max_serial: 0xff
+enable_coredumps = true
+ca_file = /home/plalonde/prog/certainty/ca/overnet.pem
+crl_file = /home/plalonde/prog/certainty/ca/overnet.crl
+key_file = /home/plalonde/prog/certainty/ca/private/overnet_key.pem
+serial_file = /home/plalonde/prog/certainty/ca/serial
+min_serial = 0x01
+max_serial = 0xff

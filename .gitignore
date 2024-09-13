@@ -8,3 +8,4 @@ ca/
 client*/
 *.core
 *.gdb
+flatconf.c

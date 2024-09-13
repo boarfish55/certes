@@ -18,7 +18,7 @@
 #include <syslog.h>
 #include <unistd.h>
 #include "certainty.h"
-#include "config_vars.h"
+#include "flatconf.h"
 #include "mdr_certainty.h"
 #include "mdr_mdrd.h"
 #include "util.h"
@@ -58,50 +58,50 @@ struct {
 	"0x0"
 };
 
-struct config_vars certainty_config_vars[] = {
+struct flatconf certainty_config_vars[] = {
 	{
 		"enable_coredumps",
-		CONFIG_VARS_BOOLINT,
+		FLATCONF_BOOLINT,
 		&certainty_conf.enable_coredumps,
 		sizeof(certainty_conf.enable_coredumps)
 	},
 	{
 		"ca_file",
-		CONFIG_VARS_STRING,
+		FLATCONF_STRING,
 		certainty_conf.ca_file,
 		sizeof(certainty_conf.ca_file)
 	},
 	{
 		"crl_file",
-		CONFIG_VARS_STRING,
+		FLATCONF_STRING,
 		certainty_conf.crl_file,
 		sizeof(certainty_conf.crl_file)
 	},
 	{
 		"key_file",
-		CONFIG_VARS_STRING,
+		FLATCONF_STRING,
 		certainty_conf.key_file,
 		sizeof(certainty_conf.key_file)
 	},
 	{
 		"serial_file",
-		CONFIG_VARS_STRING,
+		FLATCONF_STRING,
 		certainty_conf.serial_file,
 		sizeof(certainty_conf.serial_file)
 	},
 	{
 		"min_serial",
-		CONFIG_VARS_STRING,
+		FLATCONF_STRING,
 		certainty_conf.min_serial,
 		sizeof(certainty_conf.min_serial)
 	},
 	{
 		"max_serial",
-		CONFIG_VARS_STRING,
+		FLATCONF_STRING,
 		certainty_conf.max_serial,
 		sizeof(certainty_conf.max_serial)
 	},
-	CONFIG_VARS_LAST
+	FLATCONF_LAST
 };
 
 void load_keys();
@@ -777,7 +777,7 @@ fail:
 void
 cleanup()
 {
-	config_vars_free(certainty_config_vars);
+	flatconf_free(certainty_config_vars);
 	if (ca_crt != NULL) {
 		X509_free(ca_crt);
 		ca_crt = NULL;
@@ -817,7 +817,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	if (config_vars_read(config_file_path, certainty_config_vars) == -1)
+	if (flatconf_read(config_file_path, certainty_config_vars, NULL) == -1)
 		err(1, "config_vars_read");
 
 	if (strncmp(certainty_conf.min_serial, "0x", 2) != 0)
