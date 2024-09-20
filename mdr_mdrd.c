@@ -9,28 +9,18 @@ mdrd_unpack_bereq(struct mdr *m, uint64_t *id, int *fd, struct mdr *msg,
 {
 	uint64_t             cert_len;
 	const unsigned char *p;
-	ptrdiff_t            pos;
 
 	if (mdr_unpack_uint64(m, id) == MDR_FAIL ||
 	    mdr_unpack_int32(m, fd) == MDR_FAIL ||
-	    mdr_unpack_mdr(m, msg) == MDR_FAIL)
+	    mdr_unpack_mdr(m, msg) == MDR_FAIL ||
+	    mdr_unpack_bytes_ref(m, (const char **)&p, &cert_len) == MDR_FAIL)
 		return MDR_FAIL;
-
-	if ((pos = mdr_unpack_tail_bytes(m, &cert_len)) == MDR_FAIL) {
-		if (errno != ENOENT) {
-			return MDR_FAIL;
-		} else {
-			*peer_cert = NULL;
-			return 0;
-		}
-	}
 
 	if (cert_len == 0) {
 		*peer_cert = NULL;
 		return 0;
 	}
 
-	p = mdr_buf(m) + pos;
 	*peer_cert = d2i_X509(NULL, &p, cert_len);
 	if (*peer_cert == NULL) {
 		errno = EINVAL;

@@ -77,7 +77,7 @@ mdr_update_size(struct mdr *m)
 		errno = EINVAL;
 		return MDR_FAIL;
 	}
-	*m->size = htobe64(mdr_tell(m) + mdr_tail_bytes(m));
+	*m->size = htobe64(mdr_tell(m));
 
 	/*
 	 * We return the size without trailing bytes to make
@@ -145,9 +145,9 @@ mdr_pending(struct mdr *m)
 		errno = EINVAL;
 		return UINT64_MAX;
 	}
-	if (m->buf_sz >= (mdr_size(m) - mdr_tail_bytes(m)))
+	if (m->buf_sz >= mdr_size(m))
 		return 0;
-	return mdr_size(m) - mdr_tail_bytes(m) - m->buf_sz;
+	return mdr_size(m) - m->buf_sz;
 }
 
 int
@@ -422,6 +422,37 @@ mdr_pack_bytes(struct mdr *m, const char *bytes, uint64_t bytes_sz)
 }
 
 ptrdiff_t
+mdr_pack_space(struct mdr *m, char **dst, uint64_t bytes_sz)
+{
+	if (m == NULL || bytes_sz & 0x8000000000000000) {
+		errno = EINVAL;
+		return MDR_FAIL;
+	}
+
+	if (!mdr_can_fit(m, bytes_sz +
+	    ((bytes_sz <= 0x7f) ? sizeof(uint8_t) : sizeof(uint64_t))))
+		return MDR_FAIL;
+
+	/*
+	 * Only store the byte string length as a single byte if the leading
+	 * bit is zero. Otherwise use the full 8 bytes. This should prevent
+	 * wasting 7 bytes for large numbers of small strings.
+	 */
+	if (bytes_sz <= 0x7f) {
+		*(uint8_t *)m->pos = (uint8_t)bytes_sz;
+		m->pos += sizeof(uint8_t);
+	} else {
+		*(uint64_t *)m->pos = htobe64(bytes_sz | 0x8000000000000000);
+		m->pos += sizeof(uint64_t);
+	}
+
+	*dst = m->pos;
+	m->pos += bytes_sz;
+
+	return mdr_update_size(m);
+}
+
+ptrdiff_t
 mdr_pack_tail_bytes(struct mdr *m, uint64_t bytes_sz)
 {
 	if (m == NULL || !(mdr_flags(m) & MDR_F_TAIL_BYTES)) {
@@ -493,7 +524,7 @@ mdr_vpackf(struct mdr *m, const char *spec, va_list ap)
 	 * Possible types in spec:
 	 *   u8, u16, u32, u64
 	 *   i8, i16, i32, i64
-	 *   b, s
+	 *   b, s, m, t
 	 */
 	for (p = spec, prev = spec; !finish; p++) {
 		if (*p == '\0')
@@ -522,14 +553,19 @@ mdr_vpackf(struct mdr *m, const char *spec, va_list ap)
 		} else if (strcmp(spbuf, "s") == 0) {
 			if (mdr_pack_string(m, va_arg(ap, char *)) == MDR_FAIL)
 				return MDR_FAIL;
+		} else if (strcmp(spbuf, "t") == 0) {
+			if (mdr_pack_tail_bytes(m, va_arg(ap, uint64_t))
+			    == MDR_FAIL)
+				return MDR_FAIL;
 		} else if (spbuf[0] == 'u' || spbuf[0] == 'i') {
 			if (strlen(spbuf) < 2) {
 				errno = EINVAL;
 				return MDR_FAIL;
 			}
 
-			if ((bits = strtoull(spbuf + 1, &end, 10))
-			    == ULLONG_MAX || *end != '\0') {
+			errno = 0;
+			bits = strtoull(spbuf + 1, &end, 10);
+			if (errno || *end != '\0') {
 				errno = EINVAL;
 				return MDR_FAIL;
 			}
@@ -737,10 +773,10 @@ mdr_print(FILE *out, struct mdr *m)
 		fprintf(out, "  tail bytes:  %lu\n", mdr_tail_bytes(m));
 	fprintf(out, "\n");
 	fprintf(out, "  payload (%lu bytes):\n",
-	    mdr_size(m) - mdr_hdr_size(mdr_flags(m)) - mdr_tail_bytes(m));
+	    mdr_size(m) - mdr_hdr_size(mdr_flags(m)));
 
 	for (b = mdr_buf(m) + mdr_hdr_size(mdr_flags(m)), i = 0;
-	    b - (char *)mdr_buf(m) < mdr_size(m) - mdr_tail_bytes(m);
+	    b - (char *)mdr_buf(m) < mdr_size(m);
 	    b++, i++) {
 		if (i % 8 == 0)
 			fprintf(out, "\n   ");
@@ -895,6 +931,46 @@ mdr_unpack_bytes(struct mdr *m, char *bytes, uint64_t *bytes_sz)
 }
 
 ptrdiff_t
+mdr_unpack_bytes_ref(struct mdr *m, const char **src, uint64_t *bytes_sz)
+{
+	if (m == NULL || bytes_sz == NULL) {
+		errno = EINVAL;
+		return MDR_FAIL;
+	}
+
+	if (m->buf_sz - mdr_tell(m) < sizeof(uint8_t)) {
+		errno = EAGAIN;
+		return MDR_FAIL;
+	}
+
+	*bytes_sz = *(uint8_t *)m->pos;
+	if (*bytes_sz & 0x80) {
+		if (m->buf_sz - mdr_tell(m) < sizeof(uint64_t)) {
+			errno = EAGAIN;
+			return MDR_FAIL;
+		}
+		*bytes_sz = be64toh(*(uint64_t *)m->pos) & 0x7fffffffffffffff;
+
+		if (m->buf_sz - (mdr_tell(m) + sizeof(uint64_t)) < *bytes_sz) {
+			errno = EAGAIN;
+			return MDR_FAIL;
+		}
+		m->pos += sizeof(uint64_t);
+	} else {
+		if (m->buf_sz - (mdr_tell(m) + sizeof(uint8_t)) < *bytes_sz) {
+			errno = EAGAIN;
+			return MDR_FAIL;
+		}
+		m->pos += sizeof(uint8_t);
+	}
+
+	*src = m->pos;
+	m->pos += *bytes_sz;
+
+	return mdr_tell(m);
+}
+
+ptrdiff_t
 mdr_unpack_tail_bytes(struct mdr *m, uint64_t *bytes_sz)
 {
 	if (m == NULL || bytes_sz == NULL) {
@@ -994,7 +1070,7 @@ mdr_vunpackf(struct mdr *m, const char *spec, va_list ap)
 	 * Possible types in spec:
 	 *   u8, u16, u32, u64
 	 *   i8, i16, i32, i64
-	 *   b, s
+	 *   b, s, m, t
 	 */
 	for (p = spec, prev = spec; !finish; p++) {
 		if (*p == '\0')
@@ -1026,14 +1102,19 @@ mdr_vunpackf(struct mdr *m, const char *spec, va_list ap)
 			bytes_sz = va_arg(ap, uint64_t *);
 			if (mdr_unpack_string(m, bytes, bytes_sz) == MDR_FAIL)
 				return MDR_FAIL;
+		} else if (strcmp(spbuf, "t") == 0) {
+			if (mdr_unpack_tail_bytes(m, va_arg(ap, uint64_t *))
+			    == MDR_FAIL)
+				return MDR_FAIL;
 		} else if (spbuf[0] == 'u' || spbuf[0] == 'i') {
 			if (strlen(spbuf) < 2) {
 				errno = EINVAL;
 				return MDR_FAIL;
 			}
 
-			if ((bits = strtoull(spbuf + 1, &end, 10))
-			    == ULLONG_MAX || *end != '\0') {
+			errno = 0;
+			bits = strtoull(spbuf + 1, &end, 10);
+			if (errno || *end != '\0') {
 				errno = EINVAL;
 				return MDR_FAIL;
 			}
