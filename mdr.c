@@ -503,12 +503,13 @@ mdr_pack_mdr(struct mdr *m, struct mdr *src)
 ptrdiff_t
 mdr_vpackf(struct mdr *m, const char *spec, va_list ap)
 {
-	int         finish = 0;
-	const char *p, *prev;
-	const char *bytes;
-	char       *end;
-	uint64_t    bytes_sz;
-	uint64_t    bits;
+	int          finish = 0;
+	const char  *p, *prev;
+	const char  *bytes;
+	char       **bytes_p;
+	char        *end;
+	uint64_t     bytes_sz;
+	uint64_t     bits;
 	/*
 	 * A uint64 can render up to 20 digits, plus one for the 'b'
 	 * prefix and the terminating NUL byte.
@@ -524,7 +525,7 @@ mdr_vpackf(struct mdr *m, const char *spec, va_list ap)
 	 * Possible types in spec:
 	 *   u8, u16, u32, u64
 	 *   i8, i16, i32, i64
-	 *   b, s, m, t
+	 *   b, s, m, t, p
 	 */
 	for (p = spec, prev = spec; !finish; p++) {
 		if (*p == '\0')
@@ -549,6 +550,11 @@ mdr_vpackf(struct mdr *m, const char *spec, va_list ap)
 			bytes = va_arg(ap, char *);
 			bytes_sz = va_arg(ap, uint64_t);
 			if (mdr_pack_bytes(m, bytes, bytes_sz) == MDR_FAIL)
+				return MDR_FAIL;
+		} else if (strcmp(spbuf, "p") == 0) {
+			bytes_p = va_arg(ap, char **);
+			bytes_sz = va_arg(ap, uint64_t);
+			if (mdr_pack_space(m, bytes_p, bytes_sz) == MDR_FAIL)
 				return MDR_FAIL;
 		} else if (strcmp(spbuf, "s") == 0) {
 			if (mdr_pack_string(m, va_arg(ap, char *)) == MDR_FAIL)
@@ -1050,11 +1056,12 @@ mdr_unpack_mdr(struct mdr *m, struct mdr *dst)
 ptrdiff_t
 mdr_vunpackf(struct mdr *m, const char *spec, va_list ap)
 {
-	int         finish = 0;
-	const char *p, *prev;
-	char       *bytes, *end;
-	uint64_t   *bytes_sz;
-	uint64_t    bits;
+	int          finish = 0;
+	const char  *p, *prev;
+	char        *bytes, *end;
+	const char **bytes_ref;
+	uint64_t    *bytes_sz;
+	uint64_t     bits;
 	/*
 	 * A uint64 can render up to 20 digits, plus one for the 'b'
 	 * prefix and the terminating NUL byte.
@@ -1095,6 +1102,12 @@ mdr_vunpackf(struct mdr *m, const char *spec, va_list ap)
 			bytes = va_arg(ap, char *);
 			bytes_sz = va_arg(ap, uint64_t *);
 			if (mdr_unpack_bytes(m, bytes, bytes_sz)
+			    == MDR_FAIL)
+				return MDR_FAIL;
+		} else if (strcmp(spbuf, "p") == 0) {
+			bytes_ref = va_arg(ap, const char **);
+			bytes_sz = va_arg(ap, uint64_t *);
+			if (mdr_unpack_bytes_ref(m, bytes_ref, bytes_sz)
 			    == MDR_FAIL)
 				return MDR_FAIL;
 		} else if (strcmp(spbuf, "s") == 0) {

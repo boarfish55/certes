@@ -45,21 +45,6 @@ struct mdr {
 	int       dyn;
 };
 
-
-/*
- * Namespaces are 32 bits. The most significant bit is reserved for
- * future use, which in effect means the highest namespace is 0x7FFFFFFF.
- */
-#define MDR_NS_ECHO     0x00000001
-#define MDR_NS_MDRD     0x00000002
-#define MDR_NS_RESERVED 0x80000000
-
-/* IDs are 16 bits */
-#define MDR_ID_ECHO        0x0001
-#define MDR_ID_MDRD_ERROR  0x0001
-#define MDR_ID_MDRD_BEREQ  0x0002
-#define MDR_ID_MDRD_BERESP 0x0003
-
 #define MDR_FAIL -1
 
 void      *mdr_buf(struct mdr *);
@@ -120,5 +105,21 @@ void      mdr_print(FILE *, struct mdr *);
 
 ptrdiff_t mdr_pack_echo(struct mdr *, const char *);
 ptrdiff_t mdr_unpack_echo(struct mdr *, char *, size_t, char *, size_t *);
+
+/*
+ * Namespaces are 32 bits. The most significant bit is reserved for
+ * future use, which in effect means the highest namespace is 0x7FFFFFFF.
+ * IDs are 16 bits.
+ */
+
+#define MDR_NS_RESERVED    0x80000000
+
+#define MDR_NS_ECHO        0x00000001
+#define MDR_ID_ECHO            0x0001
+
+#define MDR_NS_MDRD        0x00000002
+#define MDR_ID_MDRD_ERROR      0x0001
+#define MDR_ID_MDRD_BEREQ      0x0002
+#define MDR_ID_MDRD_BERESP     0x0003
 
 #endif

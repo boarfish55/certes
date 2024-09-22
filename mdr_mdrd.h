@@ -5,13 +5,15 @@
 #include <stdint.h>
 #include "mdr.h"
 
+/* Backend response statuses */
 #define MDRD_ST_OK       0
-#define MDRD_ST_DENIED   1
-#define MDRD_ST_CERTFAIL 2
+#define MDRD_ST_DENIED   1  /* Client is denied this operation */
+#define MDRD_ST_CERTFAIL 2  /* Client certificate verification failed */
 
+/* Backend response flags */
 #define MDRD_BERESP_F_NONE  0x00000000
-#define MDRD_BERESP_F_CLOSE 0x00000001
-#define MDRD_BERESP_F_MSG   0x00000002
+#define MDRD_BERESP_F_CLOSE 0x00000001  /* Client connection should be closed */
+#define MDRD_BERESP_F_MSG   0x00000002  /* Response contains a message */
 
 int mdrd_unpack_bereq(struct mdr *, uint64_t *, int *, struct mdr *, X509 **);
 int mdrd_pack_beresp(struct mdr *, char *, size_t, uint64_t, int,
