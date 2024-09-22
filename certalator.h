@@ -1,0 +1,7 @@
+#ifndef CERTALATOR_H
+#define CERTALATOR_H
+
+#define CERTALATOR_MAX_ROLE_LENGTH 64
+#define CERTALATOR_MAX_ROLES       64
+
+#endif

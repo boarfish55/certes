@@ -17,22 +17,22 @@
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
-#include "certainty.h"
+#include "certalator.h"
 #include "flatconf.h"
-#include "mdr_certainty.h"
+#include "mdr_certalator.h"
 #include "mdr_mdrd.h"
 #include "util.h"
 #include "xlog.h"
 
 #define MAX_HEX_SERIAL_LENGTH 32
 
-const char *program = "certainty";
+const char *program = "certalator";
 int         NID_overnet_roles;
 X509_STORE *store = NULL;
 EVP_PKEY   *priv_key = NULL;
 X509       *ca_crt = NULL;
 int         debug = 0;
-char        config_file_path[PATH_MAX] = "/etc/certainty.conf";
+char        config_file_path[PATH_MAX] = "/etc/certalator.conf";
 
 extern char *optarg;
 extern int   optind, opterr, optopt;
@@ -48,7 +48,7 @@ struct {
 	/* Leave space for "0x" and terminating zero */
 	char  min_serial[MAX_HEX_SERIAL_LENGTH + 3];
 	char  max_serial[MAX_HEX_SERIAL_LENGTH + 3];
-} certainty_conf = {
+} certalator_conf = {
 	0,
 	"ca/overnet.pem",
 	"ca/overnet.crl",
@@ -58,48 +58,48 @@ struct {
 	"0x0"
 };
 
-struct flatconf certainty_config_vars[] = {
+struct flatconf certalator_config_vars[] = {
 	{
 		"enable_coredumps",
 		FLATCONF_BOOLINT,
-		&certainty_conf.enable_coredumps,
-		sizeof(certainty_conf.enable_coredumps)
+		&certalator_conf.enable_coredumps,
+		sizeof(certalator_conf.enable_coredumps)
 	},
 	{
 		"ca_file",
 		FLATCONF_STRING,
-		certainty_conf.ca_file,
-		sizeof(certainty_conf.ca_file)
+		certalator_conf.ca_file,
+		sizeof(certalator_conf.ca_file)
 	},
 	{
 		"crl_file",
 		FLATCONF_STRING,
-		certainty_conf.crl_file,
-		sizeof(certainty_conf.crl_file)
+		certalator_conf.crl_file,
+		sizeof(certalator_conf.crl_file)
 	},
 	{
 		"key_file",
 		FLATCONF_STRING,
-		certainty_conf.key_file,
-		sizeof(certainty_conf.key_file)
+		certalator_conf.key_file,
+		sizeof(certalator_conf.key_file)
 	},
 	{
 		"serial_file",
 		FLATCONF_STRING,
-		certainty_conf.serial_file,
-		sizeof(certainty_conf.serial_file)
+		certalator_conf.serial_file,
+		sizeof(certalator_conf.serial_file)
 	},
 	{
 		"min_serial",
 		FLATCONF_STRING,
-		certainty_conf.min_serial,
-		sizeof(certainty_conf.min_serial)
+		certalator_conf.min_serial,
+		sizeof(certalator_conf.min_serial)
 	},
 	{
 		"max_serial",
 		FLATCONF_STRING,
-		certainty_conf.max_serial,
-		sizeof(certainty_conf.max_serial)
+		certalator_conf.max_serial,
+		sizeof(certalator_conf.max_serial)
 	},
 	FLATCONF_LAST
 };
@@ -123,7 +123,7 @@ decode_overnet_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
 	for (i = 0; i < roles_len && sk_ASN1_TYPE_num(seq) > 0; i++) {
 		v = sk_ASN1_TYPE_shift(seq);
 		strlcpy(roles[i], (const char *)v->value.ia5string->data,
-		    CERTAINTY_MAX_ROLE_LENGTH);
+		    CERTALATOR_MAX_ROLE_LENGTH);
 		ASN1_TYPE_free(v);
 	}
 	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
@@ -263,21 +263,21 @@ verify(X509_STORE_CTX *ctx, X509 *crt)
 		return -1;
 	}
 
-	roles = malloc(CERTAINTY_MAX_ROLES *
-	    (sizeof(char *) + CERTAINTY_MAX_ROLE_LENGTH));
+	roles = malloc(CERTALATOR_MAX_ROLES *
+	    (sizeof(char *) + CERTALATOR_MAX_ROLE_LENGTH));
 	if (roles == NULL) {
 		xlog_strerror(LOG_ERR, errno, "%s: malloc", __func__);
 		return -1;
 	}
 
-	bzero(roles, CERTAINTY_MAX_ROLES *
-	    (sizeof(char *) + CERTAINTY_MAX_ROLE_LENGTH));
-	for (i = 0; i < CERTAINTY_MAX_ROLES; i++)
+	bzero(roles, CERTALATOR_MAX_ROLES *
+	    (sizeof(char *) + CERTALATOR_MAX_ROLE_LENGTH));
+	for (i = 0; i < CERTALATOR_MAX_ROLES; i++)
 		roles[i] = (char *)roles +
-		    (CERTAINTY_MAX_ROLES * sizeof(char *)) +
-		    (i * CERTAINTY_MAX_ROLE_LENGTH);
+		    (CERTALATOR_MAX_ROLES * sizeof(char *)) +
+		    (i * CERTALATOR_MAX_ROLE_LENGTH);
 
-	n = decode_overnet_roles(ex, roles, CERTAINTY_MAX_ROLES);
+	n = decode_overnet_roles(ex, roles, CERTALATOR_MAX_ROLES);
 	if (n == -1) {
 		free(roles);
 		return -1;
@@ -326,18 +326,18 @@ new_serial()
 	char     buf[MAX_HEX_SERIAL_LENGTH + 1];
 	char     tmpfile[PATH_MAX];
 
-	if (!BN_hex2bn(&min_bn, certainty_conf.min_serial)) {
+	if (!BN_hex2bn(&min_bn, certalator_conf.min_serial)) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
 
-	if (!BN_hex2bn(&max_bn, certainty_conf.max_serial)) {
+	if (!BN_hex2bn(&max_bn, certalator_conf.max_serial)) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
 
 	if (snprintf(tmpfile, sizeof(tmpfile), "%s.new",
-	    certainty_conf.serial_file) >= sizeof(tmpfile))
+	    certalator_conf.serial_file) >= sizeof(tmpfile))
 		errx(1, "tmpfile name too long");
 
 	/*
@@ -345,7 +345,7 @@ new_serial()
 	 * tmp file and overwrite the serial file. This way other processes
 	 * may not read or write while we are incrementing the serial.
 	 */
-	if ((fd = open_wflock(certainty_conf.serial_file,
+	if ((fd = open_wflock(certalator_conf.serial_file,
 	    O_RDWR|O_CREAT, 0666, LOCK_EX)) == -1)
 		err(1, "open_wflock");
 	r = read(fd, buf, sizeof(buf));
@@ -411,7 +411,7 @@ new_serial()
 		errx(1, "short write on serial file");
 	fsync(fdtmp);
 	close(fdtmp);
-	if (rename(tmpfile, certainty_conf.serial_file) == -1)
+	if (rename(tmpfile, certalator_conf.serial_file) == -1)
 		err(1, "rename");
 	close(fd);
 
@@ -546,9 +546,9 @@ sign(const char *cert_path, const char **roles)
 
 // TODO: for bootstrapping; a new client will send a REQ, preceded with
 // a shared key (response to challenge); the shared key will have been supplied by
-// by the certainty service and the client must send it. If the challenge is
-// successful, certainty signs de REQ. The roles are also passed by
-// certainty at creation and tied with the challenge, added to the REQ
+// by the certalator service and the client must send it. If the challenge is
+// successful, certalator signs de REQ. The roles are also passed by
+// certalator at creation and tied with the challenge, added to the REQ
 // by the client.
 int
 sign_req()
@@ -556,7 +556,7 @@ sign_req()
 	return 0;
 }
 
-// TODO: for boostrapping from the certainty server; this will generate a timed
+// TODO: for boostrapping from the certalator server; this will generate a timed
 // challenge and can tie roles to the challenge. Boostrapping can also invoke a
 // shell command to perform a action to bring up the server (i.e. DHCP
 // reservation & reboot, cloud calls, etc.) The server must remember the
@@ -606,19 +606,19 @@ agent_boostrap_req()
 	return 0;
 }
 
-// TODO: agent_* functions will run on the certainty agent on client hosts.
+// TODO: agent_* functions will run on the certalator agent on client hosts.
 // On boostrap, they will need to generate a new REQ with the set of roles
-// sent by certainty.
+// sent by certalator.
 int
 agent_new_req()
 {
 	return 0;
 }
 
-// TODO: agent_* functions will run on the certainty agent on client hosts.
+// TODO: agent_* functions will run on the certalator agent on client hosts.
 // On bootstrap, after generating the REQ, this function will contact
-// the certainty server that initiated the bootstrap.
-// sent by certainty.
+// the certalator server that initiated the bootstrap.
+// sent by certalator.
 int
 agent_sign_req()
 {
@@ -632,7 +632,7 @@ load_keys()
 	int          pkey_sz;
 	X509_LOOKUP *lookup;
 
-	if ((f = fopen(certainty_conf.key_file, "r")) == NULL)
+	if ((f = fopen(certalator_conf.key_file, "r")) == NULL)
 		err(1, "fopen");
 	if ((priv_key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
 		ERR_print_errors_fp(stderr);
@@ -649,7 +649,7 @@ load_keys()
 	if (mlock(priv_key, pkey_sz) == -1)
 		err(1, "mlock");
 #endif
-	if ((f = fopen(certainty_conf.ca_file, "r")) == NULL)
+	if ((f = fopen(certalator_conf.ca_file, "r")) == NULL)
 		err(1, "fopen");
 	if ((ca_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
 		ERR_print_errors_fp(stderr);
@@ -663,12 +663,12 @@ load_keys()
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
-	if (!X509_load_cert_file(lookup, certainty_conf.ca_file,
+	if (!X509_load_cert_file(lookup, certalator_conf.ca_file,
 	    X509_FILETYPE_PEM)) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
-	if (!X509_load_crl_file(lookup, certainty_conf.crl_file,
+	if (!X509_load_crl_file(lookup, certalator_conf.crl_file,
 	    X509_FILETYPE_PEM)) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
@@ -777,7 +777,7 @@ fail:
 void
 cleanup()
 {
-	flatconf_free(certainty_config_vars);
+	flatconf_free(certalator_config_vars);
 	if (ca_crt != NULL) {
 		X509_free(ca_crt);
 		ca_crt = NULL;
@@ -817,25 +817,25 @@ main(int argc, char **argv)
 		}
 	}
 
-	if (flatconf_read(config_file_path, certainty_config_vars, NULL) == -1)
+	if (flatconf_read(config_file_path, certalator_config_vars, NULL) == -1)
 		err(1, "config_vars_read");
 
-	if (strncmp(certainty_conf.min_serial, "0x", 2) != 0)
+	if (strncmp(certalator_conf.min_serial, "0x", 2) != 0)
 		errx(1, "min_serial does not begin with \"0x\"");
-	sz = strlen(certainty_conf.min_serial) - 2;
-	memmove(certainty_conf.min_serial,
-	    certainty_conf.min_serial + 2, sz);
-	certainty_conf.min_serial[sz] = '\0';
-	if (!is_hex_str(certainty_conf.min_serial))
+	sz = strlen(certalator_conf.min_serial) - 2;
+	memmove(certalator_conf.min_serial,
+	    certalator_conf.min_serial + 2, sz);
+	certalator_conf.min_serial[sz] = '\0';
+	if (!is_hex_str(certalator_conf.min_serial))
 		errx(1, "min_serial is not a valid hex integer");
 
-	if (strncmp(certainty_conf.max_serial, "0x", 2) != 0)
+	if (strncmp(certalator_conf.max_serial, "0x", 2) != 0)
 		errx(1, "max_serial does not begin with \"0x\"");
-	sz = strlen(certainty_conf.max_serial) - 2;
-	memmove(certainty_conf.max_serial,
-	    certainty_conf.max_serial + 2, sz);
-	certainty_conf.max_serial[sz] = '\0';
-	if (!is_hex_str(certainty_conf.max_serial))
+	sz = strlen(certalator_conf.max_serial) - 2;
+	memmove(certalator_conf.max_serial,
+	    certalator_conf.max_serial + 2, sz);
+	certalator_conf.max_serial[sz] = '\0';
+	if (!is_hex_str(certalator_conf.max_serial))
 		errx(1, "max_serial is not a valid hexadecimal integer");
 
 	if (optind >= argc) {

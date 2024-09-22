@@ -9,13 +9,13 @@ YACC := byacc
 
 DEPFLAGS = -MMD -MP -MF $(DEPDIR)/$@.d
 
-SRCS = certainty.c flatconf.c xlog.c util.c mdr.c mdr_mdrd.c
+SRCS = certalator.c flatconf.c xlog.c util.c mdr.c mdr_mdrd.c
 OBJS = $(SRCS:.c=.o)
 
-all: certainty
+all: certalator
 
-certainty: $(OBJS)
-	$(CC) $(CFLAGS) -o certainty $(OBJS) $(LDFLAGS)
+certalator: $(OBJS)
+	$(CC) $(CFLAGS) -o certalator $(OBJS) $(LDFLAGS)
 
 flatconf.c: flatconf.y flatconf.h
 	$(YACC) -o flatconf.c flatconf.y
@@ -26,6 +26,6 @@ flatconf.c: flatconf.y flatconf.h
 
 .PHONY: clean
 clean:
-	rm -f certainty *.o certainty.core core flatconf.c
+	rm -f certalator *.o certalator.core core flatconf.c
 
 -include $(DEPDIR)/*

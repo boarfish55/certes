@@ -1,6 +1,6 @@
 .deps/
 .depend
-certainty
+certalator
 .vimtags
 *.o
 gdb.*
