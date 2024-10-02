@@ -70,6 +70,30 @@ mdr_can_fit(struct mdr *m, size_t n)
 	return 1;
 }
 
+ptrdiff_t
+mdr_copy(struct mdr *dst, char *buf, size_t buf_sz, const struct mdr *src)
+{
+	ptrdiff_t r;
+
+	if ((r = mdr_pack_hdr(dst, buf, buf_sz, mdr_flags(src),
+	    mdr_namespace(src), mdr_id(src), mdr_version(src))) == MDR_FAIL)
+		return MDR_FAIL;
+
+
+	if (mdr_size(src) > buf_sz) {
+		errno = EOVERFLOW;
+		return MDR_FAIL;
+	}
+
+	memcpy(dst->pos, mdr_buf(src) + mdr_hdr_size(mdr_flags(src)),
+	    mdr_size(src) - mdr_hdr_size(mdr_flags(src)));
+
+	*dst->size = htobe64(mdr_size(dst) +
+	    (mdr_size(src) - mdr_hdr_size(mdr_flags(src))));
+
+	return 0;
+}
+
 static ptrdiff_t
 mdr_update_size(struct mdr *m)
 {
@@ -119,7 +143,7 @@ mdr_hdr_size(uint32_t flags)
 }
 
 uint64_t
-mdr_size(struct mdr *m)
+mdr_size(const struct mdr *m)
 {
 	if (m == NULL) {
 		errno = EINVAL;
@@ -129,7 +153,7 @@ mdr_size(struct mdr *m)
 }
 
 ptrdiff_t
-mdr_tell(struct mdr *m)
+mdr_tell(const struct mdr *m)
 {
 	if (m == NULL) {
 		errno = EINVAL;
@@ -139,7 +163,7 @@ mdr_tell(struct mdr *m)
 }
 
 uint64_t
-mdr_pending(struct mdr *m)
+mdr_pending(const struct mdr *m)
 {
 	if (m == NULL) {
 		errno = EINVAL;
@@ -162,7 +186,7 @@ mdr_reset(struct mdr *m)
 }
 
 uint32_t
-mdr_namespace(struct mdr *m)
+mdr_namespace(const struct mdr *m)
 {
 	if (m == NULL) {
 		errno = EINVAL;
@@ -172,7 +196,7 @@ mdr_namespace(struct mdr *m)
 }
 
 uint32_t
-mdr_flags(struct mdr *m)
+mdr_flags(const struct mdr *m)
 {
 	if (m == NULL) {
 		errno = EINVAL;
@@ -182,7 +206,7 @@ mdr_flags(struct mdr *m)
 }
 
 uint16_t
-mdr_id(struct mdr *m)
+mdr_id(const struct mdr *m)
 {
 	if (m == NULL) {
 		errno = EINVAL;
@@ -192,7 +216,7 @@ mdr_id(struct mdr *m)
 }
 
 uint16_t
-mdr_version(struct mdr *m)
+mdr_version(const struct mdr *m)
 {
 	if (m == NULL) {
 		errno = EINVAL;
@@ -202,7 +226,7 @@ mdr_version(struct mdr *m)
 }
 
 uint64_t
-mdr_tail_bytes(struct mdr *m)
+mdr_tail_bytes(const struct mdr *m)
 {
 	if (m == NULL) {
 		errno = EINVAL;
@@ -213,8 +237,8 @@ mdr_tail_bytes(struct mdr *m)
 	return be64toh(*m->tail_bytes);
 }
 
-void *
-mdr_buf(struct mdr *m)
+const void *
+mdr_buf(const struct mdr *m)
 {
 	return m->buf;
 }
@@ -719,6 +743,7 @@ mdr_unpack_hdr(struct mdr *m, char *buf, size_t buf_sz)
 	m->buf_sz = buf_sz;
 	m->pos = m->buf;
 	m->tail_bytes = 0;
+	m->dyn = 0;
 
 	m->size = (uint64_t *)m->pos;
 	m->pos += sizeof(*m->size);
@@ -763,10 +788,10 @@ mdr_unpack_hdr(struct mdr *m, char *buf, size_t buf_sz)
 }
 
 void
-mdr_print(FILE *out, struct mdr *m)
+mdr_print(FILE *out, const struct mdr *m)
 {
-	char *b;
-	int   i;
+	const char *b;
+	int         i;
 
 	if (m == NULL)
 		return;
@@ -1026,7 +1051,7 @@ mdr_unpack_string(struct mdr *m, char *bytes, uint64_t *bytes_sz)
 }
 
 ptrdiff_t
-mdr_unpack_mdr(struct mdr *m, struct mdr *dst)
+mdr_unpack_mdr_ref(struct mdr *m, struct mdr *dst)
 {
 	uint64_t sz;
 
@@ -1051,6 +1076,22 @@ mdr_unpack_mdr(struct mdr *m, struct mdr *dst)
 	m->pos += sz;
 
 	return mdr_tell(m);
+}
+
+ptrdiff_t
+mdr_unpack_mdr(struct mdr *m, struct mdr *dst, char *buf, size_t buf_sz)
+{
+	struct mdr ref;
+
+	if (mdr_unpack_mdr_ref(m, &ref) == MDR_FAIL)
+		return MDR_FAIL;
+
+	if (mdr_size(&ref) > buf_sz) {
+                errno = EOVERFLOW;
+                return MDR_FAIL;
+        }
+
+	return mdr_copy(dst, buf, buf_sz, &ref);
 }
 
 ptrdiff_t
@@ -1095,7 +1136,7 @@ mdr_vunpackf(struct mdr *m, const char *spec, va_list ap)
 		}
 
 		if (strcmp(spbuf, "m") == 0) {
-			if (mdr_unpack_mdr(m, va_arg(ap, struct mdr *))
+			if (mdr_unpack_mdr_ref(m, va_arg(ap, struct mdr *))
 			    == MDR_FAIL)
 				return MDR_FAIL;
 		} else if (strcmp(spbuf, "b") == 0) {

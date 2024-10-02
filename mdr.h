@@ -47,20 +47,20 @@ struct mdr {
 
 #define MDR_FAIL -1
 
-void      *mdr_buf(struct mdr *);
-void       mdr_free(struct mdr *);
-uint64_t   mdr_size(struct mdr *);
-size_t     mdr_hdr_size(uint32_t);
+const void *mdr_buf(const struct mdr *);
+void        mdr_free(struct mdr *);
+uint64_t    mdr_size(const struct mdr *);
+size_t      mdr_hdr_size(uint32_t);
+int         mdr_reset(struct mdr *);
+ptrdiff_t   mdr_tell(const struct mdr *);
+uint64_t    mdr_pending(const struct mdr *);
+ptrdiff_t   mdr_copy(struct mdr *, char *, size_t, const struct mdr *);
 
-int        mdr_reset(struct mdr *);
-ptrdiff_t  mdr_tell(struct mdr *);
-uint64_t   mdr_pending(struct mdr *);
-
-uint32_t mdr_flags(struct mdr *);
-uint32_t mdr_namespace(struct mdr *);
-uint16_t mdr_id(struct mdr *);
-uint16_t mdr_version(struct mdr *);
-uint64_t mdr_tail_bytes(struct mdr *);
+uint32_t mdr_flags(const struct mdr *);
+uint32_t mdr_namespace(const struct mdr *);
+uint16_t mdr_id(const struct mdr *);
+uint16_t mdr_version(const struct mdr *);
+uint64_t mdr_tail_bytes(const struct mdr *);
 
 ptrdiff_t mdr_pack(struct mdr *, char *, size_t, uint32_t,
               uint16_t, uint16_t, uint16_t, const char *, ...);
@@ -98,10 +98,11 @@ ptrdiff_t mdr_unpack_bytes(struct mdr *, char *, uint64_t *);
 ptrdiff_t mdr_unpack_bytes_ref(struct mdr *, const char **, uint64_t *);
 ptrdiff_t mdr_unpack_tail_bytes(struct mdr *, uint64_t *);
 ptrdiff_t mdr_unpack_string(struct mdr *, char *, uint64_t *);
-ptrdiff_t mdr_unpack_mdr(struct mdr *, struct mdr *);
+ptrdiff_t mdr_unpack_mdr_ref(struct mdr *, struct mdr *);
+ptrdiff_t mdr_unpack_mdr(struct mdr *, struct mdr *, char *, size_t);
 ptrdiff_t mdr_unpackf(struct mdr *, const char *, ...);
 ptrdiff_t mdr_vunpackf(struct mdr *, const char *, va_list);
-void      mdr_print(FILE *, struct mdr *);
+void      mdr_print(FILE *, const struct mdr *);
 
 ptrdiff_t mdr_pack_echo(struct mdr *, const char *);
 ptrdiff_t mdr_unpack_echo(struct mdr *, char *, size_t, char *, size_t *);
