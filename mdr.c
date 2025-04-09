@@ -477,24 +477,17 @@ mdr_pack_space(struct mdr *m, char **dst, uint64_t bytes_sz)
 }
 
 ptrdiff_t
-mdr_pack_tail_bytes(struct mdr *m, uint64_t bytes_sz)
+mdr_add_tail_bytes(struct mdr *m, uint64_t bytes_sz)
 {
 	if (m == NULL || !(mdr_flags(m) & MDR_F_TAIL_BYTES)) {
 		errno = EINVAL;
 		return MDR_FAIL;
 	}
 
-	if (!mdr_can_fit(m, sizeof(uint64_t) + bytes_sz))
-		return MDR_FAIL;
-
-	if ((UINT64_MAX - (mdr_tell(m) + mdr_tail_bytes(m) +
-	    sizeof(uint64_t) + 1)) < bytes_sz) {
+	if (UINT64_MAX - mdr_tail_bytes(m) < bytes_sz) {
 		errno = EOVERFLOW;
 		return MDR_FAIL;
 	}
-
-	*(uint64_t *)m->pos = htobe64(bytes_sz);
-	m->pos += sizeof(uint64_t);
 
 	*m->tail_bytes = htobe64(mdr_tail_bytes(m) + bytes_sz);
 
@@ -549,7 +542,7 @@ mdr_vpackf(struct mdr *m, const char *spec, va_list ap)
 	 * Possible types in spec:
 	 *   u8, u16, u32, u64
 	 *   i8, i16, i32, i64
-	 *   b, s, m, t, p
+	 *   b, s, m, p
 	 */
 	for (p = spec, prev = spec; !finish; p++) {
 		if (*p == '\0')
@@ -582,10 +575,6 @@ mdr_vpackf(struct mdr *m, const char *spec, va_list ap)
 				return MDR_FAIL;
 		} else if (strcmp(spbuf, "s") == 0) {
 			if (mdr_pack_string(m, va_arg(ap, char *)) == MDR_FAIL)
-				return MDR_FAIL;
-		} else if (strcmp(spbuf, "t") == 0) {
-			if (mdr_pack_tail_bytes(m, va_arg(ap, uint64_t))
-			    == MDR_FAIL)
 				return MDR_FAIL;
 		} else if (spbuf[0] == 'u' || spbuf[0] == 'i') {
 			if (strlen(spbuf) < 2) {
@@ -669,7 +658,8 @@ mdr_packf(struct mdr *m, const char *spec, ...)
  * fd must be blocking.
  */
 ptrdiff_t
-mdr_unpack_from_fd(struct mdr *m, int fd, char *buf, size_t buf_sz)
+mdr_unpack_from_fd(struct mdr *m, uint32_t allowed_flags, int fd,
+    char *buf, size_t buf_sz)
 {
 	int r;
 
@@ -689,7 +679,7 @@ mdr_unpack_from_fd(struct mdr *m, int fd, char *buf, size_t buf_sz)
 	else if (r == 0)
 		return 0;
 
-	if (mdr_unpack_hdr(m, buf, buf_sz) == MDR_FAIL)
+	if (mdr_unpack_hdr(m, allowed_flags, buf, buf_sz) == MDR_FAIL)
 		return MDR_FAIL;
 
 	if (mdr_size(m) > buf_sz) {
@@ -709,9 +699,10 @@ mdr_unpack_from_fd(struct mdr *m, int fd, char *buf, size_t buf_sz)
 }
 
 ptrdiff_t
-mdr_unpack_all(struct mdr *m, char *buf, size_t buf_sz, size_t max_sz)
+mdr_unpack_all(struct mdr *m, uint32_t allowed_flags, char *buf,
+    size_t buf_sz, size_t max_sz)
 {
-	if (mdr_unpack_hdr(m, buf, buf_sz) == MDR_FAIL)
+	if (mdr_unpack_hdr(m, allowed_flags, buf, buf_sz) == MDR_FAIL)
 		return MDR_FAIL;
 
 	if (max_sz > 0 && mdr_size(m) > max_sz) {
@@ -727,7 +718,7 @@ mdr_unpack_all(struct mdr *m, char *buf, size_t buf_sz, size_t max_sz)
 }
 
 ptrdiff_t
-mdr_unpack_hdr(struct mdr *m, char *buf, size_t buf_sz)
+mdr_unpack_hdr(struct mdr *m, uint32_t allowed_flags, char *buf, size_t buf_sz)
 {
 	if (m == NULL || buf == NULL) {
 		errno = EINVAL;
@@ -762,6 +753,17 @@ mdr_unpack_hdr(struct mdr *m, char *buf, size_t buf_sz)
 
 	m->flags = (uint32_t *)m->pos;
 	m->pos += sizeof(*m->flags);
+
+	/*
+	 * Some flags (MDR_F_TAIL_BYTES) could have
+	 * security implications and therefore refuse
+	 * to unpack an mdr unless we explicitly allow
+	 * specified flags.
+	 */
+	if ((mdr_flags(m) & ~allowed_flags) != 0) {
+		errno = EACCES;
+		return MDR_FAIL;
+	}
 
 	if (buf_sz < mdr_hdr_size(mdr_flags(m))) {
 		errno = EAGAIN;
@@ -1002,31 +1004,6 @@ mdr_unpack_bytes_ref(struct mdr *m, const char **src, uint64_t *bytes_sz)
 }
 
 ptrdiff_t
-mdr_unpack_tail_bytes(struct mdr *m, uint64_t *bytes_sz)
-{
-	if (m == NULL || bytes_sz == NULL) {
-		errno = EINVAL;
-		return MDR_FAIL;
-	}
-
-	if (!(mdr_flags(m) & MDR_F_TAIL_BYTES)) {
-		errno = ENOENT;
-		return MDR_FAIL;
-	}
-
-	if (m->buf_sz - mdr_tell(m) < sizeof(uint64_t)) {
-		errno = ERANGE;
-		return MDR_FAIL;
-	}
-	*bytes_sz = be64toh(*(uint64_t *)m->pos);
-	m->pos += sizeof(uint64_t);
-
-	*m->tail_bytes = htobe64(mdr_tail_bytes(m) + *bytes_sz);
-
-	return mdr_tell(m);
-}
-
-ptrdiff_t
 mdr_unpack_string(struct mdr *m, char *bytes, uint64_t *bytes_sz)
 {
 	uint64_t b, r;
@@ -1071,7 +1048,7 @@ mdr_unpack_mdr_ref(struct mdr *m, struct mdr *dst)
 		return MDR_FAIL;
 	}
 
-	if (mdr_unpack_hdr(dst, m->pos, sz) == MDR_FAIL)
+	if (mdr_unpack_hdr(dst, MDR_F_NONE, m->pos, sz) == MDR_FAIL)
 		return MDR_FAIL;
 	m->pos += sz;
 
@@ -1118,7 +1095,7 @@ mdr_vunpackf(struct mdr *m, const char *spec, va_list ap)
 	 * Possible types in spec:
 	 *   u8, u16, u32, u64
 	 *   i8, i16, i32, i64
-	 *   b, s, m, t
+	 *   b, s, m
 	 */
 	for (p = spec, prev = spec; !finish; p++) {
 		if (*p == '\0')
@@ -1155,10 +1132,6 @@ mdr_vunpackf(struct mdr *m, const char *spec, va_list ap)
 			bytes = va_arg(ap, char *);
 			bytes_sz = va_arg(ap, uint64_t *);
 			if (mdr_unpack_string(m, bytes, bytes_sz) == MDR_FAIL)
-				return MDR_FAIL;
-		} else if (strcmp(spbuf, "t") == 0) {
-			if (mdr_unpack_tail_bytes(m, va_arg(ap, uint64_t *))
-			    == MDR_FAIL)
 				return MDR_FAIL;
 		} else if (spbuf[0] == 'u' || spbuf[0] == 'i') {
 			if (strlen(spbuf) < 2) {
@@ -1210,7 +1183,8 @@ mdr_vunpackf(struct mdr *m, const char *spec, va_list ap)
 }
 
 ptrdiff_t
-mdr_unpack(struct mdr *m, char *buf, size_t buf_sz, const char *spec, ...)
+mdr_unpack(struct mdr *m, uint32_t allowed_flags, char *buf,
+    size_t buf_sz, const char *spec, ...)
 {
 	va_list   ap;
 	ptrdiff_t r;
@@ -1220,7 +1194,7 @@ mdr_unpack(struct mdr *m, char *buf, size_t buf_sz, const char *spec, ...)
 		return MDR_FAIL;
 	}
 
-	if (mdr_unpack_hdr(m, buf, buf_sz) == MDR_FAIL)
+	if (mdr_unpack_hdr(m, allowed_flags, buf, buf_sz) == MDR_FAIL)
 		return MDR_FAIL;
 
 	va_start(ap, spec);
@@ -1257,7 +1231,7 @@ mdr_unpackf(struct mdr *m, const char *spec, ...)
 ptrdiff_t
 mdr_pack_echo(struct mdr *m, const char *echo)
 {
-	return mdr_pack(m, NULL, 0, 0, MDR_NS_ECHO,
+	return mdr_pack(m, NULL, 0, MDR_F_NONE, MDR_NS_ECHO,
 	    MDR_ID_ECHO, 0, "s", echo);
 }
 
@@ -1265,5 +1239,5 @@ ptrdiff_t
 mdr_unpack_echo(struct mdr *m, char *buf, size_t sz, char *echo,
     size_t *echo_sz)
 {
-	return mdr_unpack(m, buf, sz, "s", echo, echo_sz);
+	return mdr_unpack(m, MDR_F_NONE, buf, sz, "s", echo, echo_sz);
 }

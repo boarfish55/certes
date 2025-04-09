@@ -9,8 +9,7 @@
 /*
  * Minimal Data Representation
  *
- * An mdr message can contain at most (UINT64_MAX - 1) bytes.
- * Total bytes excluding tail bytes is PTRDIFF_MAX.
+ * An mdr message can contain at most PTRDIFF_MAX bytes.
  */
 struct mdr {
 	/*
@@ -20,6 +19,7 @@ struct mdr {
 
 	/* Reserved for future use */
 	uint32_t *flags;
+#define MDR_F_NONE       0x00000000
 #define MDR_F_TAIL_BYTES 0x00000001
 
 	/*
@@ -76,16 +76,16 @@ ptrdiff_t mdr_pack_uint32(struct mdr *, uint32_t);
 ptrdiff_t mdr_pack_uint64(struct mdr *, uint64_t);
 ptrdiff_t mdr_pack_bytes(struct mdr *, const char *, uint64_t);
 ptrdiff_t mdr_pack_space(struct mdr *, char **, uint64_t);
-ptrdiff_t mdr_pack_tail_bytes(struct mdr *, uint64_t);
 ptrdiff_t mdr_pack_string(struct mdr *, const char *);
 ptrdiff_t mdr_pack_mdr(struct mdr *, struct mdr *);
 ptrdiff_t mdr_packf(struct mdr *, const char *, ...);
 ptrdiff_t mdr_vpackf(struct mdr *, const char *, va_list);
+ptrdiff_t mdr_add_tail_bytes(struct mdr *, uint64_t);
 
-ptrdiff_t mdr_unpack(struct mdr *, char *, size_t, const char *, ...);
-ptrdiff_t mdr_unpack_from_fd(struct mdr *, int, char *, size_t);
-ptrdiff_t mdr_unpack_all(struct mdr *, char *, size_t, size_t);
-ptrdiff_t mdr_unpack_hdr(struct mdr *, char *, size_t);
+ptrdiff_t mdr_unpack(struct mdr *, uint32_t, char *, size_t, const char *, ...);
+ptrdiff_t mdr_unpack_from_fd(struct mdr *, uint32_t, int, char *, size_t);
+ptrdiff_t mdr_unpack_all(struct mdr *, uint32_t, char *, size_t, size_t);
+ptrdiff_t mdr_unpack_hdr(struct mdr *, uint32_t, char *, size_t);
 ptrdiff_t mdr_unpack_int8(struct mdr *, int8_t *);
 ptrdiff_t mdr_unpack_int16(struct mdr *, int16_t *);
 ptrdiff_t mdr_unpack_int32(struct mdr *, int32_t *);
@@ -96,7 +96,6 @@ ptrdiff_t mdr_unpack_uint32(struct mdr *, uint32_t *);
 ptrdiff_t mdr_unpack_uint64(struct mdr *, uint64_t *);
 ptrdiff_t mdr_unpack_bytes(struct mdr *, char *, uint64_t *);
 ptrdiff_t mdr_unpack_bytes_ref(struct mdr *, const char **, uint64_t *);
-ptrdiff_t mdr_unpack_tail_bytes(struct mdr *, uint64_t *);
 ptrdiff_t mdr_unpack_string(struct mdr *, char *, uint64_t *);
 ptrdiff_t mdr_unpack_mdr_ref(struct mdr *, struct mdr *);
 ptrdiff_t mdr_unpack_mdr(struct mdr *, struct mdr *, char *, size_t);

@@ -3,13 +3,13 @@ DEPDIR := .deps
 CFLAGS := -Wall -g -fstack-protector-strong \
 	$(shell pkg-config --cflags libbsd-overlay libbsd-ctor)
 LDFLAGS := $(shell pkg-config --libs libbsd-overlay libbsd-ctor \
-	   libcrypto libssl) \
+	   libcrypto libssl sqlite3) \
 	   -Wl,-z,relro -Wl,-z,now
 YACC := byacc
 
 DEPFLAGS = -MMD -MP -MF $(DEPDIR)/$@.d
 
-SRCS = certalator.c flatconf.c xlog.c util.c mdr.c mdr_mdrd.c
+SRCS = certalator.c flatconf.c xlog.c util.c mdr.c mdr_mdrd.c certdb.c
 OBJS = $(SRCS:.c=.o)
 
 all: certalator

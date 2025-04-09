@@ -1,7 +1,7 @@
 CC = cc
 CFLAGS = -Wall -g
 LIBS = -lcrypto -lssl -ltls
-SRCS = certalator.c flatconf.c xlog.c util.c mdr.c mdr_mdrd.c
+SRCS = certalator.c flatconf.c xlog.c util.c mdr.c mdr_mdrd.c certdb.c
 OBJS = config_vars.o xlog.o util.o mdr.o mdr_mdrd.o
 YACC = yacc
 

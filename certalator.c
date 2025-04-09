@@ -38,22 +38,27 @@ extern char *optarg;
 extern int   optind, opterr, optopt;
 
 struct {
-	int   enable_coredumps;
+	int    enable_coredumps;
 
-	char  ca_file[PATH_MAX];
-	char  crl_file[PATH_MAX];
-	char  key_file[PATH_MAX];
-	char  serial_file[PATH_MAX];
+	char   ca_file[PATH_MAX];
+	char   crl_file[PATH_MAX];
+	char   key_file[PATH_MAX];
+	char   serial_file[PATH_MAX];
+	char  *cert_common_name;
+	char **cert_sans;
 
 	/* Leave space for "0x" and terminating zero */
-	char  min_serial[MAX_HEX_SERIAL_LENGTH + 3];
-	char  max_serial[MAX_HEX_SERIAL_LENGTH + 3];
+	char   min_serial[MAX_HEX_SERIAL_LENGTH + 3];
+	char   max_serial[MAX_HEX_SERIAL_LENGTH + 3];
 } certalator_conf = {
 	0,
 	"ca/overnet.pem",
 	"ca/overnet.crl",
 	"ca/private/overnet_key.pem",
 	"ca/serial",
+	NULL,
+	NULL,
+
 	"0x0",
 	"0x0"
 };
@@ -88,6 +93,18 @@ struct flatconf certalator_config_vars[] = {
 		FLATCONF_STRING,
 		certalator_conf.serial_file,
 		sizeof(certalator_conf.serial_file)
+	},
+	{
+		"cert_common_name",
+		FLATCONF_ALLOCSTRING,
+		&certalator_conf.cert_common_name,
+		0
+	},
+	{
+		"cert_sans",
+		FLATCONF_ALLOCSTRINGLIST,
+		&certalator_conf.cert_sans,
+		0
 	},
 	{
 		"min_serial",
@@ -584,24 +601,47 @@ boostrap_req()
 // - Validity period (capped by the server, but could be shorter)
 // Most other things are decided by the cert issuer.
 int
-agent_boostrap_req()
+agent_bootstrap_req()
 {
 	// TODO: look at acme-client/keyproc.c:77
-	X509_REQ *req;
+	X509_REQ  *req;
+	FILE      *f;
+	X509_NAME *name = NULL;
+
+	if ((f = fopen(certalator_conf.key_file, "r")) == NULL)
+		err(1, "fopen");
+	if ((priv_key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
 
 	if ((req = X509_REQ_new()) == NULL) {
 		warnx("X509_REQ_new");
 		return 0;
 	}
-
 	if (!X509_REQ_set_version(req, 2)) {
 		warnx("X509_REQ_set_version");
 		return 0;
 	}
-
-//	if (!X509_REQ_set_pubkey(x, pkey)) {
-//		warnx("X509_REQ_set_pubkey");
-//	}
+	if (!X509_REQ_set_pubkey(req, priv_key)) {
+		warnx("X509_REQ_set_pubkey");
+		return 0;
+	}
+	if ((name = X509_NAME_new()) == NULL) {
+		warnx("X509_NAME_new");
+		return 0;
+	}
+	if (!X509_NAME_add_entry_by_txt(name, "CN",
+	    MBSTRING_ASC, (unsigned char *)certalator_conf.cert_common_name,
+	    -1, -1, 0)) {
+		warnx("X509_NAME_add_entry_by_txt: CN=%s",
+		    certalator_conf.cert_common_name);
+		return 0;
+	} else if (!X509_REQ_set_subject_name(req, name)) {
+		warnx("X509_req_set_subject_name");
+		return 0;
+	}
 
 	return 0;
 }
@@ -713,7 +753,8 @@ mdrd_backend()
 	    sigaction(SIGTERM, &act, NULL) == -1)
 		return -1;
 
-	while ((r = mdr_unpack_from_fd(&m, 0, buf, sizeof(buf))) > 0) {
+	while ((r = mdr_unpack_from_fd(&m, MDR_F_NONE,
+	    0, buf, sizeof(buf))) > 0) {
 		if (r == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
 			    "%s: mdr_unpack_from_fd", __func__);
@@ -727,7 +768,7 @@ mdrd_backend()
 			goto fail;
 		}
 
-		if (mdrd_unpack_bereq(&m, &id, &fd, &msg,
+		if (mdrd_unpack_bereq_ref(&m, &id, &fd, &msg,
 		    &peer_cert) == MDR_FAIL) {
 			if (errno == EAGAIN)
 				xlog(LOG_ERR, NULL,

@@ -23,6 +23,7 @@ enum xerr_code {
 	XLOG_RANGE,        /* Value exceeds allowed range */
 	XLOG_SHORTIO,      /* Short read/write */
 	XLOG_WOULDBLOCK,   /* Operation would block but is set non-blocking */
+	XLOG_NAMETOOLONG,  /* Specified name is too long for limit */
 	XLOG_CALLBACK_ERR  /* Callback error */
 };
 
@@ -53,8 +54,8 @@ struct xerr {
 struct xerr *xerrz(struct xerr *);
 
 /*
- * Fills the xlog_err structure with PotatoFS-specific error code, as well
- * as underlying library's or OS's context-specific error.
+ * Fills the xlog_err structure with an application-specific error code, as
+ * well as the underlying library's or OS's context-specific error.
  * Formats an error message appropriate to the situation.
  * Returns -1 if either err or c_err is non-zero, or 0 if both are 0 as well.
  * As such, it can be used directly as part of the caller's return.
