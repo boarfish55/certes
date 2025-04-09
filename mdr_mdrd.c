@@ -4,6 +4,14 @@
 #include "mdr_mdrd.h"
 
 int
+mdrd_unpack_beclose(struct mdr *m, uint64_t *id)
+{
+	if (mdr_unpack_uint64(m, id) == MDR_FAIL)
+		return MDR_FAIL;
+	return 0;
+}
+
+int
 mdrd_unpack_bereq(struct mdr *m, uint64_t *id, int *fd, struct mdr *msg,
     char *msg_buf, size_t msg_buf_sz, X509 **peer_cert)
 {

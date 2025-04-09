@@ -1231,8 +1231,8 @@ mdr_unpackf(struct mdr *m, const char *spec, ...)
 ptrdiff_t
 mdr_pack_echo(struct mdr *m, const char *echo)
 {
-	return mdr_pack(m, NULL, 0, MDR_F_NONE, MDR_NS_ECHO,
-	    MDR_ID_ECHO, 0, "s", echo);
+	return mdr_pack(m, NULL, 0, MDR_F_NONE, MDR_NS_CTL,
+	    MDR_ID_CTL_ECHO, 0, "s", echo);
 }
 
 ptrdiff_t
