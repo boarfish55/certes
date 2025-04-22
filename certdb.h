@@ -34,4 +34,6 @@ struct cert_entry {
 int  certdb_init(const char *, struct xerr *);
 void certdb_shutdown();
 
+int  certdb_put_bootstrap(const struct bootstrap_entry *, struct xerr *);
+
 #endif

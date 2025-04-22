@@ -1,3 +1,5 @@
+#include <errno.h>
+#include <stdlib.h>
 #include <sqlite3.h>
 #include <string.h>
 #include "certdb.h"
@@ -112,11 +114,33 @@ certdb_qry_cleanup(sqlite3_stmt *stmt, struct xerr *e)
 	return 0;
 }
 
+static int
+certdb_join_sans(const struct bootstrap_entry *entry, char **dst)
+{
+	int   i;
+	int   sz = 0;
+	char *sans_p;
+
+	for (i = 0; i < entry->sans_sz; i++)
+		sz += strlen(entry->sans[i]) + 1;
+
+	if ((*dst = malloc(sz)) == NULL)
+		return -1;
+
+	for (i = 0, sans_p = *dst; i < entry->sans_sz; i++)
+		sans_p += strlcpy(sans_p,
+		    entry->sans[i], strlen(entry->sans[i]) + 1);
+
+	return sz;
+}
+
 int
 certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 {
-	int         r;
-	struct xerr e2;
+	int          r;
+	struct xerr  e2;
+	char        *sans;
+	int          sans_sz;
 
 	if ((r = sqlite3_bind_blob(qry_bootstrap_put.stmt,
 	    qry_bootstrap_put.i_one_time_key, entry->one_time_key,
@@ -134,13 +158,19 @@ certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
+	if ((sans_sz = certdb_join_sans(entry, &sans)) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "certdb_join_sans");
+		goto fail;
+	}
+
 	if ((r = sqlite3_bind_text(qry_bootstrap_put.stmt,
-	    qry_bootstrap_put.i_sans, entry->sans,
-	    strlen(entry->sans), SQLITE_STATIC))) {
+	    qry_bootstrap_put.i_sans, sans, sans_sz, SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
 		    sqlite3_errmsg(db));
 		goto fail;
 	}
+
+	free(sans);
 
 	if ((r = sqlite3_bind_text(qry_bootstrap_put.stmt,
 	    qry_bootstrap_put.i_roles, entry->roles,
