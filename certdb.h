@@ -14,8 +14,9 @@ struct bootstrap_entry {
 	time_t   valid_until_sec;
 	char    *subject;
 	char   **sans;
-	char     sans_sz;
-	char    *roles;
+	size_t   sans_sz;
+	char   **roles;
+	size_t   roles_sz;
 	time_t   not_before_sec;
 	time_t   not_after_sec;
 };
@@ -24,8 +25,9 @@ struct cert_entry {
 	char      *serial;
 	char      *subject;
 	char     **sans;
-	char       sans_sz;
-	char      *roles;
+	size_t     sans_sz;
+	char     **roles;
+	size_t     roles_sz;
 	time_t     not_before_sec;
 	time_t     not_after_sec;
 	uint32_t   flags;
@@ -35,5 +37,6 @@ int  certdb_init(const char *, struct xerr *);
 void certdb_shutdown();
 
 int  certdb_put_bootstrap(const struct bootstrap_entry *, struct xerr *);
+int  certdb_put_cert(const struct cert_entry *, struct xerr *);
 
 #endif
