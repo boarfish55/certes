@@ -10,7 +10,7 @@
 #define CERTDB_FLAG_ALL     0xFFFFFFFF
 
 struct bootstrap_entry {
-	char     one_time_key[32];
+	char     one_time_key[64];
 	time_t   valid_until_sec;
 	char    *subject;
 	char   **sans;
@@ -37,6 +37,9 @@ int  certdb_init(const char *, struct xerr *);
 void certdb_shutdown();
 
 int  certdb_put_bootstrap(const struct bootstrap_entry *, struct xerr *);
+int  certdb_get_bootstrap(struct bootstrap_entry *, const char *,
+         struct xerr *);
 int  certdb_put_cert(const struct cert_entry *, struct xerr *);
+int  certdb_get_cert(struct cert_entry *, const char *, struct xerr *);
 
 #endif

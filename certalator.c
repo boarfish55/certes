@@ -18,6 +18,7 @@
 #include <syslog.h>
 #include <unistd.h>
 #include "certalator.h"
+#include "certdb.h"
 #include "flatconf.h"
 #include "mdr_certalator.h"
 #include "mdr_mdrd.h"
@@ -137,6 +138,17 @@ decode_overnet_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
 
 	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
 	    (const unsigned char **)&p, asn1str->length);
+
+	if (roles == NULL) {
+		/*
+		 * If roles is NULL, we just return how many roles
+		 * we would need to fill in.
+		 */
+		i = sk_ASN1_TYPE_num(seq);
+		sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
+		return i;
+	}
+
 	for (i = 0; i < roles_len && sk_ASN1_TYPE_num(seq) > 0; i++) {
 		v = sk_ASN1_TYPE_shift(seq);
 		strlcpy(roles[i], (const char *)v->value.ia5string->data,
@@ -583,8 +595,20 @@ sign_req()
 // X509 REQ, the server can sign it if the commonName and subjectAltNames
 // match.
 int
-boostrap_req()
+bootstrap_client()
 {
+	// TODO: generate and save a bootstrap entry
+	//struct bootstrap_entry be;
+
+	//be.one_time_key = "random 64-char key";
+	//be.valid_until_sec = 0; // epoch seconds for validity... 10 mins?
+	//be.subject = "yo";
+	////be.sans ... sans_sz
+	//// be.roles, roles_sz
+	//be.not_before_sec = 0; // epoch seconds for cert validity...
+	//be.not_after_sec = 0; // epoch seconds for cert validity...
+	//                      // now + 7d ?
+
 	return 0;
 }
 
@@ -600,6 +624,19 @@ boostrap_req()
 //   those are kept server-side
 // - Validity period (capped by the server, but could be shorter)
 // Most other things are decided by the cert issuer.
+int
+bootstrap(struct mdr *msg, struct xerr *e)
+{
+	// TODO: dial back to confirm the CommonName (or one of the SANs?)
+	// and send the parameters for bootstrapping.
+	// When doing so, client will send us its REQ
+
+	return 0;
+}
+
+// TODO: agent_* functions will run on the certalator agent on client hosts.
+// On boostrap, they will need to generate a new REQ with the set of roles
+// sent by certalator.
 int
 agent_bootstrap_req()
 {
@@ -643,15 +680,6 @@ agent_bootstrap_req()
 		return 0;
 	}
 
-	return 0;
-}
-
-// TODO: agent_* functions will run on the certalator agent on client hosts.
-// On boostrap, they will need to generate a new REQ with the set of roles
-// sent by certalator.
-int
-agent_new_req()
-{
 	return 0;
 }
 
@@ -735,6 +763,7 @@ mdrd_backend()
 	X509             *peer_cert = NULL;
 	X509_STORE_CTX   *ctx;
 	struct sigaction  act;
+	struct xerr       e;
 
 	load_keys();
 
@@ -765,7 +794,7 @@ mdrd_backend()
 		    mdr_id(&m) != MDR_ID_MDRD_BEREQ) {
 			xlog(LOG_NOTICE, NULL,
 			    "%s: invalid mdr namespace or id", __func__);
-			goto fail;
+			continue;
 		}
 
 		if (mdrd_unpack_bereq_ref(&m, &id, &fd, &msg,
@@ -780,7 +809,37 @@ mdrd_backend()
 			continue;
 		}
 
-		if (peer_cert == NULL || verify(ctx, peer_cert) != 0) {
+		if (mdr_namespace(&msg) != MDR_NS_CERTALATOR) {
+			xlog(LOG_NOTICE, NULL,
+			    "%s: expected a certalator message (namespace=%lu) "
+			    "but got %lu", __func__, mdr_namespace(&msg));
+			continue;
+		}
+
+		if (peer_cert == NULL) {
+			if (mdr_id(&msg) !=
+			    MDR_ID_CERTALATOR_BOOTSTRAP_DIALIN) {
+				xlog(LOG_NOTICE, NULL,
+				    "%s: client did not provide a cert; only "
+				    "a bootstrap setup message (id=%lu) can be "
+				    "processed but got %lu", __func__,
+				    MDR_ID_CERTALATOR_BOOTSTRAP_SETUP,
+				    mdr_id(&msg));
+				continue;
+			}
+
+			// TODO: check if we have role "authority", without
+			// which we cannot issue certs, so we should fail.
+
+			if (bootstrap(&msg, &e) == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
+
+			continue;
+		}
+
+		if (verify(ctx, peer_cert) != 0) {
+			xlog(LOG_NOTICE, NULL, "%s: verify failed for client "
+			    "on fd %d", __func__, fd);
 			if (peer_cert != NULL)
 				X509_free(peer_cert);
 			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
@@ -790,16 +849,30 @@ mdrd_backend()
 				    "%s: mdrd_pack_beresp", __func__);
 				goto fail;
 			}
-		} else {
-			// TODO: currently this only echoes back
-			X509_free(peer_cert);
-			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
-			    MDRD_ST_OK, MDRD_BERESP_F_MSG,
-			    &msg) == MDR_FAIL) {
-				xlog_strerror(LOG_ERR, errno,
-				    "%s: mdrd_pack_beresp", __func__);
-				goto fail;
-			}
+			continue;
+		}
+
+		switch (mdr_id(&msg)) {
+		case MDR_ID_CERTALATOR_BOOTSTRAP_SETUP:
+			// TODO: client needs to have the "authority" role,
+			// quite possibly local
+			break;
+		case MDR_ID_CERTALATOR_BOOTSTRAP_DIALBACK:
+			// TODO: needs to have role "agent", and the client
+			// needs to have the "authority" role
+			break;
+		default:
+			// TODO: fail
+		}
+
+		// TODO: currently this only echoes back
+		X509_free(peer_cert);
+		if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
+		    MDRD_ST_OK, MDRD_BERESP_F_MSG,
+		    &msg) == MDR_FAIL) {
+			xlog_strerror(LOG_ERR, errno,
+			    "%s: mdrd_pack_beresp", __func__);
+			goto fail;
 		}
 
 		if (write(1, mdr_buf(&m), mdr_size(&m)) < mdr_size(&m)) {

@@ -18,6 +18,7 @@ enum xerr_code {
 	XLOG_EOF,          /* EOF on a pipe/socket */
 	XLOG_INVAL,        /* An invalid value was obtained */
 	XLOG_NOENT,        /* Entity not found */
+	XLOG_BUSY,         /* DB is busy with lock */
 	XLOG_IO,           /* IO error */
 	XLOG_OVERFLOW,     /* Value too large for container */
 	XLOG_RANGE,        /* Value exceeds allowed range */
