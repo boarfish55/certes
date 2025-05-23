@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <err.h>
 #include <fcntl.h>
-#include <getopt.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +40,7 @@ extern int   optind, opterr, optopt;
 struct {
 	int    enable_coredumps;
 
+	char   certdb_path[PATH_MAX];
 	char   ca_file[PATH_MAX];
 	char   crl_file[PATH_MAX];
 	char   key_file[PATH_MAX];
@@ -53,6 +53,7 @@ struct {
 	char   max_serial[MAX_HEX_SERIAL_LENGTH + 3];
 } certalator_conf = {
 	0,
+	"ca/certdb.sqlite",
 	"ca/overnet.pem",
 	"ca/overnet.crl",
 	"ca/private/overnet_key.pem",
@@ -70,6 +71,12 @@ struct flatconf certalator_config_vars[] = {
 		FLATCONF_BOOLINT,
 		&certalator_conf.enable_coredumps,
 		sizeof(certalator_conf.enable_coredumps)
+	},
+	{
+		"certdb_path",
+		FLATCONF_STRING,
+		certalator_conf.certdb_path,
+		sizeof(certalator_conf.certdb_path)
 	},
 	{
 		"ca_file",
@@ -224,17 +231,16 @@ void
 usage()
 {
 	printf("Usage: %s [options] <command>\n", program);
-	printf("\t-h            Prints this help\n");
-	printf("\t-d            Do not fork and print errors to STDERR\n");
-	printf("\t-f            Do not fork\n");
-	printf("\t-c <conf>     Specify alternate configuration path\n");
+	printf("\t-help           Prints this help\n");
+	printf("\t-debug          Do not fork and print errors to STDERR\n");
+	printf("\t-config <conf>  Specify alternate configuration path\n");
 	printf("\n");
 	printf("  Commands:\n");
-	printf("\tverify <certificate>            Ensures the certificate is signed by "
-	    "our\n");
+	printf("\tverify            Ensures the certificate is signed by our\n");
 	printf("\t                                authority\n");
-	printf("\tsign <certificate> [roles...]   Re-signs the certificate\n");
-	printf("\tmdrd-backend                    Run as an mdrd backend\n");
+	printf("\tsign              Re-signs the certificate\n");
+	printf("\tmdrd-backend      Run as an mdrd backend\n");
+	printf("\tbootstrap-client  CreateRun as an mdrd backend\n");
 }
 
 int
@@ -594,20 +600,120 @@ sign_req()
 // When a client sends a successful response to this challenge, along with an
 // X509 REQ, the server can sign it if the commonName and subjectAltNames
 // match.
-int
-bootstrap_client()
+void
+bootstrap_client_usage()
 {
-	// TODO: generate and save a bootstrap entry
-	//struct bootstrap_entry be;
+	printf("Usage: %s bootstrap-client [options] <subject> <roles...>\n",
+	    program);
+	printf("\t--help        Prints this help\n");
+	printf("\t--timeout     Validity of bootstrap entry in "
+	    "seconds (default 600)\n");
+	printf("\t--cert_expiry Validity of certificate in "
+	    "seconds (default 7*86400)\n");
+}
 
-	//be.one_time_key = "random 64-char key";
-	//be.valid_until_sec = 0; // epoch seconds for validity... 10 mins?
-	//be.subject = "yo";
-	////be.sans ... sans_sz
-	//// be.roles, roles_sz
-	//be.not_before_sec = 0; // epoch seconds for cert validity...
-	//be.not_after_sec = 0; // epoch seconds for cert validity...
-	//                      // now + 7d ?
+int
+bootstrap_client(int argc, char **argv, struct xerr *e)
+{
+	char                    buf[48];
+	BIO                    *b, *b64;
+	struct bootstrap_entry  be;
+	struct timespec         tp;
+	int                     opt;
+	uint32_t                timeout = 600;
+	uint32_t                cert_expiry = 7 * 86400;
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			bootstrap_client_usage();
+			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-timeout") == 0) {
+			opt++;
+			if (opt > argc) {
+				bootstrap_client_usage();
+				exit(1);
+			}
+			timeout = atoi(argv[opt]);
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-cert_expiry") == 0) {
+			opt++;
+			if (opt > argc) {
+				bootstrap_client_usage();
+				exit(1);
+			}
+			cert_expiry = atoi(argv[opt]);
+			continue;
+		}
+	}
+
+	if (opt > argc) {
+		bootstrap_client_usage();
+		exit(1);
+	}
+
+	if ((b64 = BIO_new(BIO_f_base64())) == NULL)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
+
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	if ((b = BIO_new(BIO_s_mem())) == NULL) {
+		BIO_free(b64);
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
+	}
+	BIO_push(b64, b);
+
+	arc4random_buf(buf, sizeof(buf));
+
+	if (BIO_write(b64, buf, sizeof(buf)) <= 0) {
+		BIO_free_all(b64);
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
+	}
+	BIO_flush(b64);
+
+	if (BIO_read(b, be.one_time_key, sizeof(be.one_time_key))
+	    != (int)sizeof(be.one_time_key)) {
+		BIO_free_all(b64);
+		return XERRF(e, XLOG_APP, XLOG_SHORTIO,
+		    "short read for base64 one-time-key");
+	}
+	BIO_free_all(b64);
+
+	clock_gettime(CLOCK_REALTIME, &tp);
+
+	// TODO: make this configurable
+	/* A bootstrap key is valid for 10 minutes */
+	be.valid_until_sec = tp.tv_sec + timeout;
+	be.not_before_sec = tp.tv_sec;
+	/* A cert is valid for 7 days */
+	be.not_after_sec = tp.tv_sec + cert_expiry;
+
+	be.subject = argv[opt++];
+	be.roles = argv + opt;
+	be.roles_sz = (argc - opt) + 1;
+	be.sans = NULL;
+	be.sans_sz = 0;
+
+	return certdb_put_bootstrap(&be, e);
+}
+
+int
+bootstrap_dialin(struct mdr *msg, struct xerr *e)
+{
+	// TODO: wereceive the one-time-key from a client then
+	// need to contact it over its CommonName to confirm
+	// they are who they claim to be.
+	// msg should have the one time key.
+
+	struct bootstrap_entry be;
+
+	//if (certdb_get_bootstrap(&be, otk, e) == -1)
+	//	return -1;
 
 	return 0;
 }
@@ -915,19 +1021,30 @@ main(int argc, char **argv)
 	FILE           *f;
 	X509           *crt;
 	X509_STORE_CTX *ctx;
+	struct xerr     e;
 
-	while ((opt = getopt(argc, argv, "c:hd")) != -1) {
-		switch (opt) {
-		case 'h':
+	argc--;
+	for (opt = 1; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
 			usage();
 			exit(0);
-		case 'c':
-			strlcpy(config_file_path, optarg,
+		}
+		if (strcmp(argv[opt], "-config") == 0) {
+			opt++;
+			if (opt > argc) {
+				bootstrap_client_usage();
+				exit(1);
+			}
+			strlcpy(config_file_path, argv[opt],
 			    sizeof(config_file_path));
-			break;
-		case 'd':
+			continue;
+		}
+		if (strcmp(argv[opt], "-debug") == 0) {
 			debug = 1;
-			/* fallthrough; debug implies foreground */
+			continue;
 		}
 	}
 
@@ -952,7 +1069,7 @@ main(int argc, char **argv)
 	if (!is_hex_str(certalator_conf.max_serial))
 		errx(1, "max_serial is not a valid hexadecimal integer");
 
-	if (optind >= argc) {
+	if (opt > argc) {
 		usage();
 		exit(1);
 	}
@@ -962,10 +1079,15 @@ main(int argc, char **argv)
 	if (NID_overnet_roles == NID_undef)
 		err(1, "OBJ_create");
 
-	command = argv[optind++];
+	command = argv[opt++];
+
+	if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
+		xlog(LOG_ERR, &e, "certdb_init");
+		return -1;
+	}
 
 	if (strcmp(command, "verify") == 0) {
-		if (optind >= argc)
+		if (opt >= argc)
 			errx(1, "no certificate file provided");
 		if ((f = fopen(argv[optind], "r")) == NULL)
 			err(1, "fopen");
@@ -982,11 +1104,20 @@ main(int argc, char **argv)
 		status = verify(ctx, crt);
 		X509_STORE_CTX_free(ctx);
 	} else if (strcmp(command, "sign") == 0) {
-		if (optind >= argc)
+		if (opt >= argc)
 			errx(1, "no certificate file provided");
-		status = sign(argv[optind], (const char **)argv + optind + 1);
+		status = sign(argv[opt], (const char **)argv + opt + 1);
 	} else if (strcmp(command, "mdrd-backend") == 0) {
 		status = mdrd_backend();
+	} else if (strcmp(command, "bootstrap-client") == 0) {
+		if (bootstrap_client(argc - opt, argv + opt, &e) == -1) {
+			xlog(LOG_ERR, &e, "bootstrap_client");
+			return -1;
+		}
+		if (bootstrap_dialin(NULL, &e) == -1) {
+			xlog(LOG_ERR, &e, "bootstrap_client");
+			return -1;
+		}
 	} else {
 		usage();
 		status = 1;

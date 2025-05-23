@@ -1,12 +1,12 @@
 enable_coredumps = true
-ca_file = /home/plalonde/prog/certalator/ca/overnet.pem
-crl_file = /home/plalonde/prog/certalator/ca/overnet.crl
-key_file = /home/plalonde/prog/certalator/ca/private/overnet_key.pem
-serial_file = /home/plalonde/prog/certalator/ca/serial
-min_serial = 0x01
-max_serial = 0xff
+ca_file = "/home/plalonde/prog/certalator/ca/overnet.pem"
+crl_file = "/home/plalonde/prog/certalator/ca/overnet.crl"
+key_file = "/home/plalonde/prog/certalator/ca/private/overnet_key.pem"
+serial_file = "/home/plalonde/prog/certalator/ca/serial"
+min_serial = "0x01"
+max_serial = "0xff"
 
-cert_common_name = marauder.doom.local
+cert_common_name = "marauder.doom.local"
 cert_sans = [
 	"IPAddress:172.16.6.3"
 ]
