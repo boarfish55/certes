@@ -236,11 +236,12 @@ usage()
 	printf("\t-config <conf>  Specify alternate configuration path\n");
 	printf("\n");
 	printf("  Commands:\n");
-	printf("\tverify            Ensures the certificate is signed by our\n");
-	printf("\t                                authority\n");
-	printf("\tsign              Re-signs the certificate\n");
-	printf("\tmdrd-backend      Run as an mdrd backend\n");
-	printf("\tbootstrap-client  CreateRun as an mdrd backend\n");
+	printf("\tverify          Ensures the certificate is signed by our "
+	    "authority\n");
+	printf("\tsign            Re-signs the certificate\n");
+	printf("\tmdrd-backend    Run as an mdrd backend\n");
+	printf("\tbootstrap       Create a bootstrap entry on the "
+	    "authority\n");
 }
 
 int
@@ -579,18 +580,6 @@ sign(const char *cert_path, const char **roles)
 	return 0;
 }
 
-// TODO: for bootstrapping; a new client will send a REQ, preceded with
-// a shared key (response to challenge); the shared key will have been supplied by
-// by the certalator service and the client must send it. If the challenge is
-// successful, certalator signs de REQ. The roles are also passed by
-// certalator at creation and tied with the challenge, added to the REQ
-// by the client.
-int
-sign_req()
-{
-	return 0;
-}
-
 // TODO: for boostrapping from the certalator server; this will generate a timed
 // challenge and can tie roles to the challenge. Boostrapping can also invoke a
 // shell command to perform a action to bring up the server (i.e. DHCP
@@ -601,9 +590,9 @@ sign_req()
 // X509 REQ, the server can sign it if the commonName and subjectAltNames
 // match.
 void
-bootstrap_client_usage()
+authority_bootstrap_usage()
 {
-	printf("Usage: %s bootstrap-client [options] <subject> <roles...>\n",
+	printf("Usage: %s bootstrap [options] <subject> <roles...>\n",
 	    program);
 	printf("\t--help        Prints this help\n");
 	printf("\t--timeout     Validity of bootstrap entry in "
@@ -612,8 +601,9 @@ bootstrap_client_usage()
 	    "seconds (default 7*86400)\n");
 }
 
+// TODO: need a CLI version and a API version
 int
-bootstrap_client(int argc, char **argv, struct xerr *e)
+authority_bootstrap_setup(int argc, char **argv, struct xerr *e)
 {
 	char                    buf[48];
 	BIO                    *b, *b64;
@@ -628,14 +618,14 @@ bootstrap_client(int argc, char **argv, struct xerr *e)
 			break;
 
 		if (strcmp(argv[opt], "-help") == 0) {
-			bootstrap_client_usage();
+			authority_bootstrap_usage();
 			exit(0);
 		}
 
 		if (strcmp(argv[opt], "-timeout") == 0) {
 			opt++;
 			if (opt > argc) {
-				bootstrap_client_usage();
+				authority_bootstrap_usage();
 				exit(1);
 			}
 			timeout = atoi(argv[opt]);
@@ -645,7 +635,7 @@ bootstrap_client(int argc, char **argv, struct xerr *e)
 		if (strcmp(argv[opt], "-cert_expiry") == 0) {
 			opt++;
 			if (opt > argc) {
-				bootstrap_client_usage();
+				authority_bootstrap_usage();
 				exit(1);
 			}
 			cert_expiry = atoi(argv[opt]);
@@ -654,7 +644,7 @@ bootstrap_client(int argc, char **argv, struct xerr *e)
 	}
 
 	if (opt > argc) {
-		bootstrap_client_usage();
+		authority_bootstrap_usage();
 		exit(1);
 	}
 
@@ -702,22 +692,6 @@ bootstrap_client(int argc, char **argv, struct xerr *e)
 	return certdb_put_bootstrap(&be, e);
 }
 
-int
-bootstrap_dialin(struct mdr *msg, struct xerr *e)
-{
-	// TODO: wereceive the one-time-key from a client then
-	// need to contact it over its CommonName to confirm
-	// they are who they claim to be.
-	// msg should have the one time key.
-
-	struct bootstrap_entry be;
-
-	//if (certdb_get_bootstrap(&be, otk, e) == -1)
-	//	return -1;
-
-	return 0;
-}
-
 // TODO: client-side for the above; given a challenge and roles, we can
 // generate a REQ with those roles, create our REQ and pick and DNS/CommonName
 // we can answer to, then contact the server, passing the challenge to get the
@@ -731,21 +705,12 @@ bootstrap_dialin(struct mdr *msg, struct xerr *e)
 // - Validity period (capped by the server, but could be shorter)
 // Most other things are decided by the cert issuer.
 int
-bootstrap(struct mdr *msg, struct xerr *e)
+agent_bootstrap_dialin(const char *one_time_key, struct xerr *e)
 {
-	// TODO: dial back to confirm the CommonName (or one of the SANs?)
-	// and send the parameters for bootstrapping.
-	// When doing so, client will send us its REQ
+	// TODO: agent-side bootstrap initiation, passing a one-time-key
+	// to the authority. We'll receive the parameters like CommonName,
+	// SANs, etc. from which we create a key & req.
 
-	return 0;
-}
-
-// TODO: agent_* functions will run on the certalator agent on client hosts.
-// On boostrap, they will need to generate a new REQ with the set of roles
-// sent by certalator.
-int
-agent_bootstrap_req()
-{
 	// TODO: look at acme-client/keyproc.c:77
 	X509_REQ  *req;
 	FILE      *f;
@@ -787,15 +752,22 @@ agent_bootstrap_req()
 	}
 
 	return 0;
+	return 0;
 }
 
-// TODO: agent_* functions will run on the certalator agent on client hosts.
-// On bootstrap, after generating the REQ, this function will contact
-// the certalator server that initiated the bootstrap.
-// sent by certalator.
 int
-agent_sign_req()
+authority_bootstrap_dialin(struct mdr *msg, struct xerr *e)
 {
+	// TODO: wereceive the one-time-key from a client then
+	// need to contact it over its CommonName to confirm
+	// they are who they claim to be.
+	// msg should have the one time key.
+
+	//struct bootstrap_entry be;
+
+	//if (certdb_get_bootstrap(&be, otk, e) == -1)
+	//	return -1;
+
 	return 0;
 }
 
@@ -937,7 +909,7 @@ mdrd_backend()
 			// TODO: check if we have role "authority", without
 			// which we cannot issue certs, so we should fail.
 
-			if (bootstrap(&msg, &e) == MDR_FAIL)
+			if (authority_bootstrap_dialin(&msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
 
 			continue;
@@ -1024,7 +996,7 @@ main(int argc, char **argv)
 	struct xerr     e;
 
 	argc--;
-	for (opt = 1; opt < argc; opt++) {
+	for (opt = 1; opt <= argc; opt++) {
 		if (argv[opt][0] != '-')
 			break;
 
@@ -1035,7 +1007,7 @@ main(int argc, char **argv)
 		if (strcmp(argv[opt], "-config") == 0) {
 			opt++;
 			if (opt > argc) {
-				bootstrap_client_usage();
+				authority_bootstrap_usage();
 				exit(1);
 			}
 			strlcpy(config_file_path, argv[opt],
@@ -1109,13 +1081,10 @@ main(int argc, char **argv)
 		status = sign(argv[opt], (const char **)argv + opt + 1);
 	} else if (strcmp(command, "mdrd-backend") == 0) {
 		status = mdrd_backend();
-	} else if (strcmp(command, "bootstrap-client") == 0) {
-		if (bootstrap_client(argc - opt, argv + opt, &e) == -1) {
-			xlog(LOG_ERR, &e, "bootstrap_client");
-			return -1;
-		}
-		if (bootstrap_dialin(NULL, &e) == -1) {
-			xlog(LOG_ERR, &e, "bootstrap_client");
+	} else if (strcmp(command, "bootstrap") == 0) {
+		if (authority_bootstrap_setup(argc - opt,
+		    argv + opt, &e) == -1) {
+			xlog(LOG_ERR, &e, "bootstrap");
 			return -1;
 		}
 	} else {
