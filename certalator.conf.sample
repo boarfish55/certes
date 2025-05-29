@@ -1,12 +1,16 @@
 enable_coredumps = true
+bootstrap_key = ""
+authority_host = "localhost"
+authority_port = 9790
 ca_file = "/home/plalonde/prog/certalator/ca/overnet.pem"
 crl_file = "/home/plalonde/prog/certalator/ca/overnet.crl"
 key_file = "/home/plalonde/prog/certalator/ca/private/overnet_key.pem"
 serial_file = "/home/plalonde/prog/certalator/ca/serial"
-min_serial = "0x01"
-max_serial = "0xff"
 
-cert_common_name = "marauder.doom.local"
-cert_sans = [
-	"IPAddress:172.16.6.3"
-]
+cert_org = "Overnet"
+cert_email = "cert@overnet.ca"
+
+# This supports OpenSSL's bignum integers, we can shard amongst authorities
+# to avoid serial collisions.
+min_serial = "0x1000000"
+max_serial = "0x1ffffff"

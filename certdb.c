@@ -3,6 +3,7 @@
 #include <sqlite3.h>
 #include <string.h>
 #include "certdb.h"
+#include "util.h"
 
 static sqlite3 *db;
 
@@ -23,14 +24,14 @@ const int qry_busy_timeout = 1000;
  * validity to the client, which they will include in their CSR.
  */
 const char *qry_create_bootstrap_table = "create table if not exists bootstrap("
-                "one_time_key blob not null, "
+                "bootstrap_key blob not null, "
 		"valid_until_sec int not null, "
 		"subject text not null, "
 		"sans blob, "
 		"roles blob, "
 		"not_before_sec int not null, "
 		"not_after_sec int not null, "
-                "primary key(one_time_key))";
+                "primary key(bootstrap_key))";
 
 const char *qry_create_certs_table = "create table if not exists certs("
                 "serial blob not null, "
@@ -48,7 +49,7 @@ const char *qry_create_certs_index = "create index if not exists "
 struct {
         sqlite3_stmt *stmt;
         char         *sql;
-        int           i_one_time_key;
+        int           i_bootstrap_key;
         int           i_valid_until_sec;
         int           i_subject;
         int           i_sans;
@@ -57,7 +58,7 @@ struct {
         int           i_not_after_sec;
 } qry_bootstrap_put = {
         NULL,
-        "insert or replace into bootstrap(one_time_key, valid_until_sec, "
+        "insert or replace into bootstrap(bootstrap_key, valid_until_sec, "
 	    "subject, sans, roles, not_before_sec, not_after_sec) "
             "values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         1, 2, 3, 4, 5, 6, 7
@@ -66,7 +67,7 @@ struct {
 struct {
         sqlite3_stmt *stmt;
         char         *sql;
-        int           i_one_time_key;
+        int           i_bootstrap_key;
         int           o_valid_until_sec;
         int           o_subject;
         int           o_sans;
@@ -76,7 +77,7 @@ struct {
 } qry_bootstrap_get = {
         NULL,
         "select valid_until_sec, subject, sans, roles, not_before_sec, "
-	    "not_after_sec from bootstrap where one_time_key = ?1",
+	    "not_after_sec from bootstrap where bootstrap_key = ?1",
         1, 0, 1, 2, 3, 4, 5
 };
 
@@ -128,67 +129,8 @@ certdb_qry_cleanup(sqlite3_stmt *stmt, struct xerr *e)
 	return 0;
 }
 
-static int
-certdb_join_strlist(char **strlist, size_t strlist_sz, char **dst)
-{
-	int   i;
-	int   sz = 0;
-	char *str_p;
-
-	if (strlist_sz >= INT_MAX) {
-		errno = EINVAL;
-		return -1;
-	}
-
-	for (i = 0; i < strlist_sz && strlist[i] != NULL; i++)
-		sz += strlen(strlist[i]) + 1;
-
-	if (sz == 0) {
-		*dst = NULL;
-		return 0;
-	}
-
-	if ((*dst = malloc(sz)) == NULL)
-		return -1;
-
-	for (i = 0, str_p = *dst; i < strlist_sz && strlist[i] != NULL; i++)
-		str_p += strlcpy(str_p, strlist[i], strlen(strlist[i]) + 1) + 1;
-
-	return sz;
-}
-
-static int
-certdb_split_strlist(char ***strlist, const char *src, size_t src_len)
-{
-	int   i;
-	int   sz = 0;
-	char *str_p, **strlist_p;
-
-	for (i = 0; i < src_len; i++)
-		if (src[i] == '\0')
-			sz++;
-
-	*strlist = malloc(((sz + 1) * sizeof(char *)) + src_len);
-	if (*strlist == NULL)
-		return -1;
-
-	str_p = (char *)((*strlist) + sz + 1);
-	strlist_p = *strlist;
-	*strlist_p = str_p;
-	for (i = 0; i < src_len; i++) {
-		*str_p = src[i];
-		if (*str_p++ == '\0') {
-			strlist_p++;
-			*strlist_p = str_p;
-		}
-	}
-	*strlist_p = NULL;
-
-	return sz;
-}
-
 int
-certdb_get_bootstrap(struct bootstrap_entry *dst, const char *one_time_key,
+certdb_get_bootstrap(struct bootstrap_entry *dst, const char *bootstrap_key,
     struct xerr *e)
 {
 	int          r;
@@ -200,8 +142,8 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const char *one_time_key,
 	int          subject_len;
 
 	if ((r = sqlite3_bind_blob(qry_bootstrap_get.stmt,
-	    qry_bootstrap_put.i_one_time_key, one_time_key,
-	    strlen(one_time_key), SQLITE_STATIC))) {
+	    qry_bootstrap_put.i_bootstrap_key, bootstrap_key,
+	    strlen(bootstrap_key), SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
 		    sqlite3_errmsg(db));
 		goto fail;
@@ -213,8 +155,8 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const char *one_time_key,
                 break;
         case SQLITE_DONE:
                 XERRF(e, XLOG_APP, XLOG_NOENT,
-                    "sqlite3_step: entry not found, one_time_key=%s",
-		    one_time_key);
+                    "sqlite3_step: entry not found, bootstrap_key=%s",
+		    bootstrap_key);
                 goto fail;
         case SQLITE_BUSY:
                 XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
@@ -254,7 +196,7 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const char *one_time_key,
 		memcpy(sans,
 		    sqlite3_column_blob(qry_bootstrap_get.stmt,
 		    qry_bootstrap_get.o_sans), sans_len);
-		if ((dst->sans_sz = certdb_split_strlist(&dst->sans,
+		if ((dst->sans_sz = strlist_split(&dst->sans,
 		    sans, sans_len)) == -1) {
 			free(dst->subject);
 			free(sans);
@@ -277,7 +219,7 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const char *one_time_key,
 		memcpy(roles,
 		    sqlite3_column_blob(qry_bootstrap_get.stmt,
 		    qry_bootstrap_get.o_roles), roles_len);
-		if ((dst->roles_sz = certdb_split_strlist(&dst->roles,
+		if ((dst->roles_sz = strlist_split(&dst->roles,
 		    roles, roles_len)) == -1) {
 			free(dst->sans);
 			free(dst->subject);
@@ -391,7 +333,7 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 	    qry_cert_get.stmt,
 	    qry_cert_get.o_flags);
 
-	if ((dst->sans_sz = certdb_split_strlist(&dst->sans,
+	if ((dst->sans_sz = strlist_split(&dst->sans,
 	    sans, sans_len)) == -1) {
 		free(dst->subject);
 		free(sans);
@@ -400,7 +342,7 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 		goto fail;
 	}
 
-	if ((dst->roles_sz = certdb_split_strlist(&dst->roles,
+	if ((dst->roles_sz = strlist_split(&dst->roles,
 	    roles, roles_len)) == -1) {
 		free(dst->sans);
 		free(dst->subject);
@@ -432,8 +374,8 @@ certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 	int          roles_sz;
 
 	if ((r = sqlite3_bind_blob(qry_bootstrap_put.stmt,
-	    qry_bootstrap_put.i_one_time_key, entry->one_time_key,
-	    sizeof(entry->one_time_key), SQLITE_STATIC))) {
+	    qry_bootstrap_put.i_bootstrap_key, entry->bootstrap_key,
+	    sizeof(entry->bootstrap_key), SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
 		    sqlite3_errmsg(db));
 		goto fail;
@@ -447,9 +389,9 @@ certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((sans_sz = certdb_join_strlist(entry->sans, entry->sans_sz,
+	if ((sans_sz = strlist_join(entry->sans, entry->sans_sz,
 	    &sans)) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "certdb_join_strlist");
+		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
 	if ((r = sqlite3_bind_blob(qry_bootstrap_put.stmt,
@@ -459,9 +401,9 @@ certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((roles_sz = certdb_join_strlist(entry->roles, entry->roles_sz,
+	if ((roles_sz = strlist_join(entry->roles, entry->roles_sz,
 	    &roles)) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "certdb_join_strlist");
+		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
 	if ((r = sqlite3_bind_blob(qry_bootstrap_put.stmt,
@@ -533,9 +475,9 @@ certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((sans_sz = certdb_join_strlist(entry->sans, entry->sans_sz,
+	if ((sans_sz = strlist_join(entry->sans, entry->sans_sz,
 	    &sans)) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "certdb_join_strlist");
+		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
 	if ((r = sqlite3_bind_text(qry_cert_put.stmt,
@@ -545,9 +487,9 @@ certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((roles_sz = certdb_join_strlist(entry->roles, entry->roles_sz,
+	if ((roles_sz = strlist_join(entry->roles, entry->roles_sz,
 	    &roles)) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "certdb_join_strlist");
+		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
 	if ((r = sqlite3_bind_blob(qry_cert_put.stmt,

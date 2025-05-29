@@ -9,8 +9,10 @@
 #define CERTDB_FLAG_REVOKED 0x00000001
 #define CERTDB_FLAG_ALL     0xFFFFFFFF
 
+#define CERTDB_BOOTSTRAP_KEY_LENGTH 64
+
 struct bootstrap_entry {
-	char     one_time_key[64];
+	char     bootstrap_key[CERTDB_BOOTSTRAP_KEY_LENGTH];
 	time_t   valid_until_sec;
 	char    *subject;
 	char   **sans;
