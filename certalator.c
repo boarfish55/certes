@@ -33,6 +33,11 @@ EVP_PKEY   *priv_key = NULL;
 X509       *ca_crt = NULL;
 int         debug = 0;
 char        config_file_path[PATH_MAX] = "/etc/certalator.conf";
+SSL_CTX    *agent_ssl_ctx = NULL;
+SSL        *agent_ssl = NULL;
+BIO        *agent_bio = NULL;
+int         agent_connected = 0;
+
 
 struct {
 	int    enable_coredumps;
@@ -233,63 +238,73 @@ encode_overnet_roles(const char **roles)
 }
 
 int
-agent_send(struct mdr *m, struct xerr *e)
+agent_connect(struct xerr *e)
 {
-	SSL_CTX *ctx;
-	BIO     *b;
-	SSL     *ssl;
-	int      r;
+	if (agent_ssl_ctx == NULL) {
+		if ((agent_ssl_ctx = SSL_CTX_new(TLS_client_method())) == NULL)
+			return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
 
-	if ((ctx = SSL_CTX_new(TLS_client_method())) == NULL)
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
+		SSL_CTX_set_verify(agent_ssl_ctx, SSL_VERIFY_PEER, NULL);
 
-	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+		// TODO: don't use OS-provided certs
+		//if (!SSL_CTX_set_default_verify_paths(ctx))
+		//	return XERRF(e, XLOG_SSL, ERR_get_error(),
+		//	    "SSL_CTX_set_default_verify_paths");
 
-	// TODO: don't use OS-provided certs
-	if (!SSL_CTX_set_default_verify_paths(ctx))
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
+		if (SSL_CTX_use_PrivateKey(agent_ssl_ctx, priv_key) != 1)
+			return XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "SSL_CTX_use_PrivateKey");
+		if (SSL_CTX_use_certificate(agent_ssl_ctx, ca_crt) != 1)
+			return XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "SSL_CTX_use_certificate");
+	}
 
-	if (SSL_CTX_use_PrivateKey(ctx, priv_key) != 1)
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "SSL_CTX_use_PrivateKey");
-	if (SSL_CTX_use_certificate(ctx, ca_crt) != 1)
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "SSL_CTX_use_certificate");
+	if (agent_bio == NULL) {
+		if ((agent_bio = BIO_new_ssl_connect(agent_ssl_ctx)) == NULL)
+			return XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "BIO_new_ssl_connect");
 
-	if ((b = BIO_new_ssl_connect(ctx)) == NULL)
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "BIO_new_ssl_connect");
+		BIO_get_ssl(agent_bio, &agent_ssl);
+		if (agent_ssl == NULL)
+			return XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "BIO_get_ssl");
 
-	BIO_get_ssl(b, &ssl);
-	if (ssl == NULL)
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "BIO_get_ssl");
+		SSL_set_mode(agent_ssl, SSL_MODE_AUTO_RETRY);
 
-	SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
+		BIO_set_conn_hostname(agent_bio, "localhost:9790");
+	}
 
-	BIO_set_conn_hostname(b, "localhost:9790");
+	if (!agent_connected) {
+		if (BIO_do_connect(agent_bio) <= 0)
+			return XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "BIO_do_connect");
 
-	if (BIO_do_connect(b) <= 0)
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "BIO_do_connect");
-
-	if (BIO_do_handshake(b) <= 0)
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "BIO_do_handshake");
-
-	// TODO: we want to keep the TLS channel open, always, pretty
-	// much, and not close it.
-	if ((r = BIO_write(b, mdr_buf(m), mdr_size(m))) == -1)
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "BIO_write");
-	else if (r < mdr_size(m))
-		return XERRF(e, XLOG_APP, XLOG_SHORTIO, "BIO_write");
-
-	//BIO_free_all(b);
-	//SSL_CTX_free(ctx);
+		if (BIO_do_handshake(agent_bio) <= 0)
+			return XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "BIO_do_handshake");
+		agent_connected = 1;
+	}
 
 	return 0;
 }
+
+int
+agent_send(struct mdr *m, struct xerr *e)
+{
+	int r;
+
+	if (agent_connect(e) == -1)
+		return -1;
+
+	if ((r = BIO_write(b, mdr_buf(m), mdr_size(m))) == -1)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
+	else if (r < mdr_size(m))
+		return XERRF(e, XLOG_APP, XLOG_SHORTIO, "BIO_write");
+
+	return 0;
+
+}
+
 
 void
 usage()
@@ -985,6 +1000,10 @@ agent_bootstrap_dialin(struct xerr *e)
 	}
 
 	// TODO: send the damn thing
+	if (agent_send(&m, e) == -1) {
+		// TODO: err
+		return NULL;
+	}
 
 	if (agent_new_req(subject) == -1)
 		return NULL;
