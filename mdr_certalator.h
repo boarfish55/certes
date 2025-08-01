@@ -3,19 +3,20 @@
 
 #include "mdr.h"
 
-#define MDR_NS_CERTALATOR 0x00000003
-
 /*
  * Creates a bootstrap entry for a client in the database.
  */
-#define MDR_ID_CERTALATOR_BOOTSTRAP_SETUP         0x0001
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP \
+    MDR_DCV(0x00000002, 0x0001, 0x0000)
 
 /*
  * A client (agent) contacts its authority to initiate the bootstrap
  * process, providing a bootstrap one-time-key.
  */
-#define MDR_ID_CERTALATOR_BOOTSTRAP_DIALIN        0x0002
-#define MDR_ID_CERTALATOR_BOOTSTRAP_DIALIN_RESP   0x0003
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN \
+    MDR_DCV(0x00000002, 0x0002, 0x0000)
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP \
+    MDR_DCV(0x00000002, 0x0003, 0x0000)
 
 /*
  * The authority dials back to the client that dialed in to validate
@@ -23,19 +24,23 @@
  * In response to this the client will send an X509 REQ with the parameters
  * received from the authority.
  */
-#define MDR_ID_CERTALATOR_BOOTSTRAP_DIALBACK      0x0004
-#define MDR_ID_CERTALATOR_BOOTSTRAP_DIALBACK_RESP 0x0005
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK \
+    MDR_DCV(0x00000002, 0x0004, 0x0000)
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK_RESP \
+    MDR_DCV(0x00000002, 0x0005, 0x0000)
 
 /*
  * In response to this the authority's DIALBACK, the client will send an
  * X509 REQ with the parameters received from the authority.
  */
-#define MDR_ID_CERTALATOR_BOOTSTRAP_REQ           0x0006
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_REQ \
+    MDR_DCV(0x00000002, 0x0006, 0x0000)
 
 /*
  * After receiving the REQ from the client, the authority replies with
  * a signed certificate which the client can install.
  */
-#define MDR_ID_CERTALATOR_BOOTSTRAP_CERT          0x0007
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_CERT \
+    MDR_DCV(0x00000002, 0x0007, 0x0000)
 
 #endif

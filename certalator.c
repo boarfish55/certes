@@ -38,6 +38,31 @@ SSL        *agent_ssl = NULL;
 BIO        *agent_bio = NULL;
 int         agent_connected = 0;
 
+struct mdr_def msgdef_bootstrap_setup = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP,
+	"certalator.bootstrap_setup",
+	{
+		MDR_S,
+		MDR_AS,
+		MDR_AS,
+		MDR_U32,
+		MDR_U32,
+		MDR_LAST
+	}
+};
+struct mdr_def msgdef_bootstrap_dialin = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN,
+	"certalator.bootstrap_dialin",
+	{
+		MDR_S,
+		MDR_LAST
+	}
+};
+
+const struct mdr_spec *msg_bootstrap_setup;
+const struct mdr_spec *msg_bootstrap_dialin;
+const struct mdr_spec *msg_pack_beresp;
+const struct mdr_spec *msg_pack_beresp_wmsg;
 
 struct {
 	int    enable_coredumps;
@@ -296,7 +321,7 @@ agent_send(struct mdr *m, struct xerr *e)
 	if (agent_connect(e) == -1)
 		return -1;
 
-	if ((r = BIO_write(b, mdr_buf(m), mdr_size(m))) == -1)
+	if ((r = BIO_write(agent_bio, mdr_buf(m), mdr_size(m))) == -1)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
 	else if (r < mdr_size(m))
 		return XERRF(e, XLOG_APP, XLOG_SHORTIO, "BIO_write");
@@ -669,8 +694,8 @@ sign(const char *cert_path, const char **roles)
 // X509 REQ, the server can sign it if the commonName and subjectAltNames
 // match.
 int
-authority_bootstrap_setup(const char *cn, char **sans,
-    size_t sans_sz, char **roles, size_t roles_sz, uint32_t cert_expiry,
+authority_bootstrap_setup(const char *cn, const char **sans,
+    size_t sans_sz, const char **roles, size_t roles_sz, uint32_t cert_expiry,
     uint32_t timeout, struct xerr *e)
 {
 	char                    buf[48];
@@ -722,9 +747,9 @@ authority_bootstrap_setup(const char *cn, char **sans,
 	be.not_after_sec = tp.tv_sec + cert_expiry;
 
 	be.subject = subject;
-	be.roles = roles;
+	be.roles = (char **)roles;
 	be.roles_sz = roles_sz;
-	be.sans = sans;
+	be.sans = (char **)sans;
 	be.sans_sz = sans_sz;
 
 	return certdb_put_bootstrap(&be, e);
@@ -748,55 +773,40 @@ authority_bootstrap_usage()
 int
 authority_bootstrap_setup_msg(struct mdr *m, struct xerr *e)
 {
-	const char  *subject;
-	char       **tmp;
-	uint64_t     subject_len;
-	char         san[CERTALATOR_MAX_SAN_LENGTH + 1];
-	uint64_t     san_len = sizeof(san);
-	char         role[CERTALATOR_MAX_ROLE_LENGTH + 1];
-	uint64_t     role_len = sizeof(role);
-	char       **roles = NULL;
-	uint8_t      roles_sz = 0;
-	char       **sans = NULL;
-	uint8_t      sans_sz = 0;
-	int          i, r;
-	uint32_t     cert_expiry, timeout;
+	const char      *subject;
+	const char     **roles = NULL;
+	int32_t          roles_sz;
+	const char     **sans = NULL;
+	int32_t          sans_sz;
+	uint32_t         cert_expiry, timeout;
+	struct mdr_out   m_out[4];
 
-	if (mdr_unpack_bytes_ref(m, &subject, &subject_len) == MDR_FAIL)
+	if (mdr_unpack_payload(m, msg_bootstrap_setup, m_out, 4) == MDR_FAIL)
 		return -1;
 
-	if (mdr_unpack_uint8(m, &sans_sz) == MDR_FAIL)
-		return -1;
-	for (i = 0; i < sans_sz; i++) {
-		if (mdr_unpack_string(m, san, &san_len) == MDR_FAIL)
-			goto fail;
-		tmp = strlist_add(sans, san);
-		if (tmp == NULL)
-			goto fail;
-		sans = tmp;
-	}
+	subject = m_out[0].v.s.bytes;
+	sans_sz = mdr_out_array_length(&m_out[1].v.as);
+	roles_sz = mdr_out_array_length(&m_out[2].v.as);
+	cert_expiry = m_out[3].v.u32;
+	timeout = m_out[4].v.u32;
 
-	if (mdr_unpack_uint8(m, &roles_sz) == MDR_FAIL)
-		return -1;
-	for (i = 0; i < roles_sz; i++) {
-		if (mdr_unpack_string(m, role, &role_len) == MDR_FAIL)
-			return -1;
-		tmp = strlist_add(roles, role);
-		if (tmp == NULL)
-			goto fail;
-		roles = tmp;
-	}
-
-	if (mdr_unpack_uint32(m, &cert_expiry) == MDR_FAIL)
+	if ((sans = malloc(sizeof(char *) * (sans_sz + 1))) == NULL)
+		goto fail;
+	if ((roles = malloc(sizeof(char *) * (roles_sz + 1))) == NULL)
 		goto fail;
 
-	if (mdr_unpack_uint32(m, &timeout) == MDR_FAIL)
+	if (mdr_out_array_s(&m_out[1].v.as, sans, sans_sz) == MDR_FAIL)
+		goto fail;
+	if (mdr_out_array_s(&m_out[2].v.as, roles, roles_sz) == MDR_FAIL)
 		goto fail;
 
-	r = authority_bootstrap_setup(subject, sans, sans_sz, roles,
-	    roles_sz, cert_expiry, timeout, e);
-	if (r == 0)
-		return 0;
+	if (authority_bootstrap_setup(subject, sans, sans_sz, roles,
+	    roles_sz, cert_expiry, timeout, e) == -1)
+		goto fail;
+
+	free(sans);
+	free(roles);
+	return 0;
 fail:
 	free(sans);
 	free(roles);
@@ -875,8 +885,8 @@ authority_bootstrap_setup_cli(int argc, char **argv, struct xerr *e)
 		exit(1);
 	}
 
-	r = authority_bootstrap_setup(argv[opt], sans, sans_sz, roles,
-	    roles_sz, cert_expiry, timeout, e);
+	r = authority_bootstrap_setup(argv[opt], (const char **)sans, sans_sz,
+	    (const char **)roles, roles_sz, cert_expiry, timeout, e);
 	free(sans);
 	free(roles);
 	return r;
@@ -984,17 +994,15 @@ agent_bootstrap_dialin(struct xerr *e)
 	// TODO: get the one time key from our config, contact the
 	// authoritah, get subject, SANs and roles.
 
-	struct mdr  m;
-	char        buf[64];
-	char       *subject = NULL;
+	struct mdr     m;
+	char           buf[64];
+	char          *subject = NULL;
+	struct mdr_in  m_in[0];
 
-	if (mdr_pack_hdr(&m, buf, sizeof(buf), MDR_F_NONE, MDR_NS_CERTALATOR,
-	    MDR_ID_CERTALATOR_BOOTSTRAP_DIALIN, 0) == MDR_FAIL) {
-		// TODO: err
-		return NULL;
-	}
-
-	if (mdr_pack_string(&m, certalator_conf.bootstrap_key) == MDR_FAIL) {
+	m_in[0].type = MDR_S;
+	m_in[0].v.s.bytes = certalator_conf.bootstrap_key;
+	if (mdr_pack(&m, buf, sizeof(buf), msg_bootstrap_dialin,
+	    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
 		// TODO: err
 		return NULL;
 	}
@@ -1145,6 +1153,7 @@ mdrd_backend()
 	X509_STORE_CTX   *ctx;
 	struct sigaction  act;
 	struct xerr       e;
+	struct mdr_in     m_in[5];
 
 	load_keys();
 
@@ -1163,7 +1172,7 @@ mdrd_backend()
 	    sigaction(SIGTERM, &act, NULL) == -1)
 		return -1;
 
-	while ((r = mdr_unpack_from_fd(&m, MDR_F_NONE,
+	while ((r = mdr_read_from_fd(&m, MDR_F_NONE,
 	    0, buf, sizeof(buf))) > 0) {
 		if (r == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
@@ -1171,14 +1180,14 @@ mdrd_backend()
 			goto fail;
 		}
 
-		if (mdr_namespace(&m) != MDR_NS_MDRD ||
-		    mdr_id(&m) != MDR_ID_MDRD_BEREQ) {
+		if (mdr_dcv(&m) != MDR_DCV_MDRD_BEREQ) {
 			xlog(LOG_NOTICE, NULL,
-			    "%s: invalid mdr namespace or id", __func__);
+			    "%s: unexpected message DCV received: %x",
+			    __func__, mdr_dcv(&m));
 			continue;
 		}
 
-		if (mdrd_unpack_bereq_ref(&m, &id, &fd, &msg,
+		if (mdrd_unpack_bereq(&m, &id, &fd, &msg,
 		    &peer_cert) == MDR_FAIL) {
 			if (errno == EAGAIN)
 				xlog(LOG_ERR, NULL,
@@ -1190,22 +1199,22 @@ mdrd_backend()
 			continue;
 		}
 
-		if (mdr_namespace(&msg) != MDR_NS_CERTALATOR) {
+		if (mdr_domain(&msg) != MDR_DOMAIN_CERTALATOR) {
 			xlog(LOG_NOTICE, NULL,
-			    "%s: expected a certalator message (namespace=%lu) "
-			    "but got %lu", __func__, mdr_namespace(&msg));
+			    "%s: expected a certalator message (domain=%x) "
+			    "but got %x", __func__, mdr_domain(&msg));
 			continue;
 		}
 
 		if (peer_cert == NULL) {
-			if (mdr_id(&msg) !=
-			    MDR_ID_CERTALATOR_BOOTSTRAP_DIALIN) {
+			if (mdr_dcv(&msg) !=
+			    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN) {
 				xlog(LOG_NOTICE, NULL,
 				    "%s: client did not provide a cert; only "
-				    "a bootstrap setup message (id=%lu) can be "
-				    "processed but got %lu", __func__,
-				    MDR_ID_CERTALATOR_BOOTSTRAP_SETUP,
-				    mdr_id(&msg));
+				    "a bootstrap setup message (id=%x) can be "
+				    "processed but got %x", __func__,
+				    MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP,
+				    mdr_dcv(&msg));
 				continue;
 			}
 
@@ -1223,23 +1232,36 @@ mdrd_backend()
 			    "on fd %d", __func__, fd);
 			if (peer_cert != NULL)
 				X509_free(peer_cert);
-			if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
-			    MDRD_ST_CERTFAIL,
-			    MDRD_BERESP_F_CLOSE, NULL) == MDR_FAIL) {
+			m_in[0].type = MDR_U32;
+			m_in[0].v.u32 = id;
+			m_in[1].type = MDR_I32;
+			m_in[1].v.i32 = fd;
+			m_in[2].type = MDR_U32;
+			m_in[2].v.u32 = MDRD_ST_CERTFAIL;
+			m_in[3].type = MDR_U32;
+			m_in[3].v.u32 = MDRD_BERESP_F_CLOSE;
+			if (mdr_pack(&m, buf, sizeof(buf), msg_pack_beresp,
+			    MDR_F_NONE, m_in, 4) == MDR_FAIL) {
 				xlog_strerror(LOG_ERR, errno,
-				    "%s: mdrd_pack_beresp", __func__);
+				    "%s: mdr_pack", __func__);
+				goto fail;
+			}
+			if (write(1, mdr_buf(&m), mdr_size(&m))
+			    < mdr_size(&m)) {
+				xlog_strerror(LOG_ERR, errno,
+				    "%s: writeall", __func__);
 				goto fail;
 			}
 			continue;
 		}
 
-		switch (mdr_id(&msg)) {
-		case MDR_ID_CERTALATOR_BOOTSTRAP_SETUP:
+		switch (mdr_dcv(&msg)) {
+		case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP:
 			// TODO: client needs to have the "bootstrap" role
 			if (authority_bootstrap_setup_msg(&msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
 			break;
-		case MDR_ID_CERTALATOR_BOOTSTRAP_DIALBACK:
+		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
 			// TODO: needs to have role "agent", and the client
 			// needs to have the "authority" role
 			break;
@@ -1249,14 +1271,23 @@ mdrd_backend()
 
 		// TODO: currently this only echoes back
 		X509_free(peer_cert);
-		if (mdrd_pack_beresp(&m, buf, sizeof(buf), id, fd,
-		    MDRD_ST_OK, MDRD_BERESP_F_MSG,
-		    &msg) == MDR_FAIL) {
+
+		m_in[0].type = MDR_U32;
+		m_in[0].v.u32 = id;
+		m_in[1].type = MDR_I32;
+		m_in[1].v.i32 = fd;
+		m_in[2].type = MDR_U32;
+		m_in[2].v.u32 = MDRD_ST_OK;
+		m_in[3].type = MDR_U32;
+		m_in[3].v.u32 = 0;
+		m_in[4].type = MDR_M;
+		m_in[4].v.m = &msg;
+		if (mdr_pack(&m, buf, sizeof(buf), msg_pack_beresp_wmsg,
+		    MDR_F_NONE, m_in, 5) == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
-			    "%s: mdrd_pack_beresp", __func__);
+			    "%s: mdr_pack", __func__);
 			goto fail;
 		}
-
 		if (write(1, mdr_buf(&m), mdr_size(&m)) < mdr_size(&m)) {
 			xlog_strerror(LOG_ERR, errno,
 			    "%s: writeall", __func__);
@@ -1362,6 +1393,20 @@ main(int argc, char **argv)
 		xlog(LOG_ERR, &e, "certdb_init");
 		return -1;
 	}
+
+	if (mdr_register_builtin_specs() == MDR_FAIL)
+		err(1, "mdr_register_builtin_specs");
+	if ((msg_bootstrap_setup =
+	    mdr_register_spec(&msgdef_bootstrap_setup)) == NULL)
+		err(1, "mdr_register_spec");
+	if ((msg_bootstrap_dialin =
+	    mdr_register_spec(&msgdef_bootstrap_dialin)) == NULL)
+		err(1, "mdr_register_spec");
+	if ((msg_pack_beresp = mdr_registry_get(MDR_DCV_MDRD_BERESP)) == NULL)
+		err(1, "mdr_registry_get");
+	if ((msg_pack_beresp_wmsg =
+	    mdr_registry_get(MDR_DCV_MDRD_BERESP_WMSG)) == NULL)
+		err(1, "mdr_registry_get");
 
 	if (strcmp(command, "verify") == 0) {
 		if (opt >= argc)
