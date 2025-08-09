@@ -15,17 +15,20 @@ enum xerr_space {
 
 enum xerr_code {
 	XLOG_SUCCESS = 0,
-	XLOG_EOF,          /* EOF on a pipe/socket */
-	XLOG_INVAL,        /* An invalid value was obtained */
-	XLOG_NOENT,        /* Entity not found */
-	XLOG_BUSY,         /* DB is busy with lock */
-	XLOG_IO,           /* IO error */
-	XLOG_OVERFLOW,     /* Value too large for container */
-	XLOG_RANGE,        /* Value exceeds allowed range */
-	XLOG_SHORTIO,      /* Short read/write */
-	XLOG_WOULDBLOCK,   /* Operation would block but is set non-blocking */
-	XLOG_NAMETOOLONG,  /* Specified name is too long for limit */
-	XLOG_CALLBACK_ERR  /* Callback error */
+	XLOG_EOF,               /* EOF on a pipe/socket */
+	XLOG_INVAL,             /* An invalid value was obtained */
+	XLOG_NOENT,             /* Entity not found */
+	XLOG_BUSY,              /* DB is busy with lock */
+	XLOG_IO,                /* IO error */
+	XLOG_OVERFLOW,          /* Value too large for container */
+	XLOG_RANGE,             /* Value exceeds allowed range */
+	XLOG_SHORTIO,           /* Short read/write */
+	XLOG_WOULDBLOCK,        /* Operation would block but is set non-blocking */
+	XLOG_NAMETOOLONG,       /* Specified name is too long for limit */
+	XLOG_EDESTADDRREQ,      /* No destination address was specified */
+	XLOG_SSLEXTNOTFOUND,    /* SSL extension not found */
+	XLOG_SSLEXTNIDNOTFOUND, /* SSL extension NID not found */
+	XLOG_CALLBACK_ERR       /* Callback error */
 };
 
 #define XLOG_ALL     0xFFFF

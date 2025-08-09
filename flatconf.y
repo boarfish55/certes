@@ -174,6 +174,15 @@ read:
 				}
 				bufp = buf;
 				return NEGATIVE_INT;
+			} else if (buf[1] == 'x') {
+				errno = 0;
+				yylval.positive_int = strtoul(buf, &endptr, 16);
+				if (errno || *endptr != '\0') {
+					yyerror("invalid uint64");
+					return ERROR;
+				}
+				bufp = buf;
+				return POSITIVE_INT;
 			} else {
 				errno = 0;
 				yylval.positive_int = strtoul(buf, &endptr, 10);
@@ -187,18 +196,22 @@ read:
 		}
 
 		if (!isdigit(c)) {
-			if (c == '-' && bufp == buf) {
-				/*
-				 * A '-' in at the start of buf is acceptable
-				 * for negative numbers.
-				 */
+			/*
+			 * A '-' in at the start of buf is acceptable
+			 * for negative numbers. A 'x' in the second position
+			 * is acceptable for hex integers, as well as a-f in
+			 * positions past "0x".
+			 */
+			if ((bufp == buf && c == '-') ||
+			    (bufp == (buf + 1) && c == 'x') ||
+			    (bufp - buf > 1 && ((c >= 'a' && c <= 'f') ||
+			    (c >= 'A' && c <= 'F')))) {
 				*bufp++ = c;
 				goto read;
 			}
 			yyerror("invalid character in number");
 			return ERROR;
 		}
-
 		*bufp++ = c;
 		goto read;
 	case ST_NONE:

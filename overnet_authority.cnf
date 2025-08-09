@@ -1,0 +1,60 @@
+dir                     = ca
+oid_section             = certalator_oids
+
+[certalator_oids]
+certalatorRoles         = 1.3.6.1.4.1.35910.3.1
+
+[ca]
+default_ca              = certalator_ca
+
+[certalator_ca]
+certificate             = $dir/certalator.pem
+database                = $dir/index.txt
+new_certs_dir           = $dir/certs
+private_key             = $dir/private/certalator_key.pem
+serial                  = $dir/serial
+default_crl_days        = 365
+default_days            = 365
+default_md              = sha256
+copy_extensions         = none
+policy                  = certalator_ca_policy
+x509_extensions         = intermediate_ca_ext
+
+[certalator_ca_policy]
+commonName              = supplied
+stateOrProvinceName     = optional
+countryName             = optional
+emailAddress            = optional
+organizationName        = supplied
+organizationalUnitName  = optional
+ 
+[root_ext]
+basicConstraints        = critical,CA:true
+keyUsage                = critical,cRLSign,digitalSignature,keyCertSign
+subjectKeyIdentifier    = hash
+authorityKeyIdentifier  = keyid:always,issuer
+certalatorRoles         = ASN1:SEQUENCE:root_ca_roles
+
+[root_ca_roles]
+certalatorRoles.0       = IA5:authority
+
+[intermediate_ca_ext]
+basicConstraints        = critical,CA:true,pathlen:0
+keyUsage                = critical,digitalSignature,keyCertSign
+subjectKeyIdentifier    = hash
+authorityKeyIdentifier  = keyid,issuer
+certalatorRoles         = ASN1:SEQUENCE:intermediate_ca_roles
+
+[intermediate_ca_roles]
+certalatorRoles.0       = IA5:agent
+certalatorRoles.1       = IA5:authority
+certalatorRoles.2       = IA5:bootstrap
+
+[req]
+default_bits            = 4096
+default_md              = sha256
+distinguished_name      = dn
+
+[dn]
+organizationName        = supplied
+commonName              = supplied

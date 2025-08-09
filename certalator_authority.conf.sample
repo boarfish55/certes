@@ -1,0 +1,23 @@
+enable_coredumps = true
+listen_addr = 0.0.0.0
+listen_port = 9790
+
+ca_file = "/home/plalonde/prog/certalator/ca/overnet.pem"
+crl_file = "/home/plalonde/prog/certalator/ca/overnet.crl"
+
+crt_file = "/home/plalonde/prog/certalator/authority1/overnet_crt.pem"
+key_file = "/home/plalonde/prog/certalator/authority1/overnet_key.pem"
+
+#
+# This section is for certalator authorities. It sets default parameters
+# for certificate generation and renewals.
+#
+
+serial_file = "/home/plalonde/prog/certalator/ca/serial"
+cert_org = "Overnet"
+cert_email = "cert@overnet.ca"
+
+# This supports OpenSSL's bignum integers, we can shard amongst authorities
+# to avoid serial collisions.
+min_serial = "0x1000000"
+max_serial = "0x1ffffff"

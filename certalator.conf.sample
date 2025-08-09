@@ -1,16 +1,13 @@
 enable_coredumps = true
-bootstrap_key = ""
-authority_host = "localhost"
+bootstrap_key = "some_key"
+authority_fqdn = "localhost"
 authority_port = 9790
+listen_addr = 0.0.0.0
+listen_port = 9791
+
 ca_file = "/home/plalonde/prog/certalator/ca/overnet.pem"
 crl_file = "/home/plalonde/prog/certalator/ca/overnet.crl"
-key_file = "/home/plalonde/prog/certalator/ca/private/overnet_key.pem"
-serial_file = "/home/plalonde/prog/certalator/ca/serial"
 
-cert_org = "Overnet"
-cert_email = "cert@overnet.ca"
-
-# This supports OpenSSL's bignum integers, we can shard amongst authorities
-# to avoid serial collisions.
-min_serial = "0x1000000"
-max_serial = "0x1ffffff"
+crt_file = "/home/plalonde/prog/certalator/client1/overnet_crt.pem"
+key_file = "/home/plalonde/prog/certalator/client1/overnet_key.pem"
+key_bits = 4096

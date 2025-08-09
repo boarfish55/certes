@@ -242,7 +242,7 @@ mdr_pack_num_nochk(struct mdr *m, uint8_t type, union mdr_num_v v)
 }
 
 static ptrdiff_t
-mdr_pack_bytes_nochk(struct mdr *m, const uint8_t *bytes, uint64_t bytes_sz)
+mdr_pack_bytes_nochk(struct mdr *m, const void *bytes, uint64_t bytes_sz)
 {
 	if (bytes_sz & 0x8000000000000000) {
 		errno = EINVAL;
@@ -285,7 +285,7 @@ mdr_pack_str_nochk(struct mdr *m, const char *bytes, int64_t maxlen)
 		return MDR_FAIL;
 	}
 
-	return mdr_pack_bytes_nochk(m, (uint8_t *)bytes, MIN(len, maxlen));
+	return mdr_pack_bytes_nochk(m, bytes, MIN(len, maxlen));
 }
 
 ptrdiff_t
@@ -393,6 +393,10 @@ mdr_unpack_mdr_nochk(struct mdr *m, struct mdr *dst)
 		errno = EAGAIN;
 		return MDR_FAIL;
 	}
+
+	/*
+	 * A message always starts with the size
+	 */
 	sz = be64toh(*(uint64_t *)m->pos);
 
 	if (m->buf_sz - mdr_tell(m) < sz) {
@@ -496,7 +500,8 @@ mdr_out_array_sm(struct mdr_out_array_handle *h, uint8_t type, void *dst,
 		if (type == MDR_S) {
 			sz = *(uint8_t *)pos;
 			if (sz & 0x80) {
-				sz = be64toh(*(uint64_t *)pos) & 0x7fffffffffffffff;
+				sz = be64toh(*(uint64_t *)pos) &
+				    0x7fffffffffffffff;
 				pos += sizeof(uint64_t);
 			} else
 				pos += sizeof(uint8_t);
@@ -506,7 +511,7 @@ mdr_out_array_sm(struct mdr_out_array_handle *h, uint8_t type, void *dst,
 		} else if (type == MDR_M) {
 			sz = be64toh(*(uint64_t *)pos);
 			if (mdr_unpack_hdr(((struct mdr *)dst) + i, MDR_F_NONE,
-			    (uint8_t *)pos, sz) == MDR_FAIL)
+			    pos, sz) == MDR_FAIL)
 				return MDR_FAIL;
 			pos += sz;
 		}
@@ -824,7 +829,7 @@ mdr_buf(const struct mdr *m)
 }
 
 ptrdiff_t
-mdr_pack(struct mdr *m, char *buf, size_t buf_sz, const struct mdr_spec *spec,
+mdr_pack(struct mdr *m, void *buf, size_t buf_sz, const struct mdr_spec *spec,
     uint32_t flags, struct mdr_in *in, size_t in_sz)
 {
 	ptrdiff_t r;
@@ -962,7 +967,7 @@ mdr_pack(struct mdr *m, char *buf, size_t buf_sz, const struct mdr_spec *spec,
 }
 
 ptrdiff_t
-mdr_pack_hdr(struct mdr *m, char *buf, size_t buf_sz,
+mdr_pack_hdr(struct mdr *m, void *buf, size_t buf_sz,
     const struct mdr_spec *spec, uint32_t flags)
 {
 	if (m == NULL || spec == NULL) {
@@ -1159,7 +1164,7 @@ mdr_pack_bytes(struct mdr *m, const void *bytes, uint64_t bytes_sz)
 ptrdiff_t
 mdr_pack_rsvb(struct mdr *m, void **dst, uint64_t bytes_sz)
 {
-	if (m == NULL || bytes_sz & 0X8000000000000000) {
+	if (m == NULL || bytes_sz & 0x8000000000000000) {
 		errno = EINVAL;
 		return MDR_FAIL;
 	}
@@ -1488,7 +1493,8 @@ mdr_read_from_fd(struct mdr *m, uint32_t accept_flags, int fd,
 }
 
 ptrdiff_t
-mdr_unpack_hdr(struct mdr *m, uint32_t accept_flags, void *buf, size_t buf_sz)
+mdr_unpack_hdr(struct mdr *m, uint32_t accept_flags, const void *buf,
+    size_t buf_sz)
 {
 	if (m == NULL || buf == NULL) {
 		errno = EINVAL;
@@ -1500,7 +1506,7 @@ mdr_unpack_hdr(struct mdr *m, uint32_t accept_flags, void *buf, size_t buf_sz)
 		return MDR_FAIL;
 	}
 
-	m->buf = buf;
+	m->buf = (void *)buf;
 	m->buf_sz = buf_sz;
 	m->pos = m->buf;
 	m->tail_bytes = 0;
@@ -1680,8 +1686,9 @@ mdr_unpack_payload(struct mdr *m, const struct mdr_spec *spec,
 }
 
 ptrdiff_t
-mdr_unpack(struct mdr *m, char *buf, size_t buf_sz, const struct mdr_spec *spec,
-    uint32_t accept_flags, struct mdr_out *out, size_t out_sz)
+mdr_unpack(struct mdr *m, const void *buf, size_t buf_sz,
+    const struct mdr_spec *spec, uint32_t accept_flags, struct mdr_out *out,
+    size_t out_sz)
 {
 	if (mdr_unpack_hdr(m, accept_flags, buf, buf_sz) == MDR_FAIL)
 		return MDR_FAIL;

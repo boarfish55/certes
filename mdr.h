@@ -279,9 +279,9 @@ uint64_t       mdr_acct_id(const struct mdr *);
 const uint8_t *mdr_trace_id(const struct mdr *);
 int            mdr_dcv_match(const struct mdr *, uint64_t, uint64_t);
 
-ptrdiff_t mdr_pack_hdr(struct mdr *, char *, size_t, const struct mdr_spec *,
+ptrdiff_t mdr_pack_hdr(struct mdr *, void *, size_t, const struct mdr_spec *,
               uint32_t);
-ptrdiff_t mdr_pack(struct mdr *, char *, size_t, const struct mdr_spec *,
+ptrdiff_t mdr_pack(struct mdr *, void *, size_t, const struct mdr_spec *,
               uint32_t, struct mdr_in *, size_t);
 ptrdiff_t mdr_pack_i8(struct mdr *, int8_t);
 ptrdiff_t mdr_pack_i16(struct mdr *, int16_t);
@@ -304,11 +304,11 @@ ptrdiff_t mdr_set_acct_id(struct mdr *, uint64_t);
 ptrdiff_t mdr_set_trace_id(struct mdr *, const uint8_t *);
 
 ptrdiff_t mdr_read_from_fd(struct mdr *, uint32_t, int, void *, size_t);
-ptrdiff_t mdr_unpack_hdr(struct mdr *, uint32_t, void *, size_t);
+ptrdiff_t mdr_unpack_hdr(struct mdr *, uint32_t, const void *, size_t);
 ptrdiff_t mdr_unpack_payload(struct mdr *, const struct mdr_spec *,
               struct mdr_out *, size_t);
-ptrdiff_t mdr_unpack(struct mdr *, char *, size_t, const struct mdr_spec *,
-              uint32_t, struct mdr_out *, size_t);
+ptrdiff_t mdr_unpack(struct mdr *, const void *, size_t,
+              const struct mdr_spec *, uint32_t, struct mdr_out *, size_t);
 ptrdiff_t mdr_unpack_i8(struct mdr *, int8_t *);
 ptrdiff_t mdr_unpack_i16(struct mdr *, int16_t *);
 ptrdiff_t mdr_unpack_i32(struct mdr *, int32_t *);

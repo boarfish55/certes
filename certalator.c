@@ -26,17 +26,22 @@
 
 #define MAX_HEX_SERIAL_LENGTH 32
 
-const char *program = "certalator";
-int         NID_overnet_roles;
-X509_STORE *store = NULL;
-EVP_PKEY   *priv_key = NULL;
-X509       *ca_crt = NULL;
-int         debug = 0;
-char        config_file_path[PATH_MAX] = "/etc/certalator.conf";
-SSL_CTX    *agent_ssl_ctx = NULL;
-SSL        *agent_ssl = NULL;
-BIO        *agent_bio = NULL;
-int         agent_connected = 0;
+const char  *program = "certalator";
+int          NID_overnet_roles;
+int          NID_overnet_roles_idx;
+X509_STORE  *store = NULL;
+EVP_PKEY    *agent_key = NULL;
+X509        *agent_cert = NULL;
+X509        *ca_crt = NULL;
+X509_CRL    *ca_crl = NULL;
+int          debug = 0;
+char         config_file_path[PATH_MAX] = "/etc/certalator.conf";
+SSL_CTX     *agent_ssl_ctx = NULL;
+SSL         *agent_ssl = NULL;
+BIO         *agent_bio = NULL;
+int          agent_connected = 0;
+int          agent_is_authority = 0;
+const char **agent_roles = NULL;
 
 struct mdr_def msgdef_bootstrap_setup = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP,
@@ -65,27 +70,41 @@ const struct mdr_spec *msg_pack_beresp;
 const struct mdr_spec *msg_pack_beresp_wmsg;
 
 struct {
-	int    enable_coredumps;
+	int      enable_coredumps;
 
-	char   certdb_path[PATH_MAX];
-	char   bootstrap_key[CERTDB_BOOTSTRAP_KEY_LENGTH + 1];
-	char   ca_file[PATH_MAX];
-	char   crl_file[PATH_MAX];
-	char   key_file[PATH_MAX];
-	char   serial_file[PATH_MAX];
-	char   cert_org[256];
-	char   cert_email[512];
+	char     authority_fqdn[256];
+	uint64_t authority_port;
+
+	char     listen_addr[64];
+	uint64_t listen_port;
+
+	char     certdb_path[PATH_MAX];
+	char     bootstrap_key[CERTDB_BOOTSTRAP_KEY_LENGTH + 1];
+	char     ca_file[PATH_MAX];
+	char     crl_file[PATH_MAX];
+	char     key_file[PATH_MAX];
+	char     cert_file[PATH_MAX];
+	uint64_t key_bits;
+	char     serial_file[PATH_MAX];
+	char     cert_org[256];
+	char     cert_email[512];
 
 	/* Leave space for "0x" and terminating zero */
-	char   min_serial[MAX_HEX_SERIAL_LENGTH + 3];
-	char   max_serial[MAX_HEX_SERIAL_LENGTH + 3];
+	char     min_serial[MAX_HEX_SERIAL_LENGTH + 3];
+	char     max_serial[MAX_HEX_SERIAL_LENGTH + 3];
 } certalator_conf = {
 	0,
+	"",
+	9790,
+	"0.0.0.0",
+	9790,
 	"ca/certdb.sqlite",
 	"",
 	"ca/overnet.pem",
 	"ca/overnet.crl",
-	"ca/private/overnet_key.pem",
+	"overnet_key.pem",
+	"overnet_crt.pem",
+	4096,
 	"ca/serial",
 	"",
 	"",
@@ -100,6 +119,30 @@ struct flatconf certalator_config_vars[] = {
 		FLATCONF_BOOLINT,
 		&certalator_conf.enable_coredumps,
 		sizeof(certalator_conf.enable_coredumps)
+	},
+	{
+		"authority_fqdn",
+		FLATCONF_STRING,
+		certalator_conf.authority_fqdn,
+		sizeof(certalator_conf.authority_fqdn)
+	},
+	{
+		"authority_port",
+		FLATCONF_ULONG,
+		&certalator_conf.authority_port,
+		sizeof(certalator_conf.authority_port)
+	},
+	{
+		"listen_addr",
+		FLATCONF_STRING,
+		certalator_conf.listen_addr,
+		sizeof(certalator_conf.listen_addr)
+	},
+	{
+		"listen_port",
+		FLATCONF_ULONG,
+		&certalator_conf.listen_port,
+		sizeof(certalator_conf.listen_port)
 	},
 	{
 		"certdb_path",
@@ -130,6 +173,18 @@ struct flatconf certalator_config_vars[] = {
 		FLATCONF_STRING,
 		certalator_conf.key_file,
 		sizeof(certalator_conf.key_file)
+	},
+	{
+		"cert_file",
+		FLATCONF_STRING,
+		certalator_conf.cert_file,
+		sizeof(certalator_conf.cert_file)
+	},
+	{
+		"key_bits",
+		FLATCONF_ULONG,
+		&certalator_conf.key_bits,
+		sizeof(certalator_conf.key_bits)
 	},
 	{
 		"serial_file",
@@ -216,16 +271,6 @@ encode_overnet_roles(const char **roles)
 	sk = sk_ASN1_TYPE_new(NULL);
 
 	// TODO: so much error handling/cleanup to do!
-	if ((s = ASN1_IA5STRING_new()) == NULL)
-		return NULL;
-	if (!ASN1_STRING_set(s, "agent", 5))
-		return NULL;
-	if ((v = ASN1_TYPE_new()) == NULL)
-		return NULL;
-	ASN1_TYPE_set(v, V_ASN1_IA5STRING, s);
-	if (sk_ASN1_TYPE_push(sk, v) <= 0)
-		return NULL;
-
 	for (role = roles; *role != NULL; role++) {
 		if ((s = ASN1_IA5STRING_new()) == NULL)
 			return NULL;
@@ -263,28 +308,73 @@ encode_overnet_roles(const char **roles)
 }
 
 int
+crt_has_role(X509 *crt, const char *role, struct xerr *e)
+{
+	int                  roles_idx;
+	X509_EXTENSION      *ext;
+	ASN1_OCTET_STRING   *asn1str;
+	STACK_OF(ASN1_TYPE) *seq;
+	ASN1_TYPE           *v;
+	ssize_t              i;
+	const unsigned char *p;
+	int                  found = 0;
+
+	roles_idx = X509_get_ext_by_NID(crt, NID_overnet_roles, -1);
+	if (roles_idx == -1)
+		return XERRF(e, XLOG_APP, XLOG_SSLEXTNIDNOTFOUND,
+		    "%s: overnetRoles extension NID not found", __func__);
+
+	if ((ext = X509_get_ext(crt, roles_idx)) == NULL)
+		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		    "%s: overnetRoles extension not found", __func__);
+
+	asn1str = X509_EXTENSION_get_data(ext);
+	p = asn1str->data;
+
+	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
+	    (const unsigned char **)&p, asn1str->length);
+
+	for (i = 0; !found && sk_ASN1_TYPE_num(seq) > 0; i++) {
+		v = sk_ASN1_TYPE_shift(seq);
+		if (strcmp(role, (const char *)v->value.ia5string->data) == 0)
+			found = 1;
+		ASN1_TYPE_free(v);
+	}
+	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
+	return found;
+}
+
+int
 agent_connect(struct xerr *e)
 {
+	char host[302];
+
+	if (certalator_conf.authority_fqdn[0] == '\0')
+		return XERRF(e, XLOG_APP, XLOG_EDESTADDRREQ,
+		    "no destination address was specified");
+
 	if (agent_ssl_ctx == NULL) {
 		if ((agent_ssl_ctx = SSL_CTX_new(TLS_client_method())) == NULL)
 			return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
 
 		SSL_CTX_set_verify(agent_ssl_ctx, SSL_VERIFY_PEER, NULL);
+		SSL_CTX_set_cert_store(agent_ssl_ctx, store);
 
-		// TODO: don't use OS-provided certs
-		//if (!SSL_CTX_set_default_verify_paths(ctx))
-		//	return XERRF(e, XLOG_SSL, ERR_get_error(),
-		//	    "SSL_CTX_set_default_verify_paths");
-
-		if (SSL_CTX_use_PrivateKey(agent_ssl_ctx, priv_key) != 1)
+		if (SSL_CTX_use_PrivateKey(agent_ssl_ctx, agent_key) != 1)
 			return XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "SSL_CTX_use_PrivateKey");
-		if (SSL_CTX_use_certificate(agent_ssl_ctx, ca_crt) != 1)
+		if (SSL_CTX_use_certificate(agent_ssl_ctx, agent_cert) != 1)
 			return XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "SSL_CTX_use_certificate");
 	}
 
 	if (agent_bio == NULL) {
+		if (snprintf(host, sizeof(host), "%s:%lu",
+		    certalator_conf.authority_fqdn,
+		    certalator_conf.authority_port) >= sizeof(host))
+			return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+			    "resulting host:port is too long");
+
 		if ((agent_bio = BIO_new_ssl_connect(agent_ssl_ctx)) == NULL)
 			return XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "BIO_new_ssl_connect");
@@ -295,8 +385,7 @@ agent_connect(struct xerr *e)
 			    "BIO_get_ssl");
 
 		SSL_set_mode(agent_ssl, SSL_MODE_AUTO_RETRY);
-
-		BIO_set_conn_hostname(agent_bio, "localhost:9790");
+		BIO_set_conn_hostname(agent_bio, host);
 	}
 
 	if (!agent_connected) {
@@ -329,7 +418,6 @@ agent_send(struct mdr *m, struct xerr *e)
 	return 0;
 
 }
-
 
 void
 usage()
@@ -581,14 +669,14 @@ sign(const char *cert_path, const char **roles)
 	load_keys();
 
 	if ((f = fopen(cert_path, "r")) == NULL)
-		err(1, "fopen");
+		err(1, "fopen: %s", cert_path);
 	if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
 	fclose(f);
 
-	X509V3_set_ctx(&ctx, ca_crt, crt, NULL, NULL, 0);
+	X509V3_set_ctx(&ctx, agent_cert, crt, NULL, NULL, 0);
 
 	if ((newcrt = X509_new()) == NULL) {
 		ERR_print_errors_fp(stderr);
@@ -609,7 +697,7 @@ sign(const char *cert_path, const char **roles)
 	}
 	BN_free(serial);
 
-	if (!X509_set_issuer_name(newcrt, X509_get_subject_name(ca_crt))) {
+	if (!X509_set_issuer_name(newcrt, X509_get_subject_name(agent_cert))) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
@@ -643,7 +731,8 @@ sign(const char *cert_path, const char **roles)
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
-	if (!add_ext(&ctx, newcrt, NID_key_usage, "critical,nonRepudiation,digitalSignature,keyEncipherment")) {
+	if (!add_ext(&ctx, newcrt, NID_key_usage,
+	    "critical,nonRepudiation,digitalSignature,keyEncipherment")) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
@@ -667,14 +756,14 @@ sign(const char *cert_path, const char **roles)
 		exit(1);
 	}
 
-	if (!X509_sign(newcrt, priv_key, EVP_sha256())) {
+	if (!X509_sign(newcrt, agent_key, EVP_sha256())) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
 
 	snprintf(new_cert, sizeof(new_cert), "%s.new", cert_path);
 	if ((f = fopen(new_cert, "w")) == NULL)
-		err(1, "fopen");
+		err(1, "fopen: %s", new_cert);
 	if (!PEM_write_X509(f, newcrt)) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
@@ -693,6 +782,11 @@ sign(const char *cert_path, const char **roles)
 // When a client sends a successful response to this challenge, along with an
 // X509 REQ, the server can sign it if the commonName and subjectAltNames
 // match.
+/*
+ * Create a bootstrap entry with certificate parameters and a challenge key
+ * to be used when an agent connects with a DIALIN call.
+ * This will populate and save a bootstrap_entry in the certdb.
+ */
 int
 authority_bootstrap_setup(const char *cn, const char **sans,
     size_t sans_sz, const char **roles, size_t roles_sz, uint32_t cert_expiry,
@@ -708,8 +802,7 @@ authority_bootstrap_setup(const char *cn, const char **sans,
 	    certalator_conf.cert_org, cn, certalator_conf.cert_email) >=
 	    sizeof(subject))
 		return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
-		    "resulting subject name is too long for commonName %s",
-		    cn);
+		    "resulting subject name is too long for commonName %s", cn);
 
 	if ((b64 = BIO_new(BIO_f_base64())) == NULL)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
@@ -739,14 +832,12 @@ authority_bootstrap_setup(const char *cn, const char **sans,
 
 	clock_gettime(CLOCK_REALTIME, &tp);
 
-	// TODO: make this configurable
-	/* A bootstrap key is valid for 10 minutes */
 	be.valid_until_sec = tp.tv_sec + timeout;
 	be.not_before_sec = tp.tv_sec;
-	/* A cert is valid for 7 days */
 	be.not_after_sec = tp.tv_sec + cert_expiry;
-
 	be.subject = subject;
+
+	// TODO: validate length limits
 	be.roles = (char **)roles;
 	be.roles_sz = roles_sz;
 	be.sans = (char **)sans;
@@ -912,7 +1003,7 @@ agent_new_req(const char *subject)
 		return -1;
 	}
 
-	if (!X509_REQ_set_pubkey(req, priv_key)) {
+	if (!X509_REQ_set_pubkey(req, agent_key)) {
 		warnx("X509_REQ_set_pubkey");
 		return -1;
 	}
@@ -1013,6 +1104,12 @@ agent_bootstrap_dialin(struct xerr *e)
 		return NULL;
 	}
 
+	// TODO: then read the response which should contain the subject,
+	// sans, roles, expiry...
+	// Unless we need to wait for the authority to test our contact
+	// point.
+
+	// TODO: then create the new req to be signed
 	if (agent_new_req(subject) == -1)
 		return NULL;
 
@@ -1022,7 +1119,7 @@ agent_bootstrap_dialin(struct xerr *e)
 int
 authority_bootstrap_dialin(struct mdr *msg, struct xerr *e)
 {
-	// TODO: wereceive the one-time-key from a client then
+	// TODO: we receive the one-time-key from a client then
 	// need to contact it over its CommonName to confirm
 	// they are who they claim to be.
 	// msg should have the one time key.
@@ -1048,8 +1145,8 @@ new_privkey()
 	if (EVP_PKEY_keygen_init(ctx) <= 0)
 		goto fail;
 
-	// TODO: make bits configurable
-	if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 4096) <= 0)
+	if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx,
+	    certalator_conf.key_bits) <= 0)
 		goto fail;
 
 	if (EVP_PKEY_keygen(ctx, &pkey) <= 0)
@@ -1077,8 +1174,9 @@ void
 load_keys()
 {
 	FILE        *f;
+#ifndef __OpenBSD__
 	int          pkey_sz;
-	X509_LOOKUP *lookup;
+#endif
 	struct xerr  e;
 
 	if ((f = fopen(certalator_conf.key_file, "r")) == NULL) {
@@ -1088,53 +1186,77 @@ load_keys()
 		} else
 			err(1, "fopen");
 	}
-	if ((priv_key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
+	if ((agent_key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
 	fclose(f);
 
-	if (!(pkey_sz = EVP_PKEY_size(priv_key))) {
+#ifndef __OpenBSD__
+	if (!(pkey_sz = EVP_PKEY_size(agent_key))) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
-#ifndef __OpenBSD__
 	/* pledge() doesn't allow mlock() */
-	if (mlock(priv_key, pkey_sz) == -1)
+	if (mlock(agent_key, pkey_sz) == -1)
 		err(1, "mlock");
 #endif
-	if ((f = fopen(certalator_conf.ca_file, "r")) == NULL) {
-		if (errno != ENOENT)
-			err(1, "fopen");
-		f = agent_bootstrap_dialin(&e);
-	}
-	if ((ca_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	fclose(f);
-
 	if ((store = X509_STORE_new()) == NULL)
 		err(1, "X509_STORE_new");
-	if ((lookup = X509_STORE_add_lookup(store, X509_LOOKUP_file())) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	if (!X509_load_cert_file(lookup, certalator_conf.ca_file,
-	    X509_FILETYPE_PEM)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	if (!X509_load_crl_file(lookup, certalator_conf.crl_file,
-	    X509_FILETYPE_PEM)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
 	if (!X509_STORE_set_flags(store, X509_V_FLAG_X509_STRICT|
 	    X509_V_FLAG_CRL_CHECK|X509_V_FLAG_CRL_CHECK_ALL)) {
 		ERR_print_errors_fp(stderr);
 		exit(1);
 	}
+
+	if ((f = fopen(certalator_conf.ca_file, "r")) == NULL)
+		err(1, "fopen: %s", certalator_conf.ca_file);
+	if ((ca_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+	if (!X509_STORE_add_cert(store, ca_crt)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	if ((f = fopen(certalator_conf.crl_file, "r")) == NULL)
+		err(1, "fopen: %s", certalator_conf.crl_file);
+	if ((ca_crl = PEM_read_X509_CRL(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+	if (!X509_STORE_add_crl(store, ca_crl)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	if ((f = fopen(certalator_conf.cert_file, "r")) == NULL) {
+		if (errno != ENOENT)
+			err(1, "fopen: %s", certalator_conf.cert_file);
+		f = agent_bootstrap_dialin(&e);
+	}
+	if ((agent_cert = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+
+	if (!X509_STORE_add_cert(store, agent_cert)) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	agent_is_authority = crt_has_role(agent_cert,
+	    ROLE_AUTHORITY, xerrz(&e));
+
+	if (agent_is_authority == -1) {
+		xlog(LOG_ERR, &e, "%s: crt_has_role", __func__);
+		exit(1);
+	}
+
 	/*
 	 * We're not calling X509_LOOKUP_free() as this causes a segfault
 	 * if we try reusing X509_LOOKUP_file().
@@ -1218,12 +1340,36 @@ mdrd_backend()
 				continue;
 			}
 
-			// TODO: check if we have role "authority", without
-			// which we cannot issue certs, so we should fail.
+			if (!agent_is_authority) {
+				xlog(LOG_ERR, NULL, "%s: we are not an "
+				    "authority and client has no certificate",
+				    __func__);
+				m_in[0].type = MDR_U32;
+				m_in[0].v.u32 = id;
+				m_in[1].type = MDR_I32;
+				m_in[1].v.i32 = fd;
+				m_in[2].type = MDR_U32;
+				m_in[2].v.u32 = MDRD_ST_NOCERT;
+				m_in[3].type = MDR_U32;
+				m_in[3].v.u32 = MDRD_BERESP_F_CLOSE;
+				if (mdr_pack(&m, buf, sizeof(buf),
+				    msg_pack_beresp, MDR_F_NONE, m_in, 4)
+				    == MDR_FAIL) {
+					xlog_strerror(LOG_ERR, errno,
+					    "%s: mdr_pack", __func__);
+					goto fail;
+				}
+				if (write(1, mdr_buf(&m), mdr_size(&m))
+				    < mdr_size(&m)) {
+					xlog_strerror(LOG_ERR, errno,
+					    "%s: writeall", __func__);
+					goto fail;
+				}
+				continue;
+			}
 
 			if (authority_bootstrap_dialin(&msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
-
 			continue;
 		}
 
@@ -1281,6 +1427,7 @@ mdrd_backend()
 		m_in[3].type = MDR_U32;
 		m_in[3].v.u32 = 0;
 		m_in[4].type = MDR_M;
+		// TODO: send meaningful response
 		m_in[4].v.m = &msg;
 		if (mdr_pack(&m, buf, sizeof(buf), msg_pack_beresp_wmsg,
 		    MDR_F_NONE, m_in, 5) == MDR_FAIL) {
@@ -1309,9 +1456,17 @@ cleanup()
 		X509_free(ca_crt);
 		ca_crt = NULL;
 	}
-	if (priv_key != NULL) {
-		EVP_PKEY_free(priv_key);
-		priv_key = NULL;
+	if (ca_crl != NULL) {
+		X509_CRL_free(ca_crl);
+		ca_crl = NULL;
+	}
+	if (agent_cert != NULL) {
+		X509_free(agent_cert);
+		agent_cert = NULL;
+	}
+	if (agent_key != NULL) {
+		EVP_PKEY_free(agent_key);
+		agent_key = NULL;
 	}
 	if (store != NULL) {
 		X509_STORE_free(store);
@@ -1363,6 +1518,10 @@ main(int argc, char **argv)
 
 	if (flatconf_read(config_file_path, certalator_config_vars, NULL) == -1)
 		err(1, "config_vars_read");
+
+	if (certalator_conf.authority_port > 65535 ||
+	    certalator_conf.authority_port == 0)
+		errx(1, "authority_port must be non-zero and <= 65535");
 
 	if (strncmp(certalator_conf.min_serial, "0x", 2) != 0)
 		errx(1, "min_serial does not begin with \"0x\"");

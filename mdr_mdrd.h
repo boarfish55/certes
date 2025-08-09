@@ -9,6 +9,7 @@
 #define MDRD_ST_OK       0
 #define MDRD_ST_DENIED   1  /* Client is denied this operation */
 #define MDRD_ST_CERTFAIL 2  /* Client certificate verification failed */
+#define MDRD_ST_NOCERT   3  /* Client certificate is missing */
 
 /* Backend response flags */
 #define MDRD_BERESP_F_NONE  0x00000000

@@ -6,6 +6,7 @@ certalator
 gdb.*
 ca/
 client*/
+authority*/
 *.core
 *.gdb
 flatconf.c
