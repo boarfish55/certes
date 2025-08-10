@@ -2,8 +2,6 @@ enable_coredumps = true
 bootstrap_key = "some_key"
 authority_fqdn = "localhost"
 authority_port = 9790
-listen_addr = 0.0.0.0
-listen_port = 9791
 
 ca_file = "/home/plalonde/prog/certalator/ca/overnet.pem"
 crl_file = "/home/plalonde/prog/certalator/ca/overnet.crl"

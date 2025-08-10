@@ -1,6 +1,4 @@
 enable_coredumps = true
-listen_addr = 0.0.0.0
-listen_port = 9790
 
 ca_file = "/home/plalonde/prog/certalator/ca/overnet.pem"
 crl_file = "/home/plalonde/prog/certalator/ca/overnet.crl"

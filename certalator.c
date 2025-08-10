@@ -71,13 +71,8 @@ const struct mdr_spec *msg_pack_beresp_wmsg;
 
 struct {
 	int      enable_coredumps;
-
 	char     authority_fqdn[256];
 	uint64_t authority_port;
-
-	char     listen_addr[64];
-	uint64_t listen_port;
-
 	char     certdb_path[PATH_MAX];
 	char     bootstrap_key[CERTDB_BOOTSTRAP_KEY_LENGTH + 1];
 	char     ca_file[PATH_MAX];
@@ -95,8 +90,6 @@ struct {
 } certalator_conf = {
 	0,
 	"",
-	9790,
-	"0.0.0.0",
 	9790,
 	"ca/certdb.sqlite",
 	"",
@@ -131,18 +124,6 @@ struct flatconf certalator_config_vars[] = {
 		FLATCONF_ULONG,
 		&certalator_conf.authority_port,
 		sizeof(certalator_conf.authority_port)
-	},
-	{
-		"listen_addr",
-		FLATCONF_STRING,
-		certalator_conf.listen_addr,
-		sizeof(certalator_conf.listen_addr)
-	},
-	{
-		"listen_port",
-		FLATCONF_ULONG,
-		&certalator_conf.listen_port,
-		sizeof(certalator_conf.listen_port)
 	},
 	{
 		"certdb_path",
