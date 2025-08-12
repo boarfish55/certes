@@ -7,6 +7,8 @@
 #define CERTALATOR_MAX_ROLE_LENGTH   64
 #define CERTALATOR_MAX_ROLES         256
 
+#define CERTALATOR_SHM "/certalator"
+
 /* Built-in roles */
 #define ROLE_AUTHORITY "authority"
 #define ROLE_CAPROXY   "caproxy"

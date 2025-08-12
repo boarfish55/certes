@@ -23,11 +23,15 @@ enum xerr_code {
 	XLOG_OVERFLOW,          /* Value too large for container */
 	XLOG_RANGE,             /* Value exceeds allowed range */
 	XLOG_SHORTIO,           /* Short read/write */
-	XLOG_WOULDBLOCK,        /* Operation would block but is set non-blocking */
+	XLOG_BADMSG,            /* Bad message format */
+	XLOG_WOULDBLOCK,        /* Operation would block but
+				   is set non-blocking */
 	XLOG_NAMETOOLONG,       /* Specified name is too long for limit */
 	XLOG_EDESTADDRREQ,      /* No destination address was specified */
 	XLOG_SSLEXTNOTFOUND,    /* SSL extension not found */
 	XLOG_SSLEXTNIDNOTFOUND, /* SSL extension NID not found */
+	XLOG_BADSERIALFILE,     /* Serial file is wrong format */
+	XLOG_MAXSERIALREACHED,  /* Maximum serial reached */
 	XLOG_CALLBACK_ERR       /* Callback error */
 };
 

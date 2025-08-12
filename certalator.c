@@ -25,6 +25,22 @@
 #include "xlog.h"
 
 #define MAX_HEX_SERIAL_LENGTH 32
+#define MAX_ACTIVE_CHALLENGES 32
+
+struct shared_tasks {
+	struct {
+		struct timespec expiry;
+		uint8_t         pending_send;
+		char            key[CERTDB_BOOTSTRAP_KEY_LENGTH_B64];
+	} agent_bootstrap;
+
+	struct {
+		struct {
+			char    secret[CERTDB_BOOTSTRAP_KEY_LENGTH_B64];
+			uint8_t in_use;
+		} challenges[MAX_ACTIVE_CHALLENGES];
+	} authority_challenge;
+} *shared_tasks;
 
 const char  *program = "certalator";
 int          NID_overnet_roles;
@@ -42,6 +58,7 @@ BIO         *agent_bio = NULL;
 int          agent_connected = 0;
 int          agent_is_authority = 0;
 const char **agent_roles = NULL;
+int          task_lock_fd;
 
 struct mdr_def msgdef_bootstrap_setup = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP,
@@ -79,6 +96,7 @@ struct {
 	char     crl_file[PATH_MAX];
 	char     key_file[PATH_MAX];
 	char     cert_file[PATH_MAX];
+	char     lock_file[PATH_MAX];
 	uint64_t key_bits;
 	char     serial_file[PATH_MAX];
 	char     cert_org[256];
@@ -97,6 +115,7 @@ struct {
 	"ca/overnet.crl",
 	"overnet_key.pem",
 	"overnet_crt.pem",
+	".lock",
 	4096,
 	"ca/serial",
 	"",
@@ -162,6 +181,12 @@ struct flatconf certalator_config_vars[] = {
 		sizeof(certalator_conf.cert_file)
 	},
 	{
+		"lock_file",
+		FLATCONF_STRING,
+		certalator_conf.lock_file,
+		sizeof(certalator_conf.lock_file)
+	},
+	{
 		"key_bits",
 		FLATCONF_ULONG,
 		&certalator_conf.key_bits,
@@ -201,6 +226,23 @@ struct flatconf certalator_config_vars[] = {
 };
 
 void load_keys();
+
+int
+shared_tasks_lock()
+{
+	if (flock(task_lock_fd, LOCK_EX|LOCK_NB) == -1) {
+		if (errno != EWOULDBLOCK)
+			xlog_strerror(LOG_ERR, errno, "%s: flock", __func__);
+		return -1;
+	}
+	return 0;
+}
+
+int
+shared_tasks_unlock()
+{
+	return flock(task_lock_fd, LOCK_UN);
+}
 
 ssize_t
 decode_overnet_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
@@ -418,15 +460,11 @@ usage()
 }
 
 int
-verify(X509_STORE_CTX *ctx, X509 *crt)
+verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
 {
-	int              roles_idx;
-	X509_EXTENSION  *ex;
-	X509_NAME       *subject;
-	char             common_name[256];
-	int              r, i;
-	char           **roles;
-	ssize_t          n;
+	X509_NAME *subject;
+	char       common_name[256];
+	int        r;
 
 	subject = X509_get_subject_name(crt);
 	if (subject == NULL) {
@@ -445,6 +483,8 @@ verify(X509_STORE_CTX *ctx, X509 *crt)
 	// TODO: do a challenge on the client and its cert name. The peer
 	// IP on the connection should match one of the subjectAltNames, or
 	// the commonName of the cert. If there's no match, deny.
+	if (challenge) {
+	}
 
 	if (!X509_STORE_CTX_init(ctx, store, crt, NULL)) {
 		X509_STORE_CTX_cleanup(ctx);
@@ -461,40 +501,41 @@ verify(X509_STORE_CTX *ctx, X509 *crt)
 	}
 	X509_STORE_CTX_cleanup(ctx);
 
-	roles_idx = X509_get_ext_by_NID(crt, NID_overnet_roles, -1);
-	if (roles_idx == -1)
-		xlog(LOG_ERR, NULL,
-		    "%s: overnetRoles extension not found", __func__);
+	// TODO: remove, no need during verify
+	//roles_idx = X509_get_ext_by_NID(crt, NID_overnet_roles, -1);
+	//if (roles_idx == -1)
+	//	xlog(LOG_ERR, NULL,
+	//	    "%s: overnetRoles extension not found", __func__);
 
-	if ((ex = X509_get_ext(crt, roles_idx)) == NULL) {
-		xlog(LOG_ERR, NULL, "X509_get_ext: %s",
-		    ERR_error_string(ERR_get_error(), NULL));
-		return -1;
-	}
+	//if ((ex = X509_get_ext(crt, roles_idx)) == NULL) {
+	//	xlog(LOG_ERR, NULL, "X509_get_ext: %s",
+	//	    ERR_error_string(ERR_get_error(), NULL));
+	//	return -1;
+	//}
 
-	roles = malloc(CERTALATOR_MAX_ROLES *
-	    (sizeof(char *) + CERTALATOR_MAX_ROLE_LENGTH));
-	if (roles == NULL) {
-		xlog_strerror(LOG_ERR, errno, "%s: malloc", __func__);
-		return -1;
-	}
+	//roles = malloc(CERTALATOR_MAX_ROLES *
+	//    (sizeof(char *) + CERTALATOR_MAX_ROLE_LENGTH));
+	//if (roles == NULL) {
+	//	xlog_strerror(LOG_ERR, errno, "%s: malloc", __func__);
+	//	return -1;
+	//}
 
-	bzero(roles, CERTALATOR_MAX_ROLES *
-	    (sizeof(char *) + CERTALATOR_MAX_ROLE_LENGTH));
-	for (i = 0; i < CERTALATOR_MAX_ROLES; i++)
-		roles[i] = (char *)roles +
-		    (CERTALATOR_MAX_ROLES * sizeof(char *)) +
-		    (i * CERTALATOR_MAX_ROLE_LENGTH);
+	//bzero(roles, CERTALATOR_MAX_ROLES *
+	//    (sizeof(char *) + CERTALATOR_MAX_ROLE_LENGTH));
+	//for (i = 0; i < CERTALATOR_MAX_ROLES; i++)
+	//	roles[i] = (char *)roles +
+	//	    (CERTALATOR_MAX_ROLES * sizeof(char *)) +
+	//	    (i * CERTALATOR_MAX_ROLE_LENGTH);
 
-	n = decode_overnet_roles(ex, roles, CERTALATOR_MAX_ROLES);
-	if (n == -1) {
-		free(roles);
-		return -1;
-	}
+	//n = decode_overnet_roles(ex, roles, CERTALATOR_MAX_ROLES);
+	//if (n == -1) {
+	//	free(roles);
+	//	return -1;
+	//}
 
-	for (i = 0; i < n; i++)
-		xlog(LOG_INFO, NULL, "role: %s\n", roles[i]);
-	free(roles);
+	//for (i = 0; i < n; i++)
+	//	xlog(LOG_INFO, NULL, "role: %s\n", roles[i]);
+	//free(roles);
 	return 0;
 }
 
@@ -523,12 +564,12 @@ open_wflock(const char *path, int flags, mode_t mode, int lk)
 }
 
 BIGNUM *
-new_serial()
+new_serial(struct xerr *e)
 {
 	BIGNUM  *min_bn = NULL;
 	BIGNUM  *max_bn = NULL;
 	BIGNUM  *v = NULL;
-	int      fd, fdtmp;
+	int      fd = -1, fdtmp;
 	char    *p;
 	ssize_t  r;
 	int      l;
@@ -536,18 +577,22 @@ new_serial()
 	char     tmpfile[PATH_MAX];
 
 	if (!BN_hex2bn(&min_bn, certalator_conf.min_serial)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
+		return NULL;
 	}
 
 	if (!BN_hex2bn(&max_bn, certalator_conf.max_serial)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		BN_free(min_bn);
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
+		return NULL;
 	}
 
 	if (snprintf(tmpfile, sizeof(tmpfile), "%s.new",
-	    certalator_conf.serial_file) >= sizeof(tmpfile))
-		errx(1, "tmpfile name too long");
+	    certalator_conf.serial_file) >= sizeof(tmpfile)) {
+		XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+		    "tmpfile name too long");
+		goto fail;
+	}
 
 	/*
 	 * We get an exclusive lock while we write the new serial to a
@@ -555,76 +600,109 @@ new_serial()
 	 * may not read or write while we are incrementing the serial.
 	 */
 	if ((fd = open_wflock(certalator_conf.serial_file,
-	    O_RDWR|O_CREAT, 0666, LOCK_EX)) == -1)
-		err(1, "open_wflock");
+	    O_RDWR|O_CREAT, 0666, LOCK_EX)) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "open_wflock");
+		goto fail;
+	}
+
 	r = read(fd, buf, sizeof(buf));
-	if (r == -1)
-		err(1, "read");
+	if (r == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "read");
+		goto fail;
+	}
+
 	if (r > 0) {
-		if (buf[r - 1] != '\n')
-			errx(1, "serial file does not end in newline, "
+		if (buf[r - 1] != '\n') {
+			XERRF(e, XLOG_APP, XLOG_BADSERIALFILE,
+			    "serial file does not end in newline, "
 			    "or the value is too large");
+			goto fail;
+		}
 		buf[r - 1] = '\0';
 		for (p = buf; *p; p++) {
 			if (!((*p >= '0' && *p <= '9') ||
 			    (*p >= 'a' && *p <= 'f') ||
 			    (*p >= 'A' && *p <= 'F'))) {
-				errx(1, "serial is not a valid hex integer");
+				XERRF(e, XLOG_APP, XLOG_BADSERIALFILE,
+				    "serial is not a valid hex integer");
+				goto fail;
 			}
 		}
 		if (!BN_hex2bn(&v, buf)) {
-			ERR_print_errors_fp(stderr);
-			exit(1);
+			XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
+			goto fail;
 		}
 
-		if (BN_cmp(v, min_bn) == -1)
-			errx(1, "saved serial is less than min_serial");
+		if (BN_cmp(v, min_bn) == -1) {
+			XERRF(e, XLOG_APP, XLOG_BADSERIALFILE,
+			    "saved serial is less than min_serial");
+			goto fail;
+		}
 
 		if (!BN_add_word(v, 1)) {
-			ERR_print_errors_fp(stderr);
-			exit(1);
+			XERRF(e, XLOG_SSL, ERR_get_error(), "BN_add_word");
+			goto fail;
 		}
+
 		if (BN_cmp(v, max_bn) > 0) {
-			close(fd);
-			BN_free(min_bn);
-			BN_free(max_bn);
-			warnx("max_serial exceeded");
-			return NULL;
+			XERRF(e, XLOG_APP, XLOG_MAXSERIALREACHED,
+			    "max_serial exceeded");
+			goto fail;
 		}
 	} else {
 		if ((v = BN_dup(min_bn)) == NULL) {
-			ERR_print_errors_fp(stderr);
-			exit(1);
+			XERRF(e, XLOG_SSL, ERR_get_error(), "BN_dup");
+			goto fail;
 		}
+	}
+
+	if ((p = BN_bn2hex(v)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_bn2hex");
+		goto fail;
+	}
+
+	l = snprintf(buf, sizeof(buf), "%s\n", p);
+	OPENSSL_free(p);
+	if (l >= sizeof(buf)) {
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "computed serial is too large");
+		goto fail;
+	}
+
+	if ((fdtmp = open(tmpfile, O_WRONLY|O_CREAT, 0666)) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "open");
+		goto fail;
+	}
+	r = write(fdtmp, buf, l);
+	if (r == -1) {
+		close(fdtmp);
+		XERRF(e, XLOG_ERRNO, errno, "write");
+		goto fail;
+	}
+	if (r < l) {
+		close(fdtmp);
+		XERRF(e, XLOG_APP, XLOG_SHORTIO,
+		    "short write on serial file");
+		goto fail;
+	}
+	fsync(fdtmp);
+	close(fdtmp);
+	if (rename(tmpfile, certalator_conf.serial_file) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "rename");
+		goto fail;
 	}
 
 	BN_free(min_bn);
 	BN_free(max_bn);
-
-	if ((p = BN_bn2hex(v)) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-
-	l = snprintf(buf, sizeof(buf), "%s\n", p);
-	if (l >= sizeof(buf))
-		errx(1, "computed serial is too large");
-	OPENSSL_free(p);
-
-	if ((fdtmp = open(tmpfile, O_WRONLY|O_CREAT, 0666)) == -1)
-		err(1, "open");
-	r = write(fdtmp, buf, l);
-	if (r == -1)
-		err(1, "write");
-	if (r < l)
-		errx(1, "short write on serial file");
-	fsync(fdtmp);
-	close(fdtmp);
-	if (rename(tmpfile, certalator_conf.serial_file) == -1)
-		err(1, "rename");
 	close(fd);
 
 	return v;
+fail:
+	BN_free(min_bn);
+	BN_free(max_bn);
+	if (fd > -1)
+		close(fd);
+	return NULL;
 }
 
 int
@@ -636,121 +714,145 @@ add_ext(X509V3_CTX *ctx, X509 *crt, int nid, char *value)
 	return X509_add_ext(crt, ex, -1);
 }
 
-int
-sign(const char *cert_path, const char **roles)
+X509 *
+sign(X509 *crt, const char **roles)
 {
-	X509           *crt, *newcrt;
-	FILE           *f;
-	char            new_cert[PATH_MAX];
+	X509           *newcrt;
 	BIGNUM         *serial;
 	X509_EXTENSION *ex;
 	X509V3_CTX      ctx;
 	int             san_idx;
+	struct xerr     e;
 
-	load_keys();
-
-	if ((f = fopen(cert_path, "r")) == NULL)
-		err(1, "fopen: %s", cert_path);
-	if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	fclose(f);
+	// TODO: verify first?
 
 	X509V3_set_ctx(&ctx, agent_cert, crt, NULL, NULL, 0);
 
 	if ((newcrt = X509_new()) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_new");
+		return NULL;
 	}
 	if (!X509_set_version(newcrt, 2)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_set_version");
+		return NULL;
 	}
 
-	serial = new_serial();
+	serial = new_serial(xerrz(&e));
 	if (serial == NULL)
-		exit(1);
+		return NULL;
 
 	if (BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(newcrt)) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		BN_free(serial);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "BN_to_ASN1_INTEGER");
+		return NULL;
 	}
 	BN_free(serial);
 
 	if (!X509_set_issuer_name(newcrt, X509_get_subject_name(agent_cert))) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_set_issuer_name");
+		return NULL;
 	}
 
 	if (!X509_set_subject_name(newcrt, X509_get_subject_name(crt))) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_set_subject_name");
+		return NULL;
 	}
 
 	if (!X509_set_pubkey(newcrt, X509_get0_pubkey(crt))) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_set_pubkey");
+		return NULL;
 	}
 
 	X509_gmtime_adj(X509_get_notBefore(newcrt), 0);
 	X509_gmtime_adj(X509_get_notAfter(newcrt), 86400);
 
 	san_idx = X509_get_ext_by_NID(crt, NID_subject_alt_name, -1);
-	if (san_idx == -1)
-		errx(1, "subjectAltName extension not found");
+	if (san_idx == -1) {
+		XERRF(&e, XLOG_APP, XLOG_NOENT,
+		    "subjectAltName extension not found");
+		return NULL;
+	}
 	if ((ex = X509_get_ext(crt, san_idx)) == NULL) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_get_ext");
+		return NULL;
 	}
 	if (!X509_add_ext(newcrt, ex, -1)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_add_ext");
+		return NULL;
 	}
 
-	if (!add_ext(&ctx, newcrt, NID_basic_constraints, "critical,CA:false")) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+	if (!add_ext(&ctx, newcrt, NID_basic_constraints,
+	    "critical,CA:false")) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(),
+		    "add_ext / NID_basic_constraints");
+		return NULL;
 	}
 	if (!add_ext(&ctx, newcrt, NID_key_usage,
 	    "critical,nonRepudiation,digitalSignature,keyEncipherment")) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "add_ext / NID_key_usage");
+		return NULL;
 	}
-	if (!add_ext(&ctx, newcrt, NID_ext_key_usage, "serverAuth,clientAuth")) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+	if (!add_ext(&ctx, newcrt, NID_ext_key_usage,
+	    "serverAuth,clientAuth")) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(),
+		    "add_ext / NID_ext_key_usage");
+		return NULL;
 	}
 	if (!add_ext(&ctx, newcrt, NID_subject_key_identifier, "hash")) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(),
+		    "add_ext / NID_subject_key_identifier");
+		return NULL;
 	}
-	if (!add_ext(&ctx, newcrt, NID_authority_key_identifier, "keyid,issuer")) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+	if (!add_ext(&ctx, newcrt, NID_authority_key_identifier,
+	    "keyid,issuer")) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(),
+		    "add_ext / NID_authority_key_identifier");
+		return NULL;
 	}
+
 	// TODO: need to add the subjectAltNames
 
 	ex = encode_overnet_roles(roles);
 	if (!X509_add_ext(newcrt, ex, -1)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
+		return NULL;
 	}
 
 	if (!X509_sign(newcrt, agent_key, EVP_sha256())) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_sign");
+		return NULL;
 	}
 
-	snprintf(new_cert, sizeof(new_cert), "%s.new", cert_path);
-	if ((f = fopen(new_cert, "w")) == NULL)
-		err(1, "fopen: %s", new_cert);
-	if (!PEM_write_X509(f, newcrt)) {
-		ERR_print_errors_fp(stderr);
-		exit(1);
-	}
-	fclose(f);
+	return newcrt;
+}
 
+int
+b64enc(char *dst, size_t dst_sz, const uint8_t *bytes, size_t sz, struct xerr *e)
+{
+	BIO *b, *b64;
+
+	if ((b64 = BIO_new(BIO_f_base64())) == NULL)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
+
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	if ((b = BIO_new(BIO_s_mem())) == NULL) {
+		BIO_free(b64);
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
+	}
+	BIO_push(b64, b);
+
+	if (BIO_write(b64, bytes, sizeof(sz)) <= 0) {
+		BIO_free_all(b64);
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
+	}
+	BIO_flush(b64);
+
+	if (BIO_read(b, dst, dst_sz) != dst_sz) {
+		BIO_free_all(b64);
+		return XERRF(e, XLOG_APP, XLOG_SHORTIO,
+		    "short read for base64 bootstrap key");
+	}
+	BIO_free_all(b64);
 	return 0;
 }
 
@@ -773,9 +875,9 @@ authority_bootstrap_setup(const char *cn, const char **sans,
     size_t sans_sz, const char **roles, size_t roles_sz, uint32_t cert_expiry,
     uint32_t timeout, struct xerr *e)
 {
-	char                    buf[48];
+	int                     i;
+	uint8_t                 buf[CERTDB_BOOTSTRAP_KEY_LENGTH];
 	char                    subject[CERTALATOR_MAX_SUBJET_LENGTH];
-	BIO                    *b, *b64;
 	struct bootstrap_entry  be;
 	struct timespec         tp;
 
@@ -785,31 +887,11 @@ authority_bootstrap_setup(const char *cn, const char **sans,
 		return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
 		    "resulting subject name is too long for commonName %s", cn);
 
-	if ((b64 = BIO_new(BIO_f_base64())) == NULL)
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
-
-	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
-	if ((b = BIO_new(BIO_s_mem())) == NULL) {
-		BIO_free(b64);
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
-	}
-	BIO_push(b64, b);
-
 	arc4random_buf(buf, sizeof(buf));
 
-	if (BIO_write(b64, buf, sizeof(buf)) <= 0) {
-		BIO_free_all(b64);
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
-	}
-	BIO_flush(b64);
-
-	if (BIO_read(b, be.bootstrap_key, sizeof(be.bootstrap_key))
-	    != (int)sizeof(be.bootstrap_key)) {
-		BIO_free_all(b64);
-		return XERRF(e, XLOG_APP, XLOG_SHORTIO,
-		    "short read for base64 bootstrap key");
-	}
-	BIO_free_all(b64);
+	if (b64enc(be.bootstrap_key, sizeof(be.bootstrap_key),
+	    buf, sizeof(buf), e) == -1)
+		return -1;
 
 	clock_gettime(CLOCK_REALTIME, &tp);
 
@@ -818,7 +900,18 @@ authority_bootstrap_setup(const char *cn, const char **sans,
 	be.not_after_sec = tp.tv_sec + cert_expiry;
 	be.subject = subject;
 
-	// TODO: validate length limits
+	for (i = 0; i < roles_sz; i++)
+		if (strlen(roles[i]) > CERTALATOR_MAX_ROLE_LENGTH)
+			return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+			    "role name %s longer than limit of %d",
+			    roles[i], CERTALATOR_MAX_ROLE_LENGTH);
+
+	for (i = 0; i < sans_sz; i++)
+		if (strlen(sans[i]) > CERTALATOR_MAX_SAN_LENGTH)
+			return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+			    "SAN name %s longer than limit of %d",
+			    sans[i], CERTALATOR_MAX_SAN_LENGTH);
+
 	be.roles = (char **)roles;
 	be.roles_sz = roles_sz;
 	be.sans = (char **)sans;
@@ -1069,7 +1162,12 @@ agent_bootstrap_dialin(struct xerr *e)
 	struct mdr     m;
 	char           buf[64];
 	char          *subject = NULL;
-	struct mdr_in  m_in[0];
+	struct mdr_in  m_in[1];
+
+	if (strlen(certalator_conf.bootstrap_key) !=
+	    CERTDB_BOOTSTRAP_KEY_LENGTH_B64) {
+		// TODO: wrong length
+	}
 
 	m_in[0].type = MDR_S;
 	m_in[0].v.s.bytes = certalator_conf.bootstrap_key;
@@ -1090,7 +1188,8 @@ agent_bootstrap_dialin(struct xerr *e)
 	// Unless we need to wait for the authority to test our contact
 	// point.
 
-	// TODO: then create the new req to be signed
+	// TODO: then create the new req to be signed. We mostly need this
+	// for the public key; the rest is populated by the authority.
 	if (agent_new_req(subject) == -1)
 		return NULL;
 
@@ -1098,17 +1197,64 @@ agent_bootstrap_dialin(struct xerr *e)
 }
 
 int
-authority_bootstrap_dialin(struct mdr *msg, struct xerr *e)
+authority_challenge(struct bootstrap_entry *be, struct xerr *e)
+{
+	int i;
+	// TODO:
+
+	// We connect to the subject, with a 
+	// MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK message.
+	//
+
+	if (shared_tasks_lock() != 0)
+		return -1;
+	// Save the challenge in our shared tasks
+
+	for (i = 0; i < MAX_ACTIVE_CHALLENGES; i++) {
+		if (!authority_challenge.challenges[i].in_use)
+			break;
+	}
+
+	// TODO: couldn't find a challenge slot
+	if (i == MAX_ACTIVE_CHALLENGES)
+		return -1;
+
+	// arc5random_buf ...
+	// b64enc ..
+	authority_challenge.challenges[i].in_use = 1;
+	strlcpy(authority_challenge.challenges[i].secret, yo,
+	    sizeof(authority_challenge.challenges[i].secret));
+	return 0;
+}
+
+int
+authority_bootstrap_dialin(struct mdr *m, struct mdr *msg, struct xerr *e)
 {
 	// TODO: we receive the one-time-key from a client then
 	// need to contact it over its CommonName to confirm
 	// they are who they claim to be.
 	// msg should have the one time key.
 
-	//struct bootstrap_entry be;
+	struct bootstrap_entry be;
+	struct mdr_out         m_out[1];
 
-	//if (certdb_get_bootstrap(&be, btkey, e) == -1)
-	//	return -1;
+	if (mdr_unpack_payload(msg, msg_bootstrap_dialin, m_out, 1) == MDR_FAIL)
+		return XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
+
+	if (m_out[0].v.s.sz != CERTDB_BOOTSTRAP_KEY_LENGTH)
+		return XERRF(e, XLOG_APP, XLOG_BADMSG,
+		    "bootstrap key received from client has incorrect length");
+
+	if (certdb_get_bootstrap(&be, m_out[0].v.s.bytes, e) == -1)
+		return -1;
+
+	// Then we challenge the client by connecting to its CommonName
+	// as per our DB
+	if (authority_challenge(&be, e) == -1)
+		return -1;
+
+	// Then send a quick MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK_RESP
+	// to inform the challenge is out.
 
 	return 0;
 }
@@ -1257,14 +1403,7 @@ mdrd_backend()
 	struct sigaction  act;
 	struct xerr       e;
 	struct mdr_in     m_in[5];
-
-	load_keys();
-
-	if ((ctx = X509_STORE_CTX_new()) == NULL) {
-		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
-		    ERR_error_string(ERR_get_error(), NULL));
-		return -1;
-	}
+	struct stat       st;
 
 	xlog_init(program, NULL, NULL, 1);
 
@@ -1272,14 +1411,53 @@ mdrd_backend()
 	act.sa_flags = 0;
 	act.sa_handler = SIG_IGN;
 	if (sigaction(SIGINT, &act, NULL) == -1 ||
-	    sigaction(SIGTERM, &act, NULL) == -1)
-		return -1;
+	    sigaction(SIGTERM, &act, NULL) == -1) {
+		xlog_strerror(LOG_ERR, errno, "%s: sigaction", __func__);
+		return 1;
+	}
+
+	load_keys();
+
+	task_lock_fd = open(certalator_conf.lock_file, O_RDWR|O_CREAT, 0600);
+	if (task_lock_fd == -1) {
+		xlog_strerror(LOG_ERR, errno, "%s: open: %s", __func__,
+		    certalator_conf.lock_file);
+		return 1;
+	}
+
+	if ((fd = shm_open(CERTALATOR_SHM, O_RDWR|O_CREAT, 0600)) == -1) {
+		xlog_strerror(LOG_ERR, errno, "%s: shm_open", __func__);
+		return 1;
+	}
+
+	if (fstat(fd, &st) == -1) {
+		xlog_strerror(LOG_ERR, errno, "%s: fstat", __func__);
+		return 1;
+	}
+	if (st.st_uid != getuid() || st.st_gid != getgid()) {
+		xlog(LOG_ERR, NULL, "%s: shared memory handle %s is not owned "
+		    "by us; exiting", __func__, CERTALATOR_SHM);
+		return 1;
+	}
+
+	shared_tasks = mmap(NULL, sizeof(struct shared_tasks),
+	    PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+	if (shared_tasks == MAP_FAILED) {
+		xlog_strerror(LOG_ERR, errno, "%s: mmap", __func__);
+		return 1;
+	}
+
+	if ((ctx = X509_STORE_CTX_new()) == NULL) {
+		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
+		    ERR_error_string(ERR_get_error(), NULL));
+		return 1;
+	}
 
 	while ((r = mdr_read_from_fd(&m, MDR_F_NONE,
 	    0, buf, sizeof(buf))) > 0) {
 		if (r == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
-			    "%s: mdr_unpack_from_fd", __func__);
+			    "%s: mdr_read_from_fd", __func__);
 			goto fail;
 		}
 
@@ -1349,12 +1527,13 @@ mdrd_backend()
 				continue;
 			}
 
-			if (authority_bootstrap_dialin(&msg, &e) == MDR_FAIL)
+			if (authority_bootstrap_dialin(&m, &msg, &e)
+			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
 			continue;
 		}
 
-		if (verify(ctx, peer_cert) != 0) {
+		if (verify(ctx, peer_cert, 0) != 0) {
 			xlog(LOG_NOTICE, NULL, "%s: verify failed for client "
 			    "on fd %d", __func__, fd);
 			if (peer_cert != NULL)
@@ -1426,7 +1605,7 @@ mdrd_backend()
 	return 0;
 fail:
 	X509_STORE_CTX_free(ctx);
-	return -1;
+	return 1;
 }
 
 void
@@ -1462,9 +1641,10 @@ main(int argc, char **argv)
 	char           *command;
 	size_t          sz;
 	FILE           *f;
-	X509           *crt;
+	X509           *crt, *newcrt;
 	X509_STORE_CTX *ctx;
 	struct xerr     e;
+	char            crtpath[PATH_MAX];
 
 	for (opt = 1; opt < argc; opt++) {
 		if (argv[opt][0] != '-')
@@ -1559,16 +1739,39 @@ main(int argc, char **argv)
 		}
 		fclose(f);
 		if ((ctx = X509_STORE_CTX_new()) == NULL) {
-			xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
-			    ERR_error_string(ERR_get_error(), NULL));
-			return -1;
+			ERR_print_errors_fp(stderr);
+			exit(1);
 		}
-		status = verify(ctx, crt);
+		status = verify(ctx, crt, 0);
 		X509_STORE_CTX_free(ctx);
 	} else if (strcmp(command, "sign") == 0) {
 		if (opt >= argc)
 			errx(1, "no certificate file provided");
-		status = sign(argv[opt], (const char **)argv + opt + 1);
+
+		load_keys();
+
+		if ((f = fopen(argv[opt], "r")) == NULL)
+			err(1, "fopen: %s", argv[opt]);
+		if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+		fclose(f);
+
+		newcrt = sign(crt, (const char **)argv + opt + 1);
+		if (newcrt == NULL) {
+			xlog(LOG_ERR, &e, "sign");
+			exit(1);
+		}
+
+		snprintf(crtpath, sizeof(crtpath), "%s.new", argv[opt]);
+		if ((f = fopen(crtpath, "w")) == NULL)
+			err(1, "fopen: %s", crtpath);
+		if (!PEM_write_X509(f, newcrt)) {
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+		fclose(f);
 	} else if (strcmp(command, "mdrd-backend") == 0) {
 		status = mdrd_backend();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {

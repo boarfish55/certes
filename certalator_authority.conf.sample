@@ -6,6 +6,8 @@ crl_file = "/home/plalonde/prog/certalator/ca/overnet.crl"
 crt_file = "/home/plalonde/prog/certalator/authority1/overnet_crt.pem"
 key_file = "/home/plalonde/prog/certalator/authority1/overnet_key.pem"
 
+lock_file = "/home/plalonde/prog/certalator/lock"
+
 #
 # This section is for certalator authorities. It sets default parameters
 # for certificate generation and renewals.
