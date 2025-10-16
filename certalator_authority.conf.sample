@@ -7,6 +7,7 @@ crt_file = "/home/plalonde/prog/certalator/authority1/overnet_crt.pem"
 key_file = "/home/plalonde/prog/certalator/authority1/overnet_key.pem"
 
 lock_file = "/home/plalonde/prog/certalator/lock"
+coordinator_socket_path = "/home/plalonde/prog/certalator/.coordinator.sock"
 
 #
 # This section is for certalator authorities. It sets default parameters

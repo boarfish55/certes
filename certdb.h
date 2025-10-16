@@ -3,17 +3,15 @@
 
 #include <stdint.h>
 #include <time.h>
+#include "certalator.h"
 #include "xlog.h"
 
 #define CERTDB_FLAG_NONE    0x00000000
 #define CERTDB_FLAG_REVOKED 0x00000001
 #define CERTDB_FLAG_ALL     0xFFFFFFFF
 
-#define CERTDB_BOOTSTRAP_KEY_LENGTH_B64 64
-#define CERTDB_BOOTSTRAP_KEY_LENGTH     48
-
 struct bootstrap_entry {
-	char     bootstrap_key[CERTDB_BOOTSTRAP_KEY_LENGTH];
+	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
 	time_t   valid_until_sec;
 	char    *subject;
 	char   **sans;

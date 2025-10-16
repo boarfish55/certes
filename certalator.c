@@ -16,6 +16,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
+#include "coordinator.h"
 #include "certalator.h"
 #include "certdb.h"
 #include "flatconf.h"
@@ -24,25 +25,6 @@
 #include "util.h"
 #include "xlog.h"
 
-#define MAX_HEX_SERIAL_LENGTH 32
-#define MAX_ACTIVE_CHALLENGES 32
-
-struct shared_tasks {
-	struct {
-		struct timespec expiry;
-		uint8_t         pending_send;
-		char            key[CERTDB_BOOTSTRAP_KEY_LENGTH_B64];
-	} agent_bootstrap;
-
-	struct {
-		struct {
-			char    secret[CERTDB_BOOTSTRAP_KEY_LENGTH_B64];
-			uint8_t in_use;
-		} challenges[MAX_ACTIVE_CHALLENGES];
-	} authority_challenge;
-} *shared_tasks;
-
-const char  *program = "certalator";
 int          NID_overnet_roles;
 int          NID_overnet_roles_idx;
 X509_STORE  *store = NULL;
@@ -58,54 +40,15 @@ BIO         *agent_bio = NULL;
 int          agent_connected = 0;
 int          agent_is_authority = 0;
 const char **agent_roles = NULL;
-int          task_lock_fd;
 
-struct mdr_def msgdef_bootstrap_setup = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP,
-	"certalator.bootstrap_setup",
-	{
-		MDR_S,
-		MDR_AS,
-		MDR_AS,
-		MDR_U32,
-		MDR_U32,
-		MDR_LAST
-	}
-};
-struct mdr_def msgdef_bootstrap_dialin = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN,
-	"certalator.bootstrap_dialin",
-	{
-		MDR_S,
-		MDR_LAST
-	}
-};
+extern const struct mdr_spec *msg_bootstrap_setup;
+extern const struct mdr_spec *msg_bootstrap_dialin;
+extern const struct mdr_spec *msg_pack_beresp;
+extern const struct mdr_spec *msg_pack_beresp_wmsg;
+extern const struct mdr_spec *msg_coord_save_cert_challenge;
+extern const struct mdr_spec *msg_coord_get_cert_challenge;
 
-const struct mdr_spec *msg_bootstrap_setup;
-const struct mdr_spec *msg_bootstrap_dialin;
-const struct mdr_spec *msg_pack_beresp;
-const struct mdr_spec *msg_pack_beresp_wmsg;
-
-struct {
-	int      enable_coredumps;
-	char     authority_fqdn[256];
-	uint64_t authority_port;
-	char     certdb_path[PATH_MAX];
-	char     bootstrap_key[CERTDB_BOOTSTRAP_KEY_LENGTH + 1];
-	char     ca_file[PATH_MAX];
-	char     crl_file[PATH_MAX];
-	char     key_file[PATH_MAX];
-	char     cert_file[PATH_MAX];
-	char     lock_file[PATH_MAX];
-	uint64_t key_bits;
-	char     serial_file[PATH_MAX];
-	char     cert_org[256];
-	char     cert_email[512];
-
-	/* Leave space for "0x" and terminating zero */
-	char     min_serial[MAX_HEX_SERIAL_LENGTH + 3];
-	char     max_serial[MAX_HEX_SERIAL_LENGTH + 3];
-} certalator_conf = {
+struct certalator_flatconf certalator_conf = {
 	0,
 	"",
 	9790,
@@ -116,6 +59,7 @@ struct {
 	"overnet_key.pem",
 	"overnet_crt.pem",
 	".lock",
+	"agent.sock",
 	4096,
 	"ca/serial",
 	"",
@@ -187,6 +131,12 @@ struct flatconf certalator_config_vars[] = {
 		sizeof(certalator_conf.lock_file)
 	},
 	{
+		"coordinator_socket_path",
+		FLATCONF_STRING,
+		certalator_conf.coordinator_sock_path,
+		sizeof(certalator_conf.coordinator_sock_path)
+	},
+	{
 		"key_bits",
 		FLATCONF_ULONG,
 		&certalator_conf.key_bits,
@@ -226,23 +176,6 @@ struct flatconf certalator_config_vars[] = {
 };
 
 void load_keys();
-
-int
-shared_tasks_lock()
-{
-	if (flock(task_lock_fd, LOCK_EX|LOCK_NB) == -1) {
-		if (errno != EWOULDBLOCK)
-			xlog_strerror(LOG_ERR, errno, "%s: flock", __func__);
-		return -1;
-	}
-	return 0;
-}
-
-int
-shared_tasks_unlock()
-{
-	return flock(task_lock_fd, LOCK_UN);
-}
 
 ssize_t
 decode_overnet_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
@@ -445,7 +378,7 @@ agent_send(struct mdr *m, struct xerr *e)
 void
 usage()
 {
-	printf("Usage: %s [options] <command>\n", program);
+	printf("Usage: %s [options] <command>\n", CERTALATOR_PROGNAME);
 	printf("\t-help            Prints this help\n");
 	printf("\t-debug           Do not fork and print errors to STDERR\n");
 	printf("\t-config <conf>   Specify alternate configuration path\n");
@@ -876,7 +809,7 @@ authority_bootstrap_setup(const char *cn, const char **sans,
     uint32_t timeout, struct xerr *e)
 {
 	int                     i;
-	uint8_t                 buf[CERTDB_BOOTSTRAP_KEY_LENGTH];
+	uint8_t                 buf[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
 	char                    subject[CERTALATOR_MAX_SUBJET_LENGTH];
 	struct bootstrap_entry  be;
 	struct timespec         tp;
@@ -924,7 +857,7 @@ void
 authority_bootstrap_usage()
 {
 	printf("Usage: %s bootstrap-setup [options] <cn> <roles...>\n",
-	    program);
+	    CERTALATOR_PROGNAME);
 	printf("\t--help        Prints this help\n");
 	printf("\t--timeout     Validity of bootstrap entry in "
 	    "seconds (default 600)\n");
@@ -1142,6 +1075,7 @@ agent_new_req(const char *subject)
 // we can answer to, then contact the server, passing the challenge to get the
 // REQ signed. This can also generate the private key.
 //
+//
 // We'll need to know:
 // - The subject name
 // - The subjectAltName (possibly multiple)
@@ -1149,44 +1083,71 @@ agent_new_req(const char *subject)
 //   those are kept server-side
 // - Validity period (capped by the server, but could be shorter)
 // Most other things are decided by the cert issuer.
+/*
+ * Contact the authority to send our bootstrap key in order to obtain
+ * our certificate parameters and create our key and REQ.
+ */
 FILE *
 agent_bootstrap_dialin(struct xerr *e)
 {
-	// TODO: agent-side bootstrap initiation, passing a one-time-key
-	// to the authority. We'll receive the parameters like CommonName,
-	// SANs, etc. from which we create a key & req.
-
-	// TODO: get the one time key from our config, contact the
-	// authoritah, get subject, SANs and roles.
-
-	struct mdr     m;
-	char           buf[64];
-	char          *subject = NULL;
-	struct mdr_in  m_in[1];
+	struct mdr       m;
+	char             buf[64];
+	char            *subject = NULL;
+	char             req_id[CERTALATOR_REQ_ID_LENGTH];
+	char             challenge[CERTALATOR_CHALLENGE_LENGTH];
+	struct mdr_in    m_in[2];
+	struct timespec  now;
 
 	if (strlen(certalator_conf.bootstrap_key) !=
-	    CERTDB_BOOTSTRAP_KEY_LENGTH_B64) {
-		// TODO: wrong length
+	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64) {
+		XERRF(e, XLOG_APP, XLOG_INVAL,
+		    "bad bootstrap key format in configuration; bad length");
+		return NULL;
+	}
+
+	/*
+	 * The req_id is just echoed back to us by the authority, which we
+	 * then use to find the challenge sent to us on another connection.
+	 */
+	clock_gettime(CLOCK_REALTIME, &now);
+
+	if (snprintf(req_id, sizeof(req_id), "%d-%lu.%lu", getpid(),
+	    now.tv_sec, now.tv_nsec) >= sizeof(req_id)) {
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "resulting req_id too long; this is a bug");
+		return NULL;
 	}
 
 	m_in[0].type = MDR_S;
-	m_in[0].v.s.bytes = certalator_conf.bootstrap_key;
+	m_in[0].v.s.bytes = req_id;
+	m_in[1].type = MDR_S;
+	m_in[1].v.s.bytes = certalator_conf.bootstrap_key;
 	if (mdr_pack(&m, buf, sizeof(buf), msg_bootstrap_dialin,
+	    MDR_F_NONE, m_in, 2) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "mdr_pack/msg_bootstrap_dialin");
+		return NULL;
+	}
+
+	if (agent_send(&m, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return NULL;
+	}
+
+	// TODO: Poll our coordinator to see if we received the challenge.
+	// TODO: wrong, need to use mdr!!
+	m_in[0].type = MDR_S;
+	m_in[0].v.s.bytes = req_id;
+	if (mdr_pack(&m, buf, sizeof(buf), msg_coord_get_cert_challenge,
 	    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
-		// TODO: err
+		XERRF(e, XLOG_ERRNO, errno,
+		    "mdr_pack/msg_coord_get_cert_challenge");
 		return NULL;
 	}
 
-	// TODO: send the damn thing
-	if (agent_send(&m, e) == -1) {
-		// TODO: err
+	if (coordinator_send(&m, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
 		return NULL;
 	}
-
-	// TODO: then read the response which should contain the subject,
-	// sans, roles, expiry...
-	// Unless we need to wait for the authority to test our contact
-	// point.
 
 	// TODO: then create the new req to be signed. We mostly need this
 	// for the public key; the rest is populated by the authority.
@@ -1199,31 +1160,28 @@ agent_bootstrap_dialin(struct xerr *e)
 int
 authority_challenge(struct bootstrap_entry *be, struct xerr *e)
 {
-	int i;
 	// TODO:
 
 	// We connect to the subject, with a 
 	// MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK message.
 	//
 
-	if (shared_tasks_lock() != 0)
-		return -1;
 	// Save the challenge in our shared tasks
 
-	for (i = 0; i < MAX_ACTIVE_CHALLENGES; i++) {
-		if (!authority_challenge.challenges[i].in_use)
-			break;
-	}
+	//for (i = 0; i < MAX_ACTIVE_CHALLENGES; i++) {
+	//	if (!authority_challenge.challenges[i].in_use)
+	//		break;
+	//}
 
 	// TODO: couldn't find a challenge slot
-	if (i == MAX_ACTIVE_CHALLENGES)
-		return -1;
+	//if (i == MAX_ACTIVE_CHALLENGES)
+	//	return -1;
 
 	// arc5random_buf ...
 	// b64enc ..
-	authority_challenge.challenges[i].in_use = 1;
-	strlcpy(authority_challenge.challenges[i].secret, yo,
-	    sizeof(authority_challenge.challenges[i].secret));
+	//authority_challenge.challenges[i].in_use = 1;
+	//strlcpy(authority_challenge.challenges[i].secret, yo,
+	//    sizeof(authority_challenge.challenges[i].secret));
 	return 0;
 }
 
@@ -1241,7 +1199,7 @@ authority_bootstrap_dialin(struct mdr *m, struct mdr *msg, struct xerr *e)
 	if (mdr_unpack_payload(msg, msg_bootstrap_dialin, m_out, 1) == MDR_FAIL)
 		return XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
 
-	if (m_out[0].v.s.sz != CERTDB_BOOTSTRAP_KEY_LENGTH)
+	if (m_out[0].v.s.sz != CERTALATOR_BOOTSTRAP_KEY_LENGTH)
 		return XERRF(e, XLOG_APP, XLOG_BADMSG,
 		    "bootstrap key received from client has incorrect length");
 
@@ -1393,19 +1351,17 @@ load_keys()
 int
 mdrd_backend()
 {
-	int               r;
+	int               r, fd;
 	struct mdr        m, msg;
 	char              buf[32768];
 	uint64_t          id;
-	int               fd;
 	X509             *peer_cert = NULL;
 	X509_STORE_CTX   *ctx;
 	struct sigaction  act;
 	struct xerr       e;
 	struct mdr_in     m_in[5];
-	struct stat       st;
 
-	xlog_init(program, NULL, NULL, 1);
+	xlog_init(CERTALATOR_PROGNAME, NULL, NULL, 1);
 
 	sigemptyset(&act.sa_mask);
 	act.sa_flags = 0;
@@ -1418,41 +1374,14 @@ mdrd_backend()
 
 	load_keys();
 
-	task_lock_fd = open(certalator_conf.lock_file, O_RDWR|O_CREAT, 0600);
-	if (task_lock_fd == -1) {
-		xlog_strerror(LOG_ERR, errno, "%s: open: %s", __func__,
-		    certalator_conf.lock_file);
-		return 1;
-	}
-
-	if ((fd = shm_open(CERTALATOR_SHM, O_RDWR|O_CREAT, 0600)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "%s: shm_open", __func__);
-		return 1;
-	}
-
-	if (fstat(fd, &st) == -1) {
-		xlog_strerror(LOG_ERR, errno, "%s: fstat", __func__);
-		return 1;
-	}
-	if (st.st_uid != getuid() || st.st_gid != getgid()) {
-		xlog(LOG_ERR, NULL, "%s: shared memory handle %s is not owned "
-		    "by us; exiting", __func__, CERTALATOR_SHM);
-		return 1;
-	}
-
-	shared_tasks = mmap(NULL, sizeof(struct shared_tasks),
-	    PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-	if (shared_tasks == MAP_FAILED) {
-		xlog_strerror(LOG_ERR, errno, "%s: mmap", __func__);
-		return 1;
-	}
-
 	if ((ctx = X509_STORE_CTX_new()) == NULL) {
 		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
 		return 1;
 	}
 
+	// TODO: we'll end up polling here between stdin and the agent's
+	// unix socket in case we get a control message of some sort.
 	while ((r = mdr_read_from_fd(&m, MDR_F_NONE,
 	    0, buf, sizeof(buf))) > 0) {
 		if (r == MDR_FAIL) {
@@ -1714,19 +1643,7 @@ main(int argc, char **argv)
 		return -1;
 	}
 
-	if (mdr_register_builtin_specs() == MDR_FAIL)
-		err(1, "mdr_register_builtin_specs");
-	if ((msg_bootstrap_setup =
-	    mdr_register_spec(&msgdef_bootstrap_setup)) == NULL)
-		err(1, "mdr_register_spec");
-	if ((msg_bootstrap_dialin =
-	    mdr_register_spec(&msgdef_bootstrap_dialin)) == NULL)
-		err(1, "mdr_register_spec");
-	if ((msg_pack_beresp = mdr_registry_get(MDR_DCV_MDRD_BERESP)) == NULL)
-		err(1, "mdr_registry_get");
-	if ((msg_pack_beresp_wmsg =
-	    mdr_registry_get(MDR_DCV_MDRD_BERESP_WMSG)) == NULL)
-		err(1, "mdr_registry_get");
+	load_mdr_defs();
 
 	if (strcmp(command, "verify") == 0) {
 		if (opt >= argc)

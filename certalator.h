@@ -1,6 +1,21 @@
 #ifndef CERTALATOR_H
 #define CERTALATOR_H
 
+#include <limits.h>
+#include "mdr_certalator.h"
+
+#define MAX_HEX_SERIAL_LENGTH 32
+#define MAX_ACTIVE_CHALLENGES 32
+
+#define CERTALATOR_PROGNAME "certalator"
+#define CERTALATOR_AGENT_PROGNAME "certalator-agent"
+
+#define CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64 64
+#define CERTALATOR_BOOTSTRAP_KEY_LENGTH     48
+#define CERTALATOR_CHALLENGE_LENGTH     64
+#define CERTALATOR_REQ_ID_LENGTH        64 /* getpid() + two 64-bit uints to string, so ~50 */
+
+
 #define CERTALATOR_MAX_SUBJET_LENGTH 1024
 #define CERTALATOR_MAX_SAN_LENGTH    512
 #define CERTALATOR_MAX_SANS          16
@@ -15,5 +30,27 @@
 #define ROLE_BOOTSTRAP "bootstrap"
 #define ROLE_ADMIN     "admin"
 #define ROLE_AGENT     "agent"
+
+struct certalator_flatconf {
+	int      enable_coredumps;
+	char     authority_fqdn[256];
+	uint64_t authority_port;
+	char     certdb_path[PATH_MAX];
+	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH + 1];
+	char     ca_file[PATH_MAX];
+	char     crl_file[PATH_MAX];
+	char     key_file[PATH_MAX];
+	char     cert_file[PATH_MAX];
+	char     lock_file[PATH_MAX];
+	char     coordinator_sock_path[PATH_MAX];
+	uint64_t key_bits;
+	char     serial_file[PATH_MAX];
+	char     cert_org[256];
+	char     cert_email[512];
+
+	/* Leave space for "0x" and terminating zero */
+	char     min_serial[MAX_HEX_SERIAL_LENGTH + 3];
+	char     max_serial[MAX_HEX_SERIAL_LENGTH + 3];
+};
 
 #endif

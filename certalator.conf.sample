@@ -11,3 +11,4 @@ key_file = "/home/plalonde/prog/certalator/client1/overnet_key.pem"
 key_bits = 4096
 
 lock_file = "/home/plalonde/prog/certalator/lock"
+coordinator_socket_path = "/home/plalonde/prog/certalator/.coordinator.sock"

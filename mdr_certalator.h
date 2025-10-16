@@ -43,4 +43,19 @@
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_CERT \
     MDR_DCV(0x00000002, 0x0007, 0x0000)
 
+/*
+ * Messages between certalator and its coorinator to share a challenge from
+ * our authority internally.
+ */
+#define MDR_DCV_CERTALATOR_COORD_SAVE_CERT_CHALLENGE \
+    MDR_DCV(0x00000002, 0x0008, 0x0000)
+#define MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE \
+    MDR_DCV(0x00000002, 0x0009, 0x0000)
+#define MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE_RESP \
+    MDR_DCV(0x00000002, 0x000A, 0x0000)
+#define MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE_RESP_NOTFOUND \
+    MDR_DCV(0x00000002, 0x000A, 0x0001)
+
+void load_mdr_defs();
+
 #endif
