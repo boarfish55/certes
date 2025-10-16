@@ -24,6 +24,7 @@ enum xerr_code {
 	XLOG_RANGE,             /* Value exceeds allowed range */
 	XLOG_SHORTIO,           /* Short read/write */
 	XLOG_BADMSG,            /* Bad message format */
+	XLOG_TIMEOUT,           /* Operation timed out */
 	XLOG_WOULDBLOCK,        /* Operation would block but
 				   is set non-blocking */
 	XLOG_NAMETOOLONG,       /* Specified name is too long for limit */

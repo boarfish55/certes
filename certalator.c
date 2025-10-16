@@ -47,6 +47,7 @@ extern const struct mdr_spec *msg_pack_beresp;
 extern const struct mdr_spec *msg_pack_beresp_wmsg;
 extern const struct mdr_spec *msg_coord_save_cert_challenge;
 extern const struct mdr_spec *msg_coord_get_cert_challenge;
+extern const struct mdr_spec *msg_coord_get_cert_challenge_resp;
 
 struct certalator_flatconf certalator_conf = {
 	0,
@@ -1091,12 +1092,14 @@ FILE *
 agent_bootstrap_dialin(struct xerr *e)
 {
 	struct mdr       m;
-	char             buf[64];
+	char             buf[1024];
 	char            *subject = NULL;
 	char             req_id[CERTALATOR_REQ_ID_LENGTH];
 	char             challenge[CERTALATOR_CHALLENGE_LENGTH];
 	struct mdr_in    m_in[2];
+	struct mdr_out   m_out[1];
 	struct timespec  now;
+	int              try;
 
 	if (strlen(certalator_conf.bootstrap_key) !=
 	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64) {
@@ -1133,26 +1136,52 @@ agent_bootstrap_dialin(struct xerr *e)
 		return NULL;
 	}
 
-	// TODO: Poll our coordinator to see if we received the challenge.
-	// TODO: wrong, need to use mdr!!
-	m_in[0].type = MDR_S;
-	m_in[0].v.s.bytes = req_id;
-	if (mdr_pack(&m, buf, sizeof(buf), msg_coord_get_cert_challenge,
-	    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno,
-		    "mdr_pack/msg_coord_get_cert_challenge");
+	for (try = 0; try < 10; try++) {
+		m_in[0].type = MDR_S;
+		m_in[0].v.s.bytes = req_id;
+		if (mdr_pack(&m, buf, sizeof(buf), msg_coord_get_cert_challenge,
+		    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
+			XERRF(e, XLOG_ERRNO, errno,
+			    "mdr_pack/msg_coord_get_cert_challenge");
+			return NULL;
+		}
+
+		if (coordinator_send(&m, xerrz(e)) == -1) {
+			XERR_PREPENDFN(e);
+			return NULL;
+		}
+
+		if (coordinator_recv(&m, buf, sizeof(buf), xerrz(e)) == -1) {
+			XERR_PREPENDFN(e);
+			return NULL;
+		}
+
+		if (mdr_dcv(&m) ==
+		    MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE_RESP)
+			break;
+
+		/* Retry for any other answer */
+	}
+
+	if (try == 10) {
+		XERRF(e, XLOG_APP, XLOG_TIMEOUT, "challenge timed out");
 		return NULL;
 	}
 
-	if (coordinator_send(&m, xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
+	if (mdr_unpack_payload(&m, msg_coord_get_cert_challenge_resp,
+	    m_out, 1) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
 		return NULL;
 	}
+
+	strlcpy(challenge, m_out[1].v.s.bytes, sizeof(challenge));
 
 	// TODO: then create the new req to be signed. We mostly need this
 	// for the public key; the rest is populated by the authority.
 	if (agent_new_req(subject) == -1)
 		return NULL;
+
+	// TODO: send the req along with the challenge
 
 	return NULL;
 }
