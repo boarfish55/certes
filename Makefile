@@ -2,8 +2,8 @@ CC = cc
 CFLAGS = -Wall -g
 LIBS = -lcrypto -lssl -ltls
 SRCS = certalator.c coordinator.c flatconf.c xlog.c util.c mdr.c mdr_mdrd.c \
-       certdb.c mdr_certalator.c
-OBJS = config_vars.o xlog.o util.o mdr.o mdr_mdrd.o
+       certdb.c mdr_certalator.c authority.c cert.c
+OBJS = config_vars.o xlog.o util.o mdr.o mdr_mdrd.o authority.o cert.o
 YACC = yacc
 
 all: certalator

@@ -1,5 +1,9 @@
+#include <sys/file.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -158,4 +162,59 @@ strlist_split(char ***strlist, const char *src, size_t src_len)
 	*strlist_p = NULL;
 
 	return sz;
+}
+
+int
+b64enc(char *dst, size_t dst_sz, const uint8_t *bytes, size_t sz)
+{
+	BIO *b, *b64;
+
+	if ((b64 = BIO_new(BIO_f_base64())) == NULL)
+		return -1;
+
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	if ((b = BIO_new(BIO_s_mem())) == NULL) {
+		BIO_free(b64);
+		return -1;
+	}
+	BIO_push(b64, b);
+
+	if (BIO_write(b64, bytes, sizeof(sz)) <= 0) {
+		BIO_free_all(b64);
+		return -1;
+	}
+	BIO_flush(b64);
+
+	if (BIO_read(b, dst, dst_sz) != dst_sz) {
+		BIO_free_all(b64);
+		errno = EAGAIN;
+		return -1;
+	}
+
+	BIO_free_all(b64);
+	return 0;
+}
+
+int
+open_wflock(const char *path, int flags, mode_t mode, int lk)
+{
+	int             fd;
+	struct timespec tp = {0, 1000000}, req, rem;  /* 1ms */
+
+	for (;;) {
+		if ((fd = open(path, flags, mode)) == -1)
+			return -1;
+
+		if (flock(fd, lk|LOCK_NB) == 0)
+			return fd;
+
+		if (errno != EWOULDBLOCK)
+			break;
+
+		close(fd);
+		memcpy(&req, &tp, sizeof(req));
+		while (nanosleep(&req, &rem) == -1)
+			memcpy(&req, &rem, sizeof(req));
+	}
+	return -1;
 }

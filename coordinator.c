@@ -1,4 +1,5 @@
 #include <sys/file.h>
+#include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/tree.h>
 #include <sys/un.h>
@@ -14,10 +15,6 @@
 #include "certalator.h"
 
 extern struct certalator_flatconf certalator_conf;
-extern const struct mdr_spec *msg_coord_save_cert_challenge;
-extern const struct mdr_spec *msg_coord_get_cert_challenge;
-extern const struct mdr_spec *msg_coord_get_cert_challenge_resp;
-extern const struct mdr_spec *msg_coord_get_cert_challenge_resp_notfound;
 
 static int  coordinator_start();
 static int  coordinator_connect(struct xerr *);
@@ -188,7 +185,7 @@ coordinator_rcv_challenge(struct mdr *m, struct xerr *e)
 	}
 
 	strlcpy(chal->req_id, m_out[0].v.s.bytes, sizeof(chal->req_id));
-	strlcpy(chal->challenge, m_out[1].v.s.bytes, sizeof(chal->challenge));
+	strlcpy(chal->challenge, m_out[1].v.b.bytes, MIN(m_out[1].v.b.sz, sizeof(chal->challenge)));
 	clock_gettime(CLOCK_REALTIME, &chal->created_at);
 	SPLAY_INSERT(challenge_tree, &challenges, chal);
 
@@ -220,8 +217,9 @@ coordinator_get_challenge(struct mdr *m, struct xerr *e)
 		}
 	} else {
 		SPLAY_REMOVE(challenge_tree, &challenges, chal);
-		m_in[0].type = MDR_S;
-		m_in[0].v.s.bytes = chal->challenge;
+		m_in[0].type = MDR_B;
+		m_in[0].v.b.bytes = chal->challenge;
+		m_in[0].v.b.sz = sizeof(chal->challenge);
 		if (mdr_pack(&resp, buf, sizeof(buf),
 		    msg_coord_get_cert_challenge_resp,
 		    MDR_F_NONE, m_in, 1) == MDR_FAIL)

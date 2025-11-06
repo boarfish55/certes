@@ -13,6 +13,8 @@ struct mdr_def msgdef_bootstrap_setup = {
 		MDR_LAST
 	}
 };
+const struct mdr_spec *msg_bootstrap_setup;
+
 struct mdr_def msgdef_bootstrap_dialin = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN,
 	"certalator.bootstrap_dialin",
@@ -23,15 +25,29 @@ struct mdr_def msgdef_bootstrap_dialin = {
 		MDR_LAST
 	}
 };
+const struct mdr_spec *msg_bootstrap_dialin;
+
+struct mdr_def msgdef_answer_challenge = {
+	MDR_DCV_CERTALATOR_ANSWER_CHALLENGE,
+	"certalator.answer_challenge",
+	{
+		MDR_B,   /* Challenge */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_answer_challenge;
+
 struct mdr_def msgdef_coord_save_cert_challenge = {
 	MDR_DCV_CERTALATOR_COORD_SAVE_CERT_CHALLENGE,
 	"certalator.coord_save_cert_challenge",
 	{
 		MDR_S,   /* Request ID */
-		MDR_S,   /* Challenge */
+		MDR_B,   /* Challenge */
 		MDR_LAST
 	}
 };
+const struct mdr_spec *msg_coord_save_cert_challenge;
+
 struct mdr_def msgdef_coord_get_cert_challenge = {
 	MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE,
 	"certalator.coord_get_cert_challenge",
@@ -40,14 +56,18 @@ struct mdr_def msgdef_coord_get_cert_challenge = {
 		MDR_LAST
 	}
 };
+const struct mdr_spec *msg_coord_get_cert_challenge;
+
 struct mdr_def msgdef_coord_get_cert_challenge_resp = {
 	MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE_RESP,
 	"certalator.coord_get_cert_challenge_resp",
 	{
-		MDR_S,   /* Challenge */
+		MDR_B,   /* Challenge */
 		MDR_LAST
 	}
 };
+const struct mdr_spec *msg_coord_get_cert_challenge_resp;
+
 struct mdr_def msgdef_coord_get_cert_challenge_notfound = {
 	MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE_RESP_NOTFOUND,
 	"certalator.coord_get_cert_challenge_notfound",
@@ -55,13 +75,9 @@ struct mdr_def msgdef_coord_get_cert_challenge_notfound = {
 		MDR_LAST
 	}
 };
-
-const struct mdr_spec *msg_bootstrap_setup;
-const struct mdr_spec *msg_bootstrap_dialin;
-const struct mdr_spec *msg_coord_save_cert_challenge;
-const struct mdr_spec *msg_coord_get_cert_challenge;
-const struct mdr_spec *msg_coord_get_cert_challenge_resp;
 const struct mdr_spec *msg_coord_get_cert_challenge_resp_notfound;
+
+/* Built-ins */
 const struct mdr_spec *msg_pack_beresp;
 const struct mdr_spec *msg_pack_beresp_wmsg;
 
@@ -79,6 +95,10 @@ load_mdr_defs()
 	    mdr_register_spec(&msgdef_bootstrap_dialin)) == NULL)
 		err(1, "mdr_register_spec");
 
+	if ((msg_answer_challenge =
+	    mdr_register_spec(&msgdef_answer_challenge)) == NULL)
+		err(1, "mdr_register_spec");
+
 	if ((msg_coord_save_cert_challenge =
 	    mdr_register_spec(&msgdef_coord_save_cert_challenge)) == NULL)
 		err(1, "mdr_register_spec");
@@ -92,7 +112,8 @@ load_mdr_defs()
 		err(1, "mdr_register_spec");
 
 	if ((msg_coord_get_cert_challenge_resp_notfound =
-	    mdr_register_spec(&msgdef_coord_get_cert_challenge_notfound)) == NULL)
+	    mdr_register_spec(&msgdef_coord_get_cert_challenge_notfound))
+	    == NULL)
 		err(1, "mdr_register_spec");
 
 	if ((msg_pack_beresp = mdr_registry_get(MDR_DCV_MDRD_BERESP)) == NULL)
