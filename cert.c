@@ -9,8 +9,8 @@
 
 extern struct certalator_flatconf certalator_conf;
 
-int          NID_overnet_roles;
-int          NID_overnet_roles_idx;
+int          NID_certalator_roles;
+int          NID_certalator_roles_idx;
 X509_STORE  *store = NULL;
 
 void
@@ -18,14 +18,14 @@ cert_init()
 {
 	if ((store = X509_STORE_new()) == NULL)
 		err(1, "X509_STORE_new");
-	NID_overnet_roles = OBJ_create("1.3.6.1.4.1.35910.3.1",
-	    "overnetRoles", "Overnet Security Roles");
-	if (NID_overnet_roles == NID_undef)
+	NID_certalator_roles = OBJ_create("1.3.6.1.4.1.35910.3.1",
+	    "certalatorRoles", "Certalator Security Roles");
+	if (NID_certalator_roles == NID_undef)
 		err(1, "OBJ_create");
 }
 
 ssize_t
-cert_decode_overnet_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
+cert_decode_certalator_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
 {
 	ASN1_OCTET_STRING   *asn1str;
 	STACK_OF(ASN1_TYPE) *seq;
@@ -60,7 +60,7 @@ cert_decode_overnet_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
 }
 
 X509_EXTENSION *
-cert_encode_overnet_roles(const char **roles)
+cert_encode_certalator_roles(const char **roles)
 {
 	const char          **role;
 	X509_EXTENSION       *ex;
@@ -102,7 +102,7 @@ cert_encode_overnet_roles(const char **roles)
 	free(data);
 
 	// TODO: leak?
-	ex = X509_EXTENSION_create_by_NID(NULL, NID_overnet_roles, 0, asn1str);
+	ex = X509_EXTENSION_create_by_NID(NULL, NID_certalator_roles, 0, asn1str);
 	ASN1_OCTET_STRING_free(asn1str);
 	if (ex == NULL) {
 		return NULL;
@@ -122,14 +122,14 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 	const unsigned char *p;
 	int                  found = 0;
 
-	roles_idx = X509_get_ext_by_NID(crt, NID_overnet_roles, -1);
+	roles_idx = X509_get_ext_by_NID(crt, NID_certalator_roles, -1);
 	if (roles_idx == -1)
 		return XERRF(e, XLOG_APP, XLOG_SSLEXTNIDNOTFOUND,
-		    "%s: overnetRoles extension NID not found", __func__);
+		    "%s: certalatorRoles extension NID not found", __func__);
 
 	if ((ext = X509_get_ext(crt, roles_idx)) == NULL)
 		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
-		    "%s: overnetRoles extension not found", __func__);
+		    "%s: certalatorRoles extension not found", __func__);
 
 	asn1str = X509_EXTENSION_get_data(ext);
 	p = asn1str->data;
@@ -190,10 +190,10 @@ cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
 	X509_STORE_CTX_cleanup(ctx);
 
 	// TODO: remove, no need during verify
-	//roles_idx = X509_get_ext_by_NID(crt, NID_overnet_roles, -1);
+	//roles_idx = X509_get_ext_by_NID(crt, NID_certalator_roles, -1);
 	//if (roles_idx == -1)
 	//	xlog(LOG_ERR, NULL,
-	//	    "%s: overnetRoles extension not found", __func__);
+	//	    "%s: certalatorRoles extension not found", __func__);
 
 	//if ((ex = X509_get_ext(crt, roles_idx)) == NULL) {
 	//	xlog(LOG_ERR, NULL, "X509_get_ext: %s",
@@ -215,7 +215,7 @@ cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
 	//	    (CERTALATOR_MAX_ROLES * sizeof(char *)) +
 	//	    (i * CERTALATOR_MAX_ROLE_LENGTH);
 
-	//n = decode_overnet_roles(ex, roles, CERTALATOR_MAX_ROLES);
+	//n = decode_certalator_roles(ex, roles, CERTALATOR_MAX_ROLES);
 	//if (n == -1) {
 	//	free(roles);
 	//	return -1;
@@ -373,7 +373,7 @@ int
 cert_add_ext(X509V3_CTX *ctx, X509 *crt, int nid, char *value)
 {
 	X509_EXTENSION *ex;
-	if (!(ex = X509V3_EXT_conf_nid(NULL, ctx, nid, value)))
+	if ((ex = X509V3_EXT_conf_nid(NULL, ctx, nid, value)) == NULL)
 		return 0;
 	return X509_add_ext(crt, ex, -1);
 }
@@ -476,7 +476,7 @@ cert_sign(X509 *crt, X509 *issuer, EVP_PKEY *key, const char **roles)
 
 	// TODO: need to add the subjectAltNames
 
-	ex = cert_encode_overnet_roles(roles);
+	ex = cert_encode_certalator_roles(roles);
 	if (!X509_add_ext(newcrt, ex, -1)) {
 		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
 		return NULL;
@@ -497,7 +497,7 @@ cert_new_privkey()
 	EVP_PKEY     *pkey = NULL;
 	FILE         *f;
 
-	if ((ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL)) == NULL)
+	if ((ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL)) == NULL)
 		goto fail;
 
 	if (EVP_PKEY_keygen_init(ctx) <= 0)

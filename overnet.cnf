@@ -1,8 +1,8 @@
 dir                     = ca
-oid_section             = overnet_oids
+oid_section             = certalator_oids
 
-[overnet_oids]
-overnetRoles            = 1.3.6.1.4.1.35910.3.1
+[certalator_oids]
+certalatorRoles         = 1.3.6.1.4.1.35910.3.1
 
 [ca]
 default_ca              = overnet_ca
@@ -34,13 +34,13 @@ keyUsage                = critical,nonRepudiation,digitalSignature,keyEncipherme
 extendedKeyUsage        = serverAuth,clientAuth
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer
-overnetRoles            = ASN1:SEQUENCE:client_roles
+certalatorRoles         = ASN1:SEQUENCE:client_roles
 
 [client_roles]
-overnetRoles.0          = IA5:yo
-overnetRoles.1          = IA5:ya
-overnetRoles.2          = IA5:yiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyi
-overnetRoles.3          = IA5:yiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyi
+certalatorRoles.0       = IA5:yo
+certalatorRoles.1       = IA5:ya
+certalatorRoles.2       = IA5:yiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyi
+certalatorRoles.3       = IA5:yiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyi
 
 [root_ext]
 basicConstraints        = critical,CA:true
@@ -50,8 +50,8 @@ authorityKeyIdentifier  = keyid:always,issuer
 overnetRoles            = ASN1:SEQUENCE:ca_roles
 
 [ca_roles]
-overnetRoles.0          = IA5:ca
-overnetRoles.1          = IA5:assume_role
+certalatorRoles.0       = IA5:ca
+certalatorRoles.1       = IA5:assume_role
 
 [req]
 default_bits            = 4096

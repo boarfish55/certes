@@ -27,15 +27,45 @@ struct mdr_def msgdef_bootstrap_dialin = {
 };
 const struct mdr_spec *msg_bootstrap_dialin;
 
-struct mdr_def msgdef_answer_challenge = {
-	MDR_DCV_CERTALATOR_ANSWER_CHALLENGE,
-	"certalator.answer_challenge",
+struct mdr_def msgdef_bootstrap_answer_challenge = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER_CHALLENGE,
+	"certalator.bootstrap_answer_challenge",
 	{
 		MDR_B,   /* Challenge */
 		MDR_LAST
 	}
 };
-const struct mdr_spec *msg_answer_challenge;
+const struct mdr_spec *msg_bootstrap_answer_challenge;
+
+struct mdr_def msgdef_bootstrap_dialin_resp = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP,
+	"certalator.bootstrap_dialin_resp",
+	{
+		MDR_S,   /* cert subject */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_bootstrap_dialin_resp;
+
+struct mdr_def msgdef_bootstrap_dialin_resp_failed = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED,
+	"certalator.bootstrap_dialin_resp_failed",
+	{
+		MDR_U8,  /* Error code */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_bootstrap_dialin_resp_failed;
+
+struct mdr_def msgdef_bootstrap_req = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_REQ,
+	"certalator.bootstrap_req",
+	{
+		MDR_B,   /* X509_REQ */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_bootstrap_req;
 
 struct mdr_def msgdef_coord_save_cert_challenge = {
 	MDR_DCV_CERTALATOR_COORD_SAVE_CERT_CHALLENGE,
@@ -95,8 +125,8 @@ load_mdr_defs()
 	    mdr_register_spec(&msgdef_bootstrap_dialin)) == NULL)
 		err(1, "mdr_register_spec");
 
-	if ((msg_answer_challenge =
-	    mdr_register_spec(&msgdef_answer_challenge)) == NULL)
+	if ((msg_bootstrap_answer_challenge =
+	    mdr_register_spec(&msgdef_bootstrap_answer_challenge)) == NULL)
 		err(1, "mdr_register_spec");
 
 	if ((msg_coord_save_cert_challenge =

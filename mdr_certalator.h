@@ -22,9 +22,9 @@ extern const struct mdr_spec *msg_bootstrap_dialin;
  * A client (agent) sends echoes back the challenge issued by the authority,
  * proving that it lives at the address it's supposed to.
  */
-#define MDR_DCV_CERTALATOR_ANSWER_CHALLENGE \
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER_CHALLENGE \
     MDR_DCV(0x00000002, 0x0003, 0x0000)
-extern const struct mdr_spec *msg_answer_challenge;
+extern const struct mdr_spec *msg_bootstrap_answer_challenge;
 
 /*
  * The authority replies with the certificate parameters so the agent
@@ -32,7 +32,8 @@ extern const struct mdr_spec *msg_answer_challenge;
  */
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP \
     MDR_DCV(0x00000002, 0x0004, 0x0000)
-
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED \
+    MDR_DCV(0x00000002, 0x0004, 0x0001)
 /*
  * The authority dials back to the client that dialed in to validate
  * its CommonName and send the bootstrap parameters (validity, roles, SANs).

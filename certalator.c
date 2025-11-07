@@ -1,5 +1,7 @@
+#include <arpa/inet.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <openssl/asn1t.h>
 #include <openssl/err.h>
@@ -262,33 +264,39 @@ usage()
 }
 
 int
-agent_new_req(const char *subject)
+agent_new_req(const char *subject, unsigned char **req_buf, size_t *req_len,
+    struct xerr *e)
 {
-	// TODO: look at acme-client/keyproc.c:77
-	X509_REQ  *req;
-	X509_NAME *name = NULL;
-	char      *token, *field, *value, *t;
-	char      *save1, *save2;
-	char       subject2[CERTALATOR_MAX_SUBJET_LENGTH];
+	/* Inspired by OpenBSD's acme-client/keyproc.c:77 */
+	X509_REQ                 *req;
+	X509_NAME                *name = NULL;
+	X509_EXTENSION           *ex;
+	char                     *token, *field, *value, *t;
+	char                     *save1, *save2;
+	char                      subject2[CERTALATOR_MAX_SUBJET_LENGTH];
+	char                     *sans = NULL;
+	STACK_OF(X509_EXTENSION) *exts;
+	int                       sockfd;
+	struct sockaddr_in6       addr;
+	socklen_t                 slen = sizeof(addr);
+	char                      taddr[INET6_ADDRSTRLEN];
 
-	if ((req = X509_REQ_new()) == NULL) {
-		warnx("X509_REQ_new");
-		return -1;
-	}
+	if ((req = X509_REQ_new()) == NULL)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_new");
 
 	if (!X509_REQ_set_version(req, 2)) {
-		warnx("X509_REQ_set_version");
-		return -1;
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_set_version");
+		goto fail;
 	}
 
 	if (!X509_REQ_set_pubkey(req, agent_key)) {
-		warnx("X509_REQ_set_pubkey");
-		return -1;
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_set_pubkey");
+		goto fail;
 	}
 
 	if ((name = X509_NAME_new()) == NULL) {
-		warnx("X509_NAME_new");
-		return -1;
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_NAME_new");
+		goto fail;
 	}
 
 	strlcpy(subject2, subject, sizeof(subject2));
@@ -301,59 +309,119 @@ agent_new_req(const char *subject)
 		if (strcmp(token, "") == 0)
 			continue;
 
-		printf("token: %s\n", token);
-
 		field = strtok_r(token, "=", &save2);
 		if (field == NULL) {
-			// TODO: error, malformed
-			break;
+			XERRF(e, XLOG_APP, XLOG_INVAL, "malformed subject");
+			goto fail;
 		}
 
 		if (strcmp(field, "CN") != 0 &&
 		    strcmp(field, "O") != 0 &&
 		    strcmp(field, "emailAddress") != 0) {
-			// TODO: error, unsupported subject field
-			break;
+			XERRF(e, XLOG_APP, XLOG_INVAL,
+			    "unsupported subject field %s", field);
+			goto fail;
 		}
 
 		value = strtok_r(NULL, "=", &save2);
 		if (value == NULL) {
-			// TODO: error, malformed
-			break;
+			XERRF(e, XLOG_APP, XLOG_INVAL, "malformed subject");
+			goto fail;
 		}
 
 		if (!X509_NAME_add_entry_by_txt(name, field,
 		    MBSTRING_ASC, (unsigned char *)value, -1, -1, 0)) {
-			warnx("X509_NAME_add_entry_by_txt: %s=%s",
-			    field, value);
-			return -1;
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_NAME_add_entry_by_txt: %s=%s", field, value);
+			goto fail;
 		}
 
 	}
 
 	if (!X509_REQ_set_subject_name(req, name)) {
-		warnx("X509_req_set_subject_name");
-		return -1;
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "X509_req_set_subject_name");
+		goto fail;
+	}
+	name = NULL;
+
+	if ((exts = sk_X509_EXTENSION_new_null()) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "sk_X509_EXTENSION_new_null");
+		goto fail;
 	}
 
-	err(1, "not implemented");
-	// TODO: must return a FILE pointer to the cert.
+	if (BIO_get_fd(agent_bio, &sockfd) <= 0) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_get_fd");
+		goto fail;
+	}
+	if (getsockname(sockfd, (struct sockaddr *)&addr, &slen) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "getsockname");
+		goto fail;
+	}
+	if (slen > sizeof(addr)) {
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "sock name does not fit in sockaddr");
+		goto fail;
+	}
+	if (inet_ntop(addr.sin6_family, &addr, taddr, slen) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "inet_ntop");
+		goto fail;
+	}
+	if (asprintf(&sans, "iPAddress:%s", taddr) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "asprintf");
+		goto fail;
+	}
+
+        if (!(ex = X509V3_EXT_conf_nid(NULL, NULL,
+	    NID_subject_alt_name, sans))) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509V3_EXT_conf_nid");
+		goto fail;
+	}
+	sk_X509_EXTENSION_push(exts, ex);
+	if (!X509_REQ_add_extensions(req, exts)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_add_extensions");
+		goto fail;
+        }
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+
+	if (!X509_REQ_sign(req, agent_key, EVP_sha256())) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
+		goto fail;
+        }
+
+	/*
+	 * Serialise to DER
+	 */
+	if ((*req_len = i2d_X509_REQ(req, NULL)) < 0) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509_REQ");
+		goto fail;
+	}
+	if ((*req_buf = malloc(*req_len)) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+	i2d_X509_REQ(req, req_buf);
+
+	/*
+	 * We don't need to fully populate the REQ. We should add a SANS for
+	 * our IP address so the dialback works. The authority will take care
+	 * of adding all configured SANs to the cert during signing.
+	 */
+
+	// TODO: leak? double-free?
+	X509_REQ_free(req);
+	free(sans);
 	return 0;
+fail:
+	X509_REQ_free(req);
+	if (name != NULL)
+		X509_NAME_free(name);
+	if (sans != NULL)
+		free(sans);
+	return -1;
 }
 
-// TODO: client-side for the above; given a challenge and roles, we can
-// generate a REQ with those roles, create our REQ and pick and DNS/CommonName
-// we can answer to, then contact the server, passing the challenge to get the
-// REQ signed. This can also generate the private key.
-//
-//
-// We'll need to know:
-// - The subject name
-// - The subjectAltName (possibly multiple)
-// - NOT the roles associated with with the challenge;
-//   those are kept server-side
-// - Validity period (capped by the server, but could be shorter)
-// Most other things are decided by the cert issuer.
 /*
  * Contact the authority to send our bootstrap key in order to obtain
  * our certificate parameters and create our key and REQ.
@@ -365,11 +433,12 @@ agent_bootstrap_dialin(struct xerr *e)
 	char             buf[1024];
 	char            *subject = NULL;
 	char             req_id[CERTALATOR_REQ_ID_LENGTH];
-	char             challenge[CERTALATOR_CHALLENGE_LENGTH];
 	struct mdr_in    m_in[2];
 	struct mdr_out   m_out[1];
 	struct timespec  now;
 	int              try;
+	unsigned char   *req_buf;
+	size_t           req_len;
 
 	if (strlen(certalator_conf.bootstrap_key) !=
 	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64) {
@@ -383,7 +452,6 @@ agent_bootstrap_dialin(struct xerr *e)
 	 * then use to find the challenge sent to us on another connection.
 	 */
 	clock_gettime(CLOCK_REALTIME, &now);
-
 	if (snprintf(req_id, sizeof(req_id), "%d-%lu.%lu", getpid(),
 	    now.tv_sec, now.tv_nsec) >= sizeof(req_id)) {
 		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
@@ -406,6 +474,10 @@ agent_bootstrap_dialin(struct xerr *e)
 		return NULL;
 	}
 
+	/*
+	 * The coordinator should be receiving a challenge from the authority,
+	 * so let's poll for a bit to see if we got it.
+	 */
 	for (try = 0; try < 10; try++) {
 		m_in[0].type = MDR_S;
 		m_in[0].v.s.bytes = req_id;
@@ -432,7 +504,6 @@ agent_bootstrap_dialin(struct xerr *e)
 
 		/* Retry for any other answer */
 	}
-
 	if (try == 10) {
 		XERRF(e, XLOG_APP, XLOG_TIMEOUT, "challenge timed out");
 		return NULL;
@@ -444,14 +515,30 @@ agent_bootstrap_dialin(struct xerr *e)
 		return NULL;
 	}
 
-	strlcpy(challenge, m_out[1].v.s.bytes, sizeof(challenge));
-	// TODO: Send MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER_CHALLENGE
-	// to respond to the authority.
-
-	// TODO: Receive DIALIN_RESP along with cert params
-
-	if (agent_new_req(subject) == -1)
+	/*
+	 * Send the challenge back to the authority.
+	 */
+	m_in[0].type = MDR_B;
+	m_in[0].v.s.bytes = m_out[1].v.s.bytes;
+	m_in[0].v.s.sz = m_out[1].v.s.sz;
+	if (mdr_pack(&m, buf, sizeof(buf), msg_bootstrap_answer_challenge,
+	    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "mdr_pack/msg_bootstrap_dialin");
 		return NULL;
+	}
+	if (agent_send(&m, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return NULL;
+	}
+
+	// TODO: Receive DIALIN_RESP, see if we succeeded the challenge
+
+	if (agent_new_req(subject, &req_buf, &req_len, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return NULL;
+	}
+
+	// TODO: we send MDR_DCV_CERTALATOR_BOOTSTRAP_REQ
 
 	return NULL;
 }
