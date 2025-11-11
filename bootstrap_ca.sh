@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 rm -rf ca
 mkdir -p ca/certs ca/private
 chmod 700 ca/private
@@ -35,7 +37,7 @@ openssl req -nodes -config overnet.cnf -newkey rsa \
 	-keyout client1/key.pem -keyform PEM \
 	-out client1/req.pem -outform PEM \
 	-subj "/O=Overnet/CN=client1.overnet.ca" \
-	-addext "subjectAltName = DNS:client1.overnet.ca"
+	-addext "subjectAltName=DNS:client1.overnet.ca,IP:172.16.5.14,IP:fe80::c2a5:e8ff:fe29:5874"
 # Sign client1 cert & verify
 yes | openssl ca -config overnet.cnf -in client1/req.pem -out client1/cert.pem
 openssl verify -CAfile ca/overnet.pem client1/cert.pem
@@ -61,5 +63,5 @@ openssl crl -in ca/overnet.crl -text -noout -CAfile ca/overnet.pem
 
 # Test and see if client2's cert is indeed revoked, as it should
 openssl verify -CAfile ca/overnet.pem -CRLfile ca/overnet.crl \
-	-crl_check client2/cert.pem
+	-crl_check client2/cert.pem || true
 

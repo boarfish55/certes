@@ -246,6 +246,42 @@ agent_send(struct mdr *m, struct xerr *e)
 
 }
 
+int
+agent_recv(struct mdr *m, char *buf, size_t buf_sz, struct xerr *e)
+{
+	int r, count = 0;
+
+	if (buf_sz < mdr_hdr_size(0))
+		return XERRF(e, XLOG_APP, XLOG_INVAL,
+		    "buffer size is too small and cannot hold an MDR");
+
+	if (agent_connect(e) == -1)
+		return -1;
+
+	while (count < mdr_hdr_size(0)) {
+		if ((r = BIO_read(agent_bio, buf + count,
+		    mdr_hdr_size(0) - count)) < 1)
+			return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
+		count += r;
+	}
+
+	if (mdr_unpack_hdr(m, 0, buf, buf_sz) == MDR_FAIL)
+		return MDR_FAIL;
+
+	if (mdr_size(m) > buf_sz)
+		return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "buffer size is too small and cannot incoming MDR");
+
+	while (count < mdr_size(m)) {
+		if ((r = BIO_read(agent_bio, buf + count,
+		    mdr_size(m) - count)) < 1)
+			return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
+		count += r;
+	}
+
+	return 0;
+}
+
 void
 usage()
 {
@@ -368,7 +404,7 @@ agent_new_req(const char *subject, unsigned char **req_buf, size_t *req_len,
 		XERRF(e, XLOG_ERRNO, errno, "inet_ntop");
 		goto fail;
 	}
-	if (asprintf(&sans, "iPAddress:%s", taddr) == -1) {
+	if (asprintf(&sans, "IP:%s", taddr) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "asprintf");
 		goto fail;
 	}
@@ -427,10 +463,10 @@ fail:
  * our certificate parameters and create our key and REQ.
  */
 FILE *
-agent_bootstrap_dialin(struct xerr *e)
+agent_bootstrap(struct xerr *e)
 {
 	struct mdr       m;
-	char             buf[1024];
+	char             buf[16384];
 	char            *subject = NULL;
 	char             req_id[CERTALATOR_REQ_ID_LENGTH];
 	struct mdr_in    m_in[2];
@@ -439,6 +475,8 @@ agent_bootstrap_dialin(struct xerr *e)
 	int              try;
 	unsigned char   *req_buf;
 	size_t           req_len;
+	X509            *cert;
+	FILE            *f;
 
 	if (strlen(certalator_conf.bootstrap_key) !=
 	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64) {
@@ -519,8 +557,8 @@ agent_bootstrap_dialin(struct xerr *e)
 	 * Send the challenge back to the authority.
 	 */
 	m_in[0].type = MDR_B;
-	m_in[0].v.s.bytes = m_out[1].v.s.bytes;
-	m_in[0].v.s.sz = m_out[1].v.s.sz;
+	m_in[0].v.b.bytes = m_out[1].v.s.bytes;
+	m_in[0].v.b.sz = m_out[1].v.s.sz;
 	if (mdr_pack(&m, buf, sizeof(buf), msg_bootstrap_answer_challenge,
 	    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "mdr_pack/msg_bootstrap_dialin");
@@ -531,16 +569,87 @@ agent_bootstrap_dialin(struct xerr *e)
 		return NULL;
 	}
 
-	// TODO: Receive DIALIN_RESP, see if we succeeded the challenge
-
-	if (agent_new_req(subject, &req_buf, &req_len, xerrz(e)) == -1) {
+	if (agent_recv(&m, buf, sizeof(buf), xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);
 		return NULL;
 	}
 
-	// TODO: we send MDR_DCV_CERTALATOR_BOOTSTRAP_REQ
+	if (mdr_dcv(&m) == MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED) {
+		XERRF(e, XLOG_APP, XLOG_BADMSG, "failed challenge");
+		return NULL;
+	} else if (mdr_dcv(&m) != MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP) {
+		XERRF(e, XLOG_APP, XLOG_BADMSG,
+		    "unknown message from authority");
+		return NULL;
+	}
 
-	return NULL;
+	/*
+	 * We passed the challenge, send our REQ.
+	 */
+	if (agent_new_req(subject, &req_buf, &req_len, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return NULL;
+	}
+	m_in[0].type = MDR_B;
+	m_in[0].v.b.bytes = req_buf;
+	m_in[0].v.b.sz = req_len;
+	if (mdr_pack(&m, buf, sizeof(buf), msg_bootstrap_req,
+	    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "mdr_pack/msg_bootstrap_req");
+		return NULL;
+	}
+	if (agent_send(&m, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return NULL;
+	}
+
+	/*
+	 * Finally, we get the cert back.
+	 */
+	if (agent_recv(&m, buf, sizeof(buf), xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return NULL;
+	}
+	if (mdr_dcv(&m) == MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP_FAILED) {
+		if (mdr_unpack_payload(&m, msg_bootstrap_req_resp_failed,
+		    m_out, 1) == MDR_FAIL) {
+			XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
+			return NULL;
+		}
+		XERRF(e, XLOG_APP, XLOG_BADMSG, "signing REQ failed: %s",
+		    m_out[1].v.s.bytes);
+		return NULL;
+	} else if (mdr_dcv(&m) != MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP) {
+		XERRF(e, XLOG_APP, XLOG_BADMSG,
+		    "unknown message from authority");
+		return NULL;
+	}
+	if (mdr_unpack_payload(&m, msg_bootstrap_req_resp, m_out, 1)
+	    == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
+		return NULL;
+	}
+
+	cert = d2i_X509(NULL, (const unsigned char **)&m_out[1].v.b.bytes,
+	    m_out[1].v.b.sz);
+        if (cert == NULL) {
+		XERRF(e, XLOG_APP, XLOG_BADMSG,
+		    "bootstrap reply did not contain a valid "
+		    "DER-encoded X.509");
+		return NULL;
+        }
+
+	f = fopen(certalator_conf.cert_file, "w");
+	if (PEM_write_X509(f, cert) == 0) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
+		return NULL;
+	}
+	if (fflush(f) != 0) {
+		XERRF(e, XLOG_ERRNO, errno, "fflush");
+		return NULL;
+	}
+
+	return f;
 }
 
 void
@@ -607,7 +716,7 @@ load_keys()
 	if ((f = fopen(certalator_conf.cert_file, "r")) == NULL) {
 		if (errno != ENOENT)
 			err(1, "fopen: %s", certalator_conf.cert_file);
-		f = agent_bootstrap_dialin(&e);
+		f = agent_bootstrap(&e);
 	}
 	if ((agent_cert = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
 		ERR_print_errors_fp(stderr);

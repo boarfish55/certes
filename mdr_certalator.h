@@ -32,8 +32,11 @@ extern const struct mdr_spec *msg_bootstrap_answer_challenge;
  */
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP \
     MDR_DCV(0x00000002, 0x0004, 0x0000)
+extern const struct mdr_spec *msg_bootstrap_dialin_resp;
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED \
     MDR_DCV(0x00000002, 0x0004, 0x0001)
+extern const struct mdr_spec *msg_bootstrap_dialin_resp_failed;
+
 /*
  * The authority dials back to the client that dialed in to validate
  * its CommonName and send the bootstrap parameters (validity, roles, SANs).
@@ -42,22 +45,26 @@ extern const struct mdr_spec *msg_bootstrap_answer_challenge;
  */
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK \
     MDR_DCV(0x00000002, 0x0005, 0x0000)
+extern const struct mdr_spec *msg_bootstrap_dialback;
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK_RESP \
     MDR_DCV(0x00000002, 0x0006, 0x0000)
+extern const struct mdr_spec *msg_bootstrap_dialback_resp;
 
 /*
  * In response to this the authority's DIALBACK, the client will send an
  * X509 REQ with the parameters received from the authority.
- */
-#define MDR_DCV_CERTALATOR_BOOTSTRAP_REQ \
-    MDR_DCV(0x00000002, 0x0007, 0x0000)
-
-/*
  * After receiving the REQ from the client, the authority replies with
  * a signed certificate which the client can install.
  */
-#define MDR_DCV_CERTALATOR_BOOTSTRAP_CERT \
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_REQ \
+    MDR_DCV(0x00000002, 0x0007, 0x0000)
+extern const struct mdr_spec *msg_bootstrap_req;
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP \
     MDR_DCV(0x00000002, 0x0008, 0x0000)
+extern const struct mdr_spec *msg_bootstrap_req_resp;
+#define MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP_FAILED \
+    MDR_DCV(0x00000002, 0x0008, 0x0001)
+extern const struct mdr_spec *msg_bootstrap_req_resp_failed;
 
 /*
  * Messages between certalator and its coorinator to share a challenge from
