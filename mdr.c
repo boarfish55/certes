@@ -404,6 +404,11 @@ mdr_unpack_str_nochk(struct mdr *m, const char **ref, uint64_t *len)
 	if (len != NULL)
 		*len = bytes_sz - 1;
 
+	if ((*ref)[*len] != '\0') {
+		errno = EOVERFLOW;
+		return MDR_FAIL;
+	}
+
 	return mdr_tell(m);
 }
 
