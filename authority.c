@@ -89,33 +89,33 @@ authority_bootstrap_usage()
 }
 
 int
-authority_bootstrap_setup_msg(struct mdr *m, struct xerr *e)
+authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
 {
-	const char      *subject;
-	const char     **roles = NULL;
-	int32_t          roles_sz;
-	const char     **sans = NULL;
-	int32_t          sans_sz;
-	uint32_t         cert_expiry, timeout;
-	struct mdr_out   m_out[4];
+	const char       *subject;
+	const char      **roles = NULL;
+	int32_t           roles_sz;
+	const char      **sans = NULL;
+	int32_t           sans_sz;
+	uint32_t          cert_expiry, timeout;
+	struct umdr_vec   uv[4];
 
-	if (mdr_unpack_payload(m, msg_bootstrap_setup, m_out, 4) == MDR_FAIL)
+	if (umdr_unpack(m, msg_bootstrap_setup, uv, UMDRVECLEN(uv)) == MDR_FAIL)
 		return -1;
 
-	subject = m_out[0].v.s.bytes;
-	sans_sz = mdr_out_array_length(&m_out[1].v.as);
-	roles_sz = mdr_out_array_length(&m_out[2].v.as);
-	cert_expiry = m_out[3].v.u32;
-	timeout = m_out[4].v.u32;
+	subject = uv[0].v.s.bytes;
+	sans_sz = umdr_vec_alen(&uv[1].v.as);
+	roles_sz = umdr_vec_alen(&uv[2].v.as);
+	cert_expiry = uv[3].v.u32;
+	timeout = uv[4].v.u32;
 
 	if ((sans = malloc(sizeof(char *) * (sans_sz + 1))) == NULL)
 		goto fail;
 	if ((roles = malloc(sizeof(char *) * (roles_sz + 1))) == NULL)
 		goto fail;
 
-	if (mdr_out_array_s(&m_out[1].v.as, sans, sans_sz) == MDR_FAIL)
+	if (umdr_vec_as(&uv[1].v.as, sans, sans_sz) == MDR_FAIL)
 		goto fail;
-	if (mdr_out_array_s(&m_out[2].v.as, roles, roles_sz) == MDR_FAIL)
+	if (umdr_vec_as(&uv[2].v.as, roles, roles_sz) == MDR_FAIL)
 		goto fail;
 
 	if (authority_bootstrap_setup(subject, sans, sans_sz, roles,
@@ -211,7 +211,8 @@ authority_bootstrap_setup_cli(int argc, char **argv, struct xerr *e)
 }
 
 int
-authority_challenge(struct bootstrap_entry *be, struct xerr *e)
+authority_challenge(struct bootstrap_entry *be, const char *req_id,
+    struct xerr *e)
 {
 	// TODO:
 
@@ -239,7 +240,7 @@ authority_challenge(struct bootstrap_entry *be, struct xerr *e)
 }
 
 int
-authority_bootstrap_dialin(struct mdr *m, struct mdr *msg, struct xerr *e)
+authority_bootstrap_dialin(struct umdr *msg, struct xerr *e)
 {
 	// TODO: we receive the one-time-key from a client then
 	// need to contact it over its CommonName to confirm
@@ -247,21 +248,32 @@ authority_bootstrap_dialin(struct mdr *m, struct mdr *msg, struct xerr *e)
 	// msg should have the one time key.
 
 	struct bootstrap_entry be;
-	struct mdr_out         m_out[1];
+	struct umdr_vec        uv[2];
+	struct timespec        now;
 
-	if (mdr_unpack_payload(msg, msg_bootstrap_dialin, m_out, 1) == MDR_FAIL)
-		return XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
+	// TODO: we need the REQ to know the subjectAltName sent to us
+	// to contact back for the challenge.
+	// Or the egress IP addr to reach back...
 
-	if (m_out[0].v.s.sz != CERTALATOR_BOOTSTRAP_KEY_LENGTH)
+	if (umdr_unpack(msg, msg_bootstrap_dialin, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL)
+		return XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
+
+	if (uv[1].v.s.sz != CERTALATOR_BOOTSTRAP_KEY_LENGTH)
 		return XERRF(e, XLOG_APP, XLOG_BADMSG,
 		    "bootstrap key received from client has incorrect length");
 
-	if (certdb_get_bootstrap(&be, m_out[0].v.s.bytes, e) == -1)
-		return -1;
+	if (certdb_get_bootstrap(&be, uv[1].v.s.bytes, e) == -1)
+		return XERR_PREPENDFN(e);
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	if (now.tv_sec > be.valid_until_sec)
+		return XERRF(e, XLOG_APP, XLOG_TIMEOUT,
+		    "bootstrap key is expired");
 
 	// Then we challenge the client by connecting to its CommonName
 	// as per our DB
-	if (authority_challenge(&be, e) == -1)
+	if (authority_challenge(&be, uv[0].v.s.bytes, e) == -1)
 		return -1;
 
 	// TODO: Then send a quick MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK_RESP

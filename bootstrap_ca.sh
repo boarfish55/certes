@@ -11,7 +11,7 @@ touch ca/index.txt
 # Create self-signed root certificate; in a real situation, the key should
 # be kept on a secure machine or even offline storage. The certificate and
 # CRL will need to be deployed on all agents in the fleet.
-openssl req -x509 -nodes -config overnet_authority.cnf -newkey rsa \
+openssl req -x509 -nodes -config overnet_authority.cnf -newkey ed25519 \
 	-keyout ca/private/overnet_key.pem \
 	-out ca/overnet.pem -outform PEM -days 365 \
 	-extensions root_ext \
@@ -21,7 +21,7 @@ openssl req -x509 -nodes -config overnet_authority.cnf -newkey rsa \
 # signing authorities.
 rm -f authority1/*
 mkdir -p authority1
-openssl req -nodes -config overnet_authority.cnf -newkey rsa \
+openssl req -nodes -config overnet_authority.cnf -newkey ed25519 \
 	-keyout authority1/key.pem -keyform PEM \
 	-out authority1/req.pem -outform PEM \
 	-subj "/O=Overnet/CN=authority1.overnet.ca" \
@@ -33,7 +33,7 @@ openssl verify -CAfile ca/overnet.pem authority1/cert.pem
 # Create a "client1" cert request
 rm -f client1/*
 mkdir -p client1
-openssl req -nodes -config overnet.cnf -newkey rsa \
+openssl req -nodes -config overnet.cnf -newkey ed25519 \
 	-keyout client1/key.pem -keyform PEM \
 	-out client1/req.pem -outform PEM \
 	-subj "/O=Overnet/CN=client1.overnet.ca" \
@@ -45,7 +45,7 @@ openssl verify -CAfile ca/overnet.pem client1/cert.pem
 # Create a "client2" cert request
 rm -f client2/*
 mkdir -p client2
-openssl req -nodes -config overnet.cnf -newkey rsa \
+openssl req -nodes -config overnet.cnf -newkey ed25519 \
 	-keyout client2/key.pem -keyform PEM \
 	-out client2/req.pem -outform PEM \
 	-subj "/O=Overnet/CN=client2.overnet.ca" \
@@ -65,3 +65,4 @@ openssl crl -in ca/overnet.crl -text -noout -CAfile ca/overnet.pem
 openssl verify -CAfile ca/overnet.pem -CRLfile ca/overnet.crl \
 	-crl_check client2/cert.pem || true
 
+echo "All good!"

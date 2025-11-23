@@ -29,6 +29,7 @@ const char *qry_create_bootstrap_table = "create table if not exists bootstrap("
 		"subject text not null, "
 		"sans blob, "
 		"roles blob, "
+		"flags int not null, "
 		"not_before_sec int not null, "
 		"not_after_sec int not null, "
                 "primary key(bootstrap_key))";

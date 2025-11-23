@@ -23,7 +23,7 @@
 #include "certdb.h"
 #include "flatconf.h"
 #include "mdr_certalator.h"
-#include "mdr_mdrd.h"
+#include "mdrd.h"
 #include "util.h"
 #include "xlog.h"
 
@@ -230,16 +230,16 @@ agent_connect(struct xerr *e)
 }
 
 int
-agent_send(struct mdr *m, struct xerr *e)
+agent_send(struct pmdr *m, struct xerr *e)
 {
 	int r;
 
 	if (agent_connect(e) == -1)
 		return -1;
 
-	if ((r = BIO_write(agent_bio, mdr_buf(m), mdr_size(m))) == -1)
+	if ((r = BIO_write(agent_bio, pmdr_buf(m), pmdr_size(m))) == -1)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
-	else if (r < mdr_size(m))
+	else if (r < pmdr_size(m))
 		return XERRF(e, XLOG_APP, XLOG_SHORTIO, "BIO_write");
 
 	return 0;
@@ -247,39 +247,17 @@ agent_send(struct mdr *m, struct xerr *e)
 }
 
 int
-agent_recv(struct mdr *m, char *buf, size_t buf_sz, struct xerr *e)
+agent_recv(char *buf, size_t buf_sz, struct xerr *e)
 {
-	int r, count = 0;
-
-	if (buf_sz < mdr_hdr_size(0))
-		return XERRF(e, XLOG_APP, XLOG_INVAL,
-		    "buffer size is too small and cannot hold an MDR");
+	int r;
 
 	if (agent_connect(e) == -1)
 		return -1;
 
-	while (count < mdr_hdr_size(0)) {
-		if ((r = BIO_read(agent_bio, buf + count,
-		    mdr_hdr_size(0) - count)) < 1)
-			return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
-		count += r;
-	}
+	if ((r = mdr_buf_from_BIO(agent_bio, buf, buf_sz)) < 1)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
 
-	if (mdr_unpack_hdr(m, 0, buf, buf_sz) == MDR_FAIL)
-		return MDR_FAIL;
-
-	if (mdr_size(m) > buf_sz)
-		return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
-		    "buffer size is too small and cannot incoming MDR");
-
-	while (count < mdr_size(m)) {
-		if ((r = BIO_read(agent_bio, buf + count,
-		    mdr_size(m) - count)) < 1)
-			return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
-		count += r;
-	}
-
-	return 0;
+	return r;
 }
 
 void
@@ -465,14 +443,17 @@ fail:
 FILE *
 agent_bootstrap(struct xerr *e)
 {
-	struct mdr       m;
-	char             buf[16384];
+	struct umdr      um;
+	struct pmdr      pm;
+	struct pmdr_vec  pv[2];
+	struct umdr_vec  uv[1];
+	char             pbuf[16384];
+	char             ubuf[16384];
 	char            *subject = NULL;
 	char             req_id[CERTALATOR_REQ_ID_LENGTH];
-	struct mdr_in    m_in[2];
-	struct mdr_out   m_out[1];
 	struct timespec  now;
 	int              try;
+	ptrdiff_t        r;
 	unsigned char   *req_buf;
 	size_t           req_len;
 	X509            *cert;
@@ -497,17 +478,18 @@ agent_bootstrap(struct xerr *e)
 		return NULL;
 	}
 
-	m_in[0].type = MDR_S;
-	m_in[0].v.s.bytes = req_id;
-	m_in[1].type = MDR_S;
-	m_in[1].v.s.bytes = certalator_conf.bootstrap_key;
-	if (mdr_pack(&m, buf, sizeof(buf), msg_bootstrap_dialin,
-	    MDR_F_NONE, m_in, 2) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "mdr_pack/msg_bootstrap_dialin");
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = req_id;
+	pv[1].type = MDR_S;
+	pv[1].v.s = certalator_conf.bootstrap_key;
+	if (pmdr_pack(&pm,  msg_bootstrap_dialin, pv,
+	    PMDRVECLEN(pv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/msg_bootstrap_dialin");
 		return NULL;
 	}
 
-	if (agent_send(&m, xerrz(e)) == -1) {
+	if (agent_send(&pm, xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);
 		return NULL;
 	}
@@ -515,28 +497,36 @@ agent_bootstrap(struct xerr *e)
 	/*
 	 * The coordinator should be receiving a challenge from the authority,
 	 * so let's poll for a bit to see if we got it.
+	 * If the bootstrap key was wrong, we won't get a dialback, the
+	 * authority will quietly ignore the request.
 	 */
 	for (try = 0; try < 10; try++) {
-		m_in[0].type = MDR_S;
-		m_in[0].v.s.bytes = req_id;
-		if (mdr_pack(&m, buf, sizeof(buf), msg_coord_get_cert_challenge,
-		    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
+		pv[0].type = MDR_S;
+		pv[0].v.s = req_id;
+		if (pmdr_pack(&pm, msg_coord_get_cert_challenge,
+		    pv, PMDRVECLEN(pv)) == MDR_FAIL) {
 			XERRF(e, XLOG_ERRNO, errno,
-			    "mdr_pack/msg_coord_get_cert_challenge");
+			    "pmdr_pack/msg_coord_get_cert_challenge");
 			return NULL;
 		}
 
-		if (coordinator_send(&m, xerrz(e)) == -1) {
+		if (coordinator_send(&pm, xerrz(e)) == -1) {
 			XERR_PREPENDFN(e);
 			return NULL;
 		}
 
-		if (coordinator_recv(&m, buf, sizeof(buf), xerrz(e)) == -1) {
+		r = coordinator_recv(ubuf, sizeof(ubuf), xerrz(e));
+		if (r == -1) {
 			XERR_PREPENDFN(e);
 			return NULL;
 		}
 
-		if (mdr_dcv(&m) ==
+		if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+			XERRF(e, XLOG_ERRNO, errno, "umdr_init");
+			return NULL;
+		}
+
+		if (umdr_dcv(&um) ==
 		    MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE_RESP)
 			break;
 
@@ -547,8 +537,8 @@ agent_bootstrap(struct xerr *e)
 		return NULL;
 	}
 
-	if (mdr_unpack_payload(&m, msg_coord_get_cert_challenge_resp,
-	    m_out, 1) == MDR_FAIL) {
+	if (umdr_unpack(&um, msg_coord_get_cert_challenge_resp,
+	    uv, UMDRVECLEN(uv)) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
 		return NULL;
 	}
@@ -556,28 +546,32 @@ agent_bootstrap(struct xerr *e)
 	/*
 	 * Send the challenge back to the authority.
 	 */
-	m_in[0].type = MDR_B;
-	m_in[0].v.b.bytes = m_out[1].v.s.bytes;
-	m_in[0].v.b.sz = m_out[1].v.s.sz;
-	if (mdr_pack(&m, buf, sizeof(buf), msg_bootstrap_answer_challenge,
-	    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "mdr_pack/msg_bootstrap_dialin");
+	pv[0].type = MDR_B;
+	pv[0].v.b.bytes = uv[1].v.s.bytes;
+	pv[0].v.b.sz = uv[1].v.s.sz;
+	if (pmdr_pack(&pm, msg_bootstrap_answer_challenge,
+	    pv, PMDRVECLEN(pv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/msg_bootstrap_dialin");
 		return NULL;
 	}
-	if (agent_send(&m, xerrz(e)) == -1) {
+	if (agent_send(&pm, xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);
 		return NULL;
 	}
 
-	if (agent_recv(&m, buf, sizeof(buf), xerrz(e)) == -1) {
+	if ((r = agent_recv(ubuf, sizeof(ubuf), xerrz(e))) == -1) {
 		XERR_PREPENDFN(e);
 		return NULL;
 	}
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_init");
+		return NULL;
+	}
 
-	if (mdr_dcv(&m) == MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED) {
+	if (umdr_dcv(&um) == MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED) {
 		XERRF(e, XLOG_APP, XLOG_BADMSG, "failed challenge");
 		return NULL;
-	} else if (mdr_dcv(&m) != MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP) {
+	} else if (umdr_dcv(&um) != MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP) {
 		XERRF(e, XLOG_APP, XLOG_BADMSG,
 		    "unknown message from authority");
 		return NULL;
@@ -590,15 +584,14 @@ agent_bootstrap(struct xerr *e)
 		XERR_PREPENDFN(e);
 		return NULL;
 	}
-	m_in[0].type = MDR_B;
-	m_in[0].v.b.bytes = req_buf;
-	m_in[0].v.b.sz = req_len;
-	if (mdr_pack(&m, buf, sizeof(buf), msg_bootstrap_req,
-	    MDR_F_NONE, m_in, 1) == MDR_FAIL) {
+	pv[0].type = MDR_B;
+	pv[0].v.b.bytes = req_buf;
+	pv[0].v.b.sz = req_len;
+	if (pmdr_pack(&pm, msg_bootstrap_req, pv, PMDRVECLEN(pv)) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "mdr_pack/msg_bootstrap_req");
 		return NULL;
 	}
-	if (agent_send(&m, xerrz(e)) == -1) {
+	if (agent_send(&pm, xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);
 		return NULL;
 	}
@@ -606,32 +599,37 @@ agent_bootstrap(struct xerr *e)
 	/*
 	 * Finally, we get the cert back.
 	 */
-	if (agent_recv(&m, buf, sizeof(buf), xerrz(e)) == -1) {
+	if ((r = agent_recv(ubuf, sizeof(ubuf), xerrz(e))) == -1) {
 		XERR_PREPENDFN(e);
 		return NULL;
 	}
-	if (mdr_dcv(&m) == MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP_FAILED) {
-		if (mdr_unpack_payload(&m, msg_bootstrap_req_resp_failed,
-		    m_out, 1) == MDR_FAIL) {
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_init");
+		return NULL;
+	}
+	if (umdr_dcv(&um) == MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP_FAILED) {
+		if (umdr_unpack(&um, msg_bootstrap_req_resp_failed,
+		    uv, UMDRVECLEN(uv)) == MDR_FAIL) {
 			XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
 			return NULL;
 		}
 		XERRF(e, XLOG_APP, XLOG_BADMSG, "signing REQ failed: %s",
-		    m_out[1].v.s.bytes);
+		    uv[1].v.s.bytes);
 		return NULL;
-	} else if (mdr_dcv(&m) != MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP) {
+	} else if (umdr_dcv(&um) != MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP) {
 		XERRF(e, XLOG_APP, XLOG_BADMSG,
 		    "unknown message from authority");
 		return NULL;
 	}
-	if (mdr_unpack_payload(&m, msg_bootstrap_req_resp, m_out, 1)
+	if (umdr_unpack(&um, msg_bootstrap_req_resp, uv, UMDRVECLEN(uv))
 	    == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
+		XERRF(e, XLOG_ERRNO, errno,
+		    "umdr_unpack/msg_bootstrap_req_resp");
 		return NULL;
 	}
 
-	cert = d2i_X509(NULL, (const unsigned char **)&m_out[1].v.b.bytes,
-	    m_out[1].v.b.sz);
+	cert = d2i_X509(NULL, (const unsigned char **)&uv[1].v.b.bytes,
+	    uv[1].v.b.sz);
         if (cert == NULL) {
 		XERRF(e, XLOG_APP, XLOG_BADMSG,
 		    "bootstrap reply did not contain a valid "
@@ -746,15 +744,20 @@ load_keys()
 int
 mdrd_backend()
 {
-	int               r, fd;
-	struct mdr        m, msg;
-	char              buf[32768];
-	uint64_t          id;
-	X509             *peer_cert = NULL;
-	X509_STORE_CTX   *ctx;
-	struct sigaction  act;
-	struct xerr       e;
-	struct mdr_in     m_in[5];
+	int                  r, fd;
+	struct pmdr          pm;
+	struct umdr          um, msg;
+	struct pmdr_vec      pv[5];
+	char                 ubuf[32768];
+	char                 pbuf[32768];
+	char                 msgbuf[16384];
+	uint64_t             id;
+	X509                *peer_cert = NULL;
+	X509_STORE_CTX      *ctx;
+	struct sigaction     act;
+	struct xerr          e;
+	struct sockaddr_in6  peer;
+	socklen_t            slen = sizeof(peer);
 
 	xlog_init(CERTALATOR_PROGNAME, NULL, NULL, 1);
 
@@ -777,23 +780,29 @@ mdrd_backend()
 
 	// TODO: we'll end up polling here between stdin and the agent's
 	// unix socket in case we get a control message of some sort.
-	while ((r = mdr_read_from_fd(&m, MDR_F_NONE,
-	    0, buf, sizeof(buf))) > 0) {
+	while ((r = mdr_buf_from_fd(0, ubuf, sizeof(ubuf))) > 0) {
 		if (r == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
 			    "%s: mdr_read_from_fd", __func__);
 			goto fail;
 		}
 
-		if (mdr_dcv(&m) != MDR_DCV_MDRD_BEREQ) {
-			xlog(LOG_NOTICE, NULL,
-			    "%s: unexpected message DCV received: %x",
-			    __func__, mdr_dcv(&m));
+		if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+			xlog_strerror(LOG_ERR, errno,
+			    "%s: umdr_init", __func__);
 			continue;
 		}
 
-		if (mdrd_unpack_bereq(&m, &id, &fd, &msg,
-		    &peer_cert) == MDR_FAIL) {
+		if (umdr_dcv(&um) != MDR_DCV_MDRD_BEREQ) {
+			xlog(LOG_NOTICE, NULL,
+			    "%s: unexpected message DCV received: %x",
+			    __func__, umdr_dcv(&um));
+			continue;
+		}
+
+		umdr_init0(&msg, msgbuf, sizeof(msgbuf), MDR_FNONE);
+		if (mdrd_unpack_bereq(&um, &id, &fd, (struct sockaddr *)&peer,
+		    &slen, &msg, &peer_cert) == MDR_FAIL) {
 			if (errno == EAGAIN)
 				xlog(LOG_ERR, NULL,
 				    "%s: mdrd_unpack_bereq: missing bytes "
@@ -804,22 +813,23 @@ mdrd_backend()
 			continue;
 		}
 
-		if (mdr_domain(&msg) != MDR_DOMAIN_CERTALATOR) {
+		if (umdr_domain(&msg) != MDR_DOMAIN_CERTALATOR) {
 			xlog(LOG_NOTICE, NULL,
 			    "%s: expected a certalator message (domain=%x) "
-			    "but got %x", __func__, mdr_domain(&msg));
+			    "but got %x", __func__, umdr_domain(&msg));
 			continue;
 		}
 
+		pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 		if (peer_cert == NULL) {
-			if (mdr_dcv(&msg) !=
+			if (umdr_dcv(&msg) !=
 			    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN) {
 				xlog(LOG_NOTICE, NULL,
 				    "%s: client did not provide a cert; only "
 				    "a bootstrap setup message (id=%x) can be "
 				    "processed but got %x", __func__,
 				    MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP,
-				    mdr_dcv(&msg));
+				    umdr_dcv(&msg));
 				continue;
 			}
 
@@ -827,23 +837,22 @@ mdrd_backend()
 				xlog(LOG_ERR, NULL, "%s: we are not an "
 				    "authority and client has no certificate",
 				    __func__);
-				m_in[0].type = MDR_U32;
-				m_in[0].v.u32 = id;
-				m_in[1].type = MDR_I32;
-				m_in[1].v.i32 = fd;
-				m_in[2].type = MDR_U32;
-				m_in[2].v.u32 = MDRD_ST_NOCERT;
-				m_in[3].type = MDR_U32;
-				m_in[3].v.u32 = MDRD_BERESP_F_CLOSE;
-				if (mdr_pack(&m, buf, sizeof(buf),
-				    msg_pack_beresp, MDR_F_NONE, m_in, 4)
-				    == MDR_FAIL) {
+				pv[0].type = MDR_U32;
+				pv[0].v.u32 = id;
+				pv[1].type = MDR_I32;
+				pv[1].v.i32 = fd;
+				pv[2].type = MDR_U32;
+				pv[2].v.u32 = MDRD_ST_NOCERT;
+				pv[3].type = MDR_U32;
+				pv[3].v.u32 = MDRD_BERESP_FCLOSE;
+				if (pmdr_pack(&pm, msg_pack_beresp, pv,
+				    PMDRVECLEN(pv)) == MDR_FAIL) {
 					xlog_strerror(LOG_ERR, errno,
 					    "%s: mdr_pack", __func__);
 					goto fail;
 				}
-				if (write(1, mdr_buf(&m), mdr_size(&m))
-				    < mdr_size(&m)) {
+				if (write(1, pmdr_buf(&pm), pmdr_size(&pm))
+				    < pmdr_size(&pm)) {
 					xlog_strerror(LOG_ERR, errno,
 					    "%s: writeall", __func__);
 					goto fail;
@@ -851,8 +860,7 @@ mdrd_backend()
 				continue;
 			}
 
-			if (authority_bootstrap_dialin(&m, &msg, &e)
-			    == MDR_FAIL)
+			if (authority_bootstrap_dialin(&msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
 			continue;
 		}
@@ -862,22 +870,22 @@ mdrd_backend()
 			    "client on fd %d", __func__, fd);
 			if (peer_cert != NULL)
 				X509_free(peer_cert);
-			m_in[0].type = MDR_U32;
-			m_in[0].v.u32 = id;
-			m_in[1].type = MDR_I32;
-			m_in[1].v.i32 = fd;
-			m_in[2].type = MDR_U32;
-			m_in[2].v.u32 = MDRD_ST_CERTFAIL;
-			m_in[3].type = MDR_U32;
-			m_in[3].v.u32 = MDRD_BERESP_F_CLOSE;
-			if (mdr_pack(&m, buf, sizeof(buf), msg_pack_beresp,
-			    MDR_F_NONE, m_in, 4) == MDR_FAIL) {
+			pv[0].type = MDR_U32;
+			pv[0].v.u32 = id;
+			pv[1].type = MDR_I32;
+			pv[1].v.i32 = fd;
+			pv[2].type = MDR_U32;
+			pv[2].v.u32 = MDRD_ST_CERTFAIL;
+			pv[3].type = MDR_U32;
+			pv[3].v.u32 = MDRD_BERESP_FCLOSE;
+			if (pmdr_pack(&pm, msg_pack_beresp, pv,
+			    PMDRVECLEN(pv)) == MDR_FAIL) {
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: mdr_pack", __func__);
 				goto fail;
 			}
-			if (write(1, mdr_buf(&m), mdr_size(&m))
-			    < mdr_size(&m)) {
+			if (write(1, pmdr_buf(&pm), pmdr_size(&pm))
+			    < pmdr_size(&pm)) {
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: writeall", __func__);
 				goto fail;
@@ -885,7 +893,7 @@ mdrd_backend()
 			continue;
 		}
 
-		switch (mdr_dcv(&msg)) {
+		switch (umdr_dcv(&msg)) {
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP:
 			// TODO: client needs to have the "bootstrap" role
 			if (authority_bootstrap_setup_msg(&msg, &e) == MDR_FAIL)
@@ -902,24 +910,24 @@ mdrd_backend()
 		// TODO: currently this only echoes back
 		X509_free(peer_cert);
 
-		m_in[0].type = MDR_U32;
-		m_in[0].v.u32 = id;
-		m_in[1].type = MDR_I32;
-		m_in[1].v.i32 = fd;
-		m_in[2].type = MDR_U32;
-		m_in[2].v.u32 = MDRD_ST_OK;
-		m_in[3].type = MDR_U32;
-		m_in[3].v.u32 = 0;
-		m_in[4].type = MDR_M;
+		pv[0].type = MDR_U32;
+		pv[0].v.u32 = id;
+		pv[1].type = MDR_I32;
+		pv[1].v.i32 = fd;
+		pv[2].type = MDR_U32;
+		pv[2].v.u32 = MDRD_ST_OK;
+		pv[3].type = MDR_U32;
+		pv[3].v.u32 = 0;
+		pv[4].type = MDR_M;
 		// TODO: send meaningful response
-		m_in[4].v.m = &msg;
-		if (mdr_pack(&m, buf, sizeof(buf), msg_pack_beresp_wmsg,
-		    MDR_F_NONE, m_in, 5) == MDR_FAIL) {
+		pv[4].v.umdr = &msg;
+		if (pmdr_pack(&pm, msg_pack_beresp_wmsg, pv, PMDRVECLEN(pv))
+		    == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
 			    "%s: mdr_pack", __func__);
 			goto fail;
 		}
-		if (write(1, mdr_buf(&m), mdr_size(&m)) < mdr_size(&m)) {
+		if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) < pmdr_size(&pm)) {
 			xlog_strerror(LOG_ERR, errno,
 			    "%s: writeall", __func__);
 			goto fail;

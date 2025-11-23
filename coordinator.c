@@ -19,8 +19,8 @@ extern struct certalator_flatconf certalator_conf;
 static int  coordinator_start();
 static int  coordinator_connect(struct xerr *);
 static void purge_challenges();
-static int  coordinator_rcv_challenge(struct mdr *, struct xerr *);
-static int  coordinator_get_challenge(struct mdr *, struct xerr *);
+static int  coordinator_rcv_challenge(struct umdr *, struct xerr *);
+static int  coordinator_get_challenge(struct umdr *, struct xerr *);
 
 static struct timespec last_challenge_purge = {0, 0};
 static int coordinator_fd = -1;
@@ -134,7 +134,7 @@ coordinator_connect(struct xerr *e)
 }
 
 int
-coordinator_send(struct mdr *m, struct xerr *e)
+coordinator_send(struct pmdr *m, struct xerr *e)
 {
 	ssize_t r;
 
@@ -142,9 +142,9 @@ coordinator_send(struct mdr *m, struct xerr *e)
 		if (coordinator_connect(xerrz(e)) == -1)
 			return XERR_PREPENDFN(e);
 
-	if ((r = write(coordinator_fd, mdr_buf(m), mdr_size(m))) == -1)
+	if ((r = write(coordinator_fd, pmdr_buf(m), pmdr_size(m))) == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "%s: write", __func__);
-	else if (r < mdr_size(m))
+	else if (r < pmdr_size(m))
 		return XERRF(e, XLOG_APP, XLOG_SHORTIO,
 		    "%s: write", __func__);
 
@@ -152,7 +152,7 @@ coordinator_send(struct mdr *m, struct xerr *e)
 }
 
 int
-coordinator_recv(struct mdr *m, char *buf, size_t buf_sz, struct xerr *e)
+coordinator_recv(void *buf, size_t buf_sz, struct xerr *e)
 {
 	if (coordinator_fd == -1) {
 		if (coordinator_connect(xerrz(e)) == -1)
@@ -166,26 +166,27 @@ coordinator_recv(struct mdr *m, char *buf, size_t buf_sz, struct xerr *e)
 		    "%s: coordinator_fd is -1", __func__);
 	}
 
-	return mdr_read_from_fd(m, MDR_F_NONE, coordinator_fd, buf, buf_sz);
+	return mdr_buf_from_fd(coordinator_fd, buf, buf_sz);
 }
 
 static int
-coordinator_rcv_challenge(struct mdr *m, struct xerr *e)
+coordinator_rcv_challenge(struct umdr *m, struct xerr *e)
 {
-	struct mdr_out    m_out[2];
+	struct umdr_vec   uv[2];
 	struct challenge *chal;
 
 	if ((chal = malloc(sizeof(struct challenge))) == NULL)
 		return XERRF(e, XLOG_ERRNO, errno, "malloc");
 
-	if (mdr_unpack_payload(m, msg_coord_save_cert_challenge,
-	    m_out, 2) == MDR_FAIL) {
+	if (umdr_unpack(m, msg_coord_save_cert_challenge,
+	    uv, UMDRVECLEN(uv)) == MDR_FAIL) {
 		free(chal);
 		return XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
 	}
 
-	strlcpy(chal->req_id, m_out[0].v.s.bytes, sizeof(chal->req_id));
-	strlcpy(chal->challenge, m_out[1].v.b.bytes, MIN(m_out[1].v.b.sz, sizeof(chal->challenge)));
+	strlcpy(chal->req_id, uv[0].v.s.bytes, sizeof(chal->req_id));
+	strlcpy(chal->challenge, uv[1].v.b.bytes,
+	    MIN(uv[1].v.b.sz, sizeof(chal->challenge)));
 	clock_gettime(CLOCK_REALTIME, &chal->created_at);
 	SPLAY_INSERT(challenge_tree, &challenges, chal);
 
@@ -193,43 +194,43 @@ coordinator_rcv_challenge(struct mdr *m, struct xerr *e)
 }
 
 static int
-coordinator_get_challenge(struct mdr *m, struct xerr *e)
+coordinator_get_challenge(struct umdr *m, struct xerr *e)
 {
 	struct challenge needle, *chal;
-	struct mdr_out   m_out[1];
-	struct mdr_in    m_in[1];
-	struct mdr       resp;
+	struct pmdr      resp;
+	struct pmdr_vec  pv[1];
+	struct umdr_vec  uv[1];
 	char             buf[1024];
 	ssize_t          r;
 
-	if (mdr_unpack_payload(m, msg_coord_get_cert_challenge,
-	    m_out, 1) == MDR_FAIL)
-		return XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
+	if (umdr_unpack(m, msg_coord_get_cert_challenge,
+	    uv, UMDRVECLEN(uv)) == MDR_FAIL)
+		return XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
 
-	strlcpy(needle.req_id, m_out[0].v.s.bytes, sizeof(needle.req_id));
+	pmdr_init(&resp, buf, sizeof(buf), MDR_FNONE);
+
+	strlcpy(needle.req_id, uv[0].v.s.bytes, sizeof(needle.req_id));
 	chal = SPLAY_FIND(challenge_tree, &challenges, &needle);
 	if (chal == NULL) {
-		if (mdr_pack(&resp, buf, sizeof(buf),
-		    msg_coord_get_cert_challenge_resp_notfound,
-		    MDR_F_NONE, NULL, 0) == MDR_FAIL) {
+		if (pmdr_pack(&resp, msg_coord_get_cert_challenge_resp_notfound,
+		    NULL, 0) == MDR_FAIL) {
 			return XERRF(e, XLOG_ERRNO, errno,
-			    "mdr_pack/msg_coord_get_cert_challenge_notfound");
+			    "pmdr_pack/msg_coord_get_cert_challenge_notfound");
 		}
 	} else {
 		SPLAY_REMOVE(challenge_tree, &challenges, chal);
-		m_in[0].type = MDR_B;
-		m_in[0].v.b.bytes = chal->challenge;
-		m_in[0].v.b.sz = sizeof(chal->challenge);
-		if (mdr_pack(&resp, buf, sizeof(buf),
-		    msg_coord_get_cert_challenge_resp,
-		    MDR_F_NONE, m_in, 1) == MDR_FAIL)
+		pv[0].type = MDR_B;
+		pv[0].v.b.bytes = chal->challenge;
+		pv[0].v.b.sz = sizeof(chal->challenge);
+		if (pmdr_pack(&resp, msg_coord_get_cert_challenge_resp,
+		    pv, PMDRVECLEN(pv)) == MDR_FAIL)
 			return XERRF(e, XLOG_ERRNO, errno,
-			    "mdr_pack/msg_coord_get_cert_challenge_resp");
+			    "pmdr_pack/msg_coord_get_cert_challenge_resp");
 	}
 
-	if ((r = write(coordinator_fd, mdr_buf(&resp), mdr_size(&resp))) == -1)
+	if ((r = write(coordinator_fd, pmdr_buf(&resp), pmdr_size(&resp))) == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "%s: write", __func__);
-	else if (r < mdr_size(&resp))
+	else if (r < pmdr_size(&resp))
 		return XERRF(e, XLOG_APP, XLOG_SHORTIO,
 		    "%s: write", __func__);
 
@@ -244,7 +245,7 @@ coordinator_run(int lsock, struct xerr *e)
 	int            nfds = 0, fds_sz = 32, fd;
 	struct client *c, needle;
 	ssize_t        r;
-	struct mdr     m;
+	struct umdr    um;
 	void          *tmp;
 
 
@@ -355,18 +356,20 @@ coordinator_run(int lsock, struct xerr *e)
 			}
 			c->in_buf_used += r;
 
-			if (mdr_unpack_hdr(&m, 0, c->in_buf, c->in_buf_used)
-			    == MDR_FAIL) {
+			if (umdr_init(&um, c->in_buf, c->in_buf_used,
+			    MDR_FNONE) == MDR_FAIL) {
+				if (errno == EAGAIN)
+					continue;
 				xlog_strerror(LOG_ERR, errno,
-				    "%s: mdr_unpack_hdr failed on fd %d; "
+				    "%s: umdr_init failed on fd %d; "
 				    "closing", __func__, c->fd);
 				close(c->fd);
 				SPLAY_REMOVE(client_tree, &clients, c);
 				client_free(c);
 				continue;
 			}
-			if (mdr_size(&m) > c->in_buf_sz) {
-				tmp = realloc(c->in_buf, mdr_size(&m));
+			if (umdr_size(&um) > c->in_buf_sz) {
+				tmp = realloc(c->in_buf, umdr_size(&um));
 				if (tmp == NULL) {
 					xlog_strerror(LOG_ERR, errno,
 					    "%s: realloc failed on fd %d; "
@@ -377,21 +380,21 @@ coordinator_run(int lsock, struct xerr *e)
 					continue;
 				}
 				c->in_buf = tmp;
-				c->in_buf_sz = mdr_size(&m);
+				c->in_buf_sz = umdr_size(&um);
 			}
-			if (mdr_pending(&m) > 0)
+			if (umdr_pending(&um) > 0)
 				continue;
 
-			switch (mdr_dcv(&m)) {
+			switch (umdr_dcv(&um)) {
 			case MDR_DCV_CERTALATOR_COORD_SAVE_CERT_CHALLENGE:
-				if (coordinator_rcv_challenge(&m, xerrz(e))
+				if (coordinator_rcv_challenge(&um, xerrz(e))
 				    == MDR_FAIL)
 					xlog(LOG_ERR, e,
 					    "%s: coordinator_rcv_challenge",
 					    __func__);
 				break;
 			case MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE:
-				if (coordinator_get_challenge(&m, xerrz(e))
+				if (coordinator_get_challenge(&um, xerrz(e))
 				    == MDR_FAIL)
 					xlog(LOG_ERR, e,
 					    "%s: coordinator_get_challenge",
@@ -399,7 +402,7 @@ coordinator_run(int lsock, struct xerr *e)
 				break;
 			default:
 				xlog(LOG_ERR, NULL, "%s: unknown message %lu",
-				    __func__, mdr_dcv(&m));
+				    __func__, umdr_dcv(&um));
 			}
 		}
 	}

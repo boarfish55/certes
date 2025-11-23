@@ -1,10 +1,13 @@
 #ifndef MDR_H
 #define MDR_H
 
+#include <sys/tree.h>
+#include <openssl/bio.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <sys/tree.h>
+
+__BEGIN_DECLS
 
 struct mdr_def {
 	uint64_t    dcv;     /* domain/code/variant */
@@ -58,6 +61,13 @@ struct mdr_spec {
 	uint8_t             types[];
 };
 
+union mdr_trace_id {
+	uint8_t  u8[16];
+	uint16_t u16[8];
+	uint32_t u32[4];
+	uint64_t u64[2];
+};
+
 /*
  * Minimal Data Representation
  *
@@ -65,23 +75,30 @@ struct mdr_spec {
  */
 struct mdr {
 	/*
-	 * Big-endian over the wire. Minimum size is thus 20 bytes.
+	 * Big-endian over the wire.
 	 */
 	uint64_t *size;
 
 	/*
-	 * Flags can be used to provide generic information to implementations
-	 * that are otherwise unaware of the specific structure of the data.
+	 * Features can be used to signal receiving implementations that the
+	 * base structure of the message contains additional information
+	 * that the receiver must support, or reject.
 	 */
-	uint32_t *flags;
-#define MDR_F_NONE       0x00000000
-#define MDR_F_TAIL_BYTES 0x00000001 /* Arbitrary bytes follow
-				       the strucutred payload */
-#define MDR_F_STREAM_ID  0x00000002 /* A field with stream ID is present */
-#define MDR_F_ACCT_ID    0x00000004 /* A field with a generic accounting ID
-				       is present */
-#define MDR_F_TRACE_ID   0x00000008 /* A field with a trace ID (e.g. UUID)
-				       is present */
+	uint32_t *features;
+#define MDR_FNONE      0x00000000
+#define MDR_FTAILBYTES 0x00000001 /* Arbitrary bytes follow the strucutred
+				     payload. Useful for large data that
+				     we don't want to load in memory all at
+				     once. */
+#define MDR_FSTREAMID  0x00000002 /* A field with stream ID is present */
+#define MDR_FACCTID    0x00000004 /* A field with a generic accounting ID
+				     is present */
+#define MDR_FTRACEID   0x00000008 /* A field with a trace ID (e.g. UUID)
+				     is present */
+#define MDR_FRESERVED  0x80000000 /* The first bit flag is reserved for
+				     a possible extension of more flag
+				     fields.  */
+#define MDR_FALL       0x0000000F /* Sum of all the above, except reserved. */
 
 	/*
 	 * Domain, code and variant is used to identify the data structure
@@ -107,9 +124,30 @@ struct mdr {
 	size_t                 buf_sz;
 	void                  *pos;
 	int                    dyn;
+	/*
+	 * Used by umdr, when running umdr_init0() and we don't have
+	 * actual flags in the buffer yet.
+	 */
+	uint32_t               accept_features;
 };
 
-struct mdr_in {
+/*
+ * We create new types based on the struct mdr above:
+ *   - pmdr should be used for packing MDRs.
+ *   - umdr should be used for unpacking MDRs.
+ *
+ * Using those types ensures we are not using pack/unpack functions on
+ * the same instance, which would be a mistake.
+ */
+struct pmdr {
+	struct mdr m;
+};
+struct umdr {
+	struct mdr m;
+};
+
+/* Packing MDR vector */
+struct pmdr_vec {
 	uint8_t type;
 	union {
 		uint8_t u8;
@@ -172,16 +210,15 @@ struct mdr_in {
 			double  *items;
 		} af64;
 
-		const struct mdr *m;
-		struct {
-			int32_t           length;
-			const struct mdr *items;
-		} am;
+		const struct pmdr *pmdr;
+		const struct umdr *umdr;
 
 		struct {
-			const char *bytes;
-			uint64_t    sz;
-		} s;
+			int32_t            length;
+			const struct pmdr *items;
+		} am;
+
+		const char *s;
 
 		struct {
 			const void *bytes;
@@ -199,15 +236,18 @@ struct mdr_in {
 		} rsvb;
 	} v;
 };
+#define PMDRVECLEN(v) (sizeof(v) / sizeof(struct pmdr_vec))
 
-struct mdr_out_array_handle
+/* Unpacking MDR vector array handle */
+struct umdr_vec_ah
 {
 	uint8_t     type;
 	uint32_t    length;
 	const void *p;
 };
 
-struct mdr_out {
+/* Unpacking MDR vector */
+struct umdr_vec {
 	uint8_t type;
 	union {
 		uint8_t  u8;
@@ -221,7 +261,7 @@ struct mdr_out {
 		float    f32;
 		double   f64;
 
-		struct mdr m;
+		struct umdr m;
 
 		struct {
 			const char *bytes;
@@ -233,102 +273,80 @@ struct mdr_out {
 			uint64_t    sz;
 		} b;
 
-		struct mdr_out_array_handle au8, au16, au32, au64;
-		struct mdr_out_array_handle ai8, ai16, ai32, ai64;
-		struct mdr_out_array_handle af32, af64;
-		struct mdr_out_array_handle as, am;
+		struct umdr_vec_ah au8, au16, au32, au64;
+		struct umdr_vec_ah ai8, ai16, ai32, ai64;
+		struct umdr_vec_ah af32, af64;
+		struct umdr_vec_ah as, am;
 	} v;
 };
+#define UMDRVECLEN(v) (sizeof(v) / sizeof(struct umdr_vec))
 
-uint8_t  mdr_out_array_type(struct mdr_out_array_handle *);
-uint32_t mdr_out_array_length(struct mdr_out_array_handle *);
-int32_t  mdr_out_array_u8(struct mdr_out_array_handle *, uint8_t *, int32_t);
-int32_t  mdr_out_array_u16(struct mdr_out_array_handle *, uint16_t *, int32_t);
-int32_t  mdr_out_array_u32(struct mdr_out_array_handle *, uint32_t *, int32_t);
-int32_t  mdr_out_array_u64(struct mdr_out_array_handle *, uint64_t *, int32_t);
-int32_t  mdr_out_array_i8(struct mdr_out_array_handle *, int8_t *, int32_t);
-int32_t  mdr_out_array_i16(struct mdr_out_array_handle *, int16_t *, int32_t);
-int32_t  mdr_out_array_i32(struct mdr_out_array_handle *, int32_t *, int32_t);
-int32_t  mdr_out_array_i64(struct mdr_out_array_handle *, int64_t *, int32_t);
-int32_t  mdr_out_array_f32(struct mdr_out_array_handle *, float *, int32_t);
-int32_t  mdr_out_array_f64(struct mdr_out_array_handle *, double *, int32_t);
-int32_t  mdr_out_array_s(struct mdr_out_array_handle *, const char **, int32_t);
-int32_t  mdr_out_array_m(struct mdr_out_array_handle *, struct mdr *, int32_t);
+uint8_t  umdr_vec_atype(struct umdr_vec_ah *);
+uint32_t umdr_vec_alen(struct umdr_vec_ah *);
+int32_t  umdr_vec_au8(struct umdr_vec_ah *, uint8_t *, int32_t);
+int32_t  umdr_vec_au16(struct umdr_vec_ah *, uint16_t *, int32_t);
+int32_t  umdr_vec_au32(struct umdr_vec_ah *, uint32_t *, int32_t);
+int32_t  umdr_vec_au64(struct umdr_vec_ah *, uint64_t *, int32_t);
+int32_t  umdr_vec_ai8(struct umdr_vec_ah *, int8_t *, int32_t);
+int32_t  umdr_vec_ai16(struct umdr_vec_ah *, int16_t *, int32_t);
+int32_t  umdr_vec_ai32(struct umdr_vec_ah *, int32_t *, int32_t);
+int32_t  umdr_vec_ai64(struct umdr_vec_ah *, int64_t *, int32_t);
+int32_t  umdr_vec_af32(struct umdr_vec_ah *, float *, int32_t);
+int32_t  umdr_vec_af64(struct umdr_vec_ah *, double *, int32_t);
+int32_t  umdr_vec_as(struct umdr_vec_ah *, const char **, int32_t);
+int32_t  umdr_vec_am(struct umdr_vec_ah *, struct mdr *, int32_t);
 
 #define MDR_FAIL -1
 
-const void *mdr_buf(const struct mdr *);
-void        mdr_free(struct mdr *);
-uint64_t    mdr_size(const struct mdr *);
-size_t      mdr_hdr_size(uint32_t);
-int         mdr_rewind(struct mdr *);
-ptrdiff_t   mdr_tell(const struct mdr *);
-uint64_t    mdr_pending(const struct mdr *);
-ptrdiff_t   mdr_copy(struct mdr *, void *, size_t, const struct mdr *,
-                const struct mdr_spec *);
-uint64_t    mdr_mkdcv(uint32_t, uint16_t, uint16_t);
+size_t         mdr_hdr_size(uint32_t);
+uint64_t       mdr_mkdcv(uint32_t, uint16_t, uint16_t);
+ptrdiff_t      mdr_buf_from_fd(int, void *, size_t);
+ptrdiff_t      mdr_buf_from_BIO(BIO *, void *, size_t);
 
-uint32_t       mdr_flags(const struct mdr *);
-uint32_t       mdr_domain(const struct mdr *);
-uint16_t       mdr_code(const struct mdr *);
-uint16_t       mdr_variant(const struct mdr *);
-uint64_t       mdr_dcv(const struct mdr *);
-uint64_t       mdr_tail_bytes(const struct mdr *, void **dst);
-uint64_t       mdr_stream_id(const struct mdr *);
-uint64_t       mdr_acct_id(const struct mdr *);
-const uint8_t *mdr_trace_id(const struct mdr *);
-int            mdr_dcv_match(const struct mdr *, uint64_t, uint64_t);
+ptrdiff_t      pmdr_init(struct pmdr *, void *, size_t, uint32_t);
+void           pmdr_free(struct pmdr *);
+ptrdiff_t      pmdr_pack(struct pmdr *, const struct mdr_spec *, struct pmdr_vec *,
+                   size_t);
+ptrdiff_t      pmdr_add_tail_bytes(struct pmdr *, uint64_t);
+ptrdiff_t      pmdr_set_stream_id(struct pmdr *, uint64_t);
+ptrdiff_t      pmdr_set_acct_id(struct pmdr *, uint64_t);
+ptrdiff_t      pmdr_set_trace_id(struct pmdr *, const union mdr_trace_id *);
+void          *pmdr_buf(struct pmdr *);
+uint64_t       pmdr_size(const struct pmdr *);
+ptrdiff_t      pmdr_tell(const struct pmdr *);
+uint32_t       pmdr_features(const struct pmdr *);
+uint32_t       pmdr_domain(const struct pmdr *);
+uint16_t       pmdr_code(const struct pmdr *);
+uint16_t       pmdr_variant(const struct pmdr *);
+uint64_t       pmdr_dcv(const struct pmdr *);
+uint64_t       pmdr_tail_bytes(const struct pmdr *, void **dst);
+int            pmdr_print(FILE *, const struct pmdr *);
 
-ptrdiff_t mdr_pack_hdr(struct mdr *, void *, size_t, const struct mdr_spec *,
-              uint32_t);
-ptrdiff_t mdr_pack(struct mdr *, void *, size_t, const struct mdr_spec *,
-              uint32_t, struct mdr_in *, size_t);
-ptrdiff_t mdr_pack_i8(struct mdr *, int8_t);
-ptrdiff_t mdr_pack_i16(struct mdr *, int16_t);
-ptrdiff_t mdr_pack_i32(struct mdr *, int32_t);
-ptrdiff_t mdr_pack_i64(struct mdr *, int64_t);
-ptrdiff_t mdr_pack_u8(struct mdr *, uint8_t);
-ptrdiff_t mdr_pack_u16(struct mdr *, uint16_t);
-ptrdiff_t mdr_pack_u32(struct mdr *, uint32_t);
-ptrdiff_t mdr_pack_u64(struct mdr *, uint64_t);
-ptrdiff_t mdr_pack_f32(struct mdr *, float);
-ptrdiff_t mdr_pack_f64(struct mdr *, double);
-ptrdiff_t mdr_pack_bytes(struct mdr *, const void *, uint64_t);
-ptrdiff_t mdr_pack_rsvb(struct mdr *, void **, uint64_t);
-ptrdiff_t mdr_pack_str(struct mdr *, const char *, int64_t);
-ptrdiff_t mdr_pack_mdr(struct mdr *, const struct mdr *);
-ptrdiff_t mdr_pack_array(struct mdr *, uint8_t, int32_t, void *);
-ptrdiff_t mdr_add_tail_bytes(struct mdr *, uint64_t);
-ptrdiff_t mdr_set_stream_id(struct mdr *, uint64_t);
-ptrdiff_t mdr_set_acct_id(struct mdr *, uint64_t);
-ptrdiff_t mdr_set_trace_id(struct mdr *, const uint8_t *);
-
-ptrdiff_t mdr_read_from_fd(struct mdr *, uint32_t, int, void *, size_t);
-ptrdiff_t mdr_unpack_hdr(struct mdr *, uint32_t, const void *, size_t);
-ptrdiff_t mdr_unpack_payload(struct mdr *, const struct mdr_spec *,
-              struct mdr_out *, size_t);
-ptrdiff_t mdr_unpack(struct mdr *, const void *, size_t,
-              const struct mdr_spec *, uint32_t, struct mdr_out *, size_t);
-ptrdiff_t mdr_unpack_i8(struct mdr *, int8_t *);
-ptrdiff_t mdr_unpack_i16(struct mdr *, int16_t *);
-ptrdiff_t mdr_unpack_i32(struct mdr *, int32_t *);
-ptrdiff_t mdr_unpack_i64(struct mdr *, int64_t *);
-ptrdiff_t mdr_unpack_u8(struct mdr *, uint8_t *);
-ptrdiff_t mdr_unpack_u16(struct mdr *, uint16_t *);
-ptrdiff_t mdr_unpack_u32(struct mdr *, uint32_t *);
-ptrdiff_t mdr_unpack_u64(struct mdr *, uint64_t *);
-ptrdiff_t mdr_unpack_f32(struct mdr *, float *);
-ptrdiff_t mdr_unpack_f64(struct mdr *, double *);
-ptrdiff_t mdr_unpack_bytes(struct mdr *, const void **, uint64_t *);
-ptrdiff_t mdr_unpack_str(struct mdr *, const char **, uint64_t *);
-ptrdiff_t mdr_unpack_mdr(struct mdr *, struct mdr *);
-ptrdiff_t mdr_unpack_array(struct mdr *, uint8_t,
-              struct mdr_out_array_handle *);
-void      mdr_print(FILE *, const struct mdr *);
+ptrdiff_t      umdr_init(struct umdr *, const void *, size_t, uint32_t);
+ptrdiff_t      umdr_init0(struct umdr *, const void *, size_t, uint32_t);
+ptrdiff_t      umdr_unpack(struct umdr *, const struct mdr_spec *, struct umdr_vec *,
+                   size_t);
+const void    *umdr_buf(const struct umdr *);
+uint64_t       umdr_size(const struct umdr *);
+ptrdiff_t      umdr_tell(const struct umdr *);
+ptrdiff_t      umdr_copy(struct umdr *, const struct umdr *);
+uint64_t       umdr_pending(const struct umdr *);
+uint32_t       umdr_features(const struct umdr *);
+uint32_t       umdr_domain(const struct umdr *);
+uint16_t       umdr_code(const struct umdr *);
+uint16_t       umdr_variant(const struct umdr *);
+uint64_t       umdr_dcv(const struct umdr *);
+uint64_t       umdr_tail_bytes(const struct umdr *, void **dst);
+uint64_t       umdr_stream_id(const struct umdr *);
+uint64_t       umdr_acct_id(const struct umdr *);
+const uint8_t *umdr_trace_id(const struct umdr *);
+int            umdr_dcv_match(const struct umdr *, uint64_t, uint64_t);
+int            umdr_print(FILE *, const struct umdr *);
 
 int                    mdr_register_builtin_specs();
 const struct mdr_spec *mdr_register_spec(struct mdr_def *);
 const struct mdr_spec *mdr_registry_get(uint64_t);
+void                   mdr_registry_clear();
 
 #define MDR_DCV(domain, code, variant) \
     ((uint64_t)domain << 32 | (uint64_t)code << 16 | (uint64_t)variant)
@@ -342,19 +360,32 @@ const struct mdr_spec *mdr_registry_get(uint64_t);
  * variant are 16 bits.
  */
 
-#define MDR_DOMAIN_MDR           0x00000000
+#define MDR_DOMAIN_MDR           MDR_DCV(0x00000000, 0, 0)
 #define MDR_DCV_MDR_PING         MDR_DCV(0x00000000, 0x0001, 0x0000)
 #define MDR_DCV_MDR_PONG         MDR_DCV(0x00000000, 0x0002, 0x0000)
-#define MDR_DCV_MDR_ECHO         MDR_DCV(0x00000000, 0x0003, 0x0000)
-#define MDR_DCV_MDR_TEST         MDR_DCV(0x00000000, 0x0004, 0x0000)
+#define MDR_DCV_MDR_FEATNOTSUP   MDR_DCV(0x00000000, 0x0003, 0x0000)
+#define MDR_DCV_MDR_ECHO         MDR_DCV(0x00000000, 0x0004, 0x0000)
+#define MDR_DCV_MDR_TEST         MDR_DCV(0x00000000, 0x0005, 0x0000)
+extern const struct mdr_spec *mdr_msg_ping;
+extern const struct mdr_spec *mdr_msg_pong;
+extern const struct mdr_spec *mdr_msg_featnotsup;
+extern const struct mdr_spec *mdr_msg_echo;
+extern const struct mdr_spec *mdr_msg_test;
 
-#define MDR_DOMAIN_MDRD          0x00000001
-#define MDR_DCV_MDRD_ERROR       MDR_DCV(0x00000001, 0x0001, 0x0000)
-#define MDR_DCV_MDRD_BEREQ       MDR_DCV(0x00000001, 0x0002, 0x0000)
-#define MDR_DCV_MDRD_BERESP      MDR_DCV(0x00000001, 0x0003, 0x0000)
-#define MDR_DCV_MDRD_BERESP_WMSG MDR_DCV(0x00000001, 0x0003, 0x0001)
-#define MDR_DCV_MDRD_BECLOSE     MDR_DCV(0x00000001, 0x0004, 0x0000)
+#define MDR_DOMAIN_MDRD          MDR_DCV(0x00000002, 0, 0)
+#define MDR_DCV_MDRD_ERROR       MDR_DCV(0x00000002, 0x0001, 0x0000)
+#define MDR_DCV_MDRD_BEREQ       MDR_DCV(0x00000002, 0x0002, 0x0000)
+#define MDR_DCV_MDRD_BERESP      MDR_DCV(0x00000002, 0x0003, 0x0000)
+#define MDR_DCV_MDRD_BERESP_WMSG MDR_DCV(0x00000002, 0x0003, 0x0001)
+#define MDR_DCV_MDRD_BECLOSE     MDR_DCV(0x00000002, 0x0004, 0x0000)
+extern const struct mdr_spec *mdr_msg_mdrd_error;
+extern const struct mdr_spec *mdr_msg_mdrd_bereq;
+extern const struct mdr_spec *mdr_msg_mdrd_beresp;
+extern const struct mdr_spec *mdr_msg_mdrd_beresp_wmsg;
+extern const struct mdr_spec *mdr_msg_mdrd_beclose;
 
-#define MDR_DOMAIN_CERTALATOR    0x00000002
+#define MDR_DOMAIN_CERTALATOR    MDR_DCV(0x00000003, 0, 0)
+
+__END_DECLS
 
 #endif

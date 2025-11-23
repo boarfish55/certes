@@ -10,6 +10,7 @@ struct mdr_def msgdef_bootstrap_setup = {
 		MDR_AS,  /* cert roles */
 		MDR_U32, /* cert expiry (lifetime) in seconds */
 		MDR_U32, /* bootstrap entry timeout */
+		MDR_U32, /* flags */
 		MDR_LAST
 	}
 };
@@ -26,6 +27,17 @@ struct mdr_def msgdef_bootstrap_dialin = {
 	}
 };
 const struct mdr_spec *msg_bootstrap_dialin;
+
+struct mdr_def msgdef_bootstrap_dialback = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK,
+	"certalator.bootstrap_dialback",
+	{
+		MDR_S,   /* Bootstrap identifier passed from DIALIN */
+		MDR_B,   /* Challenge answer */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_bootstrap_dialback;
 
 struct mdr_def msgdef_bootstrap_answer_challenge = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER_CHALLENGE,

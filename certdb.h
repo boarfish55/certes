@@ -6,6 +6,9 @@
 #include "certalator.h"
 #include "xlog.h"
 
+#define CERTDB_BOOTSTRAP_FLAG_NONE    0x00000000
+#define CERTDB_BOOTSTRAP_FLAG_PROVDNS 0x00000001
+
 #define CERTDB_FLAG_NONE    0x00000000
 #define CERTDB_FLAG_REVOKED 0x00000001
 #define CERTDB_FLAG_ALL     0xFFFFFFFF
@@ -18,6 +21,7 @@ struct bootstrap_entry {
 	size_t   sans_sz;
 	char   **roles;
 	size_t   roles_sz;
+	uint32_t flags;
 	time_t   not_before_sec;
 	time_t   not_after_sec;
 };
