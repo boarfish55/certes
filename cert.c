@@ -9,19 +9,17 @@
 
 extern struct certalator_flatconf certalator_conf;
 
-int          NID_certalator_roles;
-int          NID_certalator_roles_idx;
-X509_STORE  *store = NULL;
+int NID_certalator_roles;
+int NID_certalator_roles_idx;
 
-void
-cert_init()
+int
+cert_init(struct xerr *e)
 {
-	if ((store = X509_STORE_new()) == NULL)
-		err(1, "X509_STORE_new");
 	NID_certalator_roles = OBJ_create("1.3.6.1.4.1.35910.3.1",
 	    "certalatorRoles", "Certalator Security Roles");
 	if (NID_certalator_roles == NID_undef)
-		err(1, "OBJ_create");
+		return XERRF(e, XLOG_ERRNO, errno, "OBJ_create");
+	return 0;
 }
 
 ssize_t
@@ -148,7 +146,7 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 }
 
 int
-cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
+cert_verify(X509_STORE_CTX *ctx, X509 *crt, X509_STORE *store, int challenge)
 {
 	X509_NAME *subject;
 	char       common_name[256];
