@@ -145,8 +145,6 @@ struct flatconf certalator_config_vars[] = {
 	FLATCONF_LAST
 };
 
-void load_keys();
-
 void
 usage()
 {
@@ -194,12 +192,7 @@ mdrd_backend()
 	}
 
 	if (agent_init(xerrz(&e)) == -1) {
-		xlog(LOG_ERR, &e, "agent_load_keys");
-		exit(1);
-	}
-
-	if (agent_load_keys(&e) == -1) {
-		xlog(LOG_ERR, &e, "agent_load_keys");
+		xlog(LOG_ERR, &e, "agent_init");
 		exit(1);
 	}
 
@@ -252,6 +245,11 @@ mdrd_backend()
 		}
 
 		pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+
+		/*
+		 * If the client has no cert, then the only option is
+		 * to issue a new cert, if we are an authority.
+		 */
 		if (peer_cert == NULL) {
 			if (umdr_dcv(&msg) !=
 			    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN) {
@@ -296,6 +294,9 @@ mdrd_backend()
 			continue;
 		}
 
+		/*
+		 * Verify the client's cert
+		 */
 		if (cert_verify(ctx, peer_cert, agent_cert_store(), 0) != 0) {
 			xlog(LOG_NOTICE, NULL, "%s: cert_verify failed for "
 			    "client on fd %d", __func__, fd);
@@ -324,6 +325,9 @@ mdrd_backend()
 			continue;
 		}
 
+		/*
+		 * Client is now verified; let's process their request.
+		 */
 		switch (umdr_dcv(&msg)) {
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP:
 			// TODO: client needs to have the "bootstrap" role
@@ -465,6 +469,10 @@ main(int argc, char **argv)
 			exit(1);
 		}
 		fclose(f);
+		if (agent_init(&e) == -1) {
+			xlog(LOG_ERR, &e, "agent_init");
+			exit(1);
+		}
 		if ((ctx = X509_STORE_CTX_new()) == NULL) {
 			ERR_print_errors_fp(stderr);
 			exit(1);
@@ -475,8 +483,8 @@ main(int argc, char **argv)
 		if (opt >= argc)
 			errx(1, "no certificate file provided");
 
-		if (agent_load_keys(&e) == -1) {
-			xlog(LOG_ERR, &e, "agent_load_keys");
+		if (agent_init(&e) == -1) {
+			xlog(LOG_ERR, &e, "agent_init");
 			exit(1);
 		}
 

@@ -280,6 +280,8 @@ agent_init(struct xerr *e)
 {
 	if ((store = X509_STORE_new()) == NULL)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_new");
+	if (agent_load_keys(e) == -1)
+		return XERR_PREPENDFN(e);
 	return cert_init(xerrz(e));
 }
 

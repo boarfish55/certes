@@ -6,6 +6,7 @@ certalator
 gdb.*
 ca/
 client*/
+proxy*/
 authority*/
 *.core
 *.gdb
