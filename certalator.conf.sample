@@ -1,12 +1,14 @@
 enable_coredumps = true
-bootstrap_key = "some_key"
+
+bootstrap_key = "HBxxXLjySp77NUyLjfgSPyakdM5QOZacFvylS+21GBWEh1XwW/aPI2zEWzcyAlGx"
+
 authority_fqdn = "localhost"
 authority_port = 9790
 
 ca_file = "/home/plalonde/prog/certalator/ca/root.pem"
 crl_file = "/home/plalonde/prog/certalator/ca/root.crl"
 
-crt_file = "/home/plalonde/prog/certalator/client1/cert.pem"
+cert_file = "/home/plalonde/prog/certalator/client1/cert.pem"
 key_file = "/home/plalonde/prog/certalator/client1/key.pem"
 key_bits = 4096
 

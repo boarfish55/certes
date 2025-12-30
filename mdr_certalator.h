@@ -7,7 +7,7 @@
  * Creates a bootstrap entry for a client in the database.
  */
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP \
-    MDR_DCV(0x00000002, 0x0001, 0x0000)
+    MDR_DCV(0x00000003, 0x0001, 0x0000)
 extern const struct mdr_spec *msg_bootstrap_setup;
 
 /*
@@ -15,7 +15,7 @@ extern const struct mdr_spec *msg_bootstrap_setup;
  * process, providing a bootstrap one-time-key.
  */
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN \
-    MDR_DCV(0x00000002, 0x0002, 0x0000)
+    MDR_DCV(0x00000003, 0x0002, 0x0000)
 extern const struct mdr_spec *msg_bootstrap_dialin;
 
 /*
@@ -23,7 +23,7 @@ extern const struct mdr_spec *msg_bootstrap_dialin;
  * back to the agent who initiated a bootstrap.
  */
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK \
-    MDR_DCV(0x00000002, 0x0003, 0x0000)
+    MDR_DCV(0x00000003, 0x0003, 0x0000)
 extern const struct mdr_spec *msg_bootstrap_dialback;
 
 /*
@@ -31,7 +31,7 @@ extern const struct mdr_spec *msg_bootstrap_dialback;
  * proving that it lives at the address it's supposed to.
  */
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER_CHALLENGE \
-    MDR_DCV(0x00000002, 0x0004, 0x0000)
+    MDR_DCV(0x00000003, 0x0004, 0x0000)
 extern const struct mdr_spec *msg_bootstrap_answer_challenge;
 
 /*
@@ -39,10 +39,10 @@ extern const struct mdr_spec *msg_bootstrap_answer_challenge;
  * can create its certificate request.
  */
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP \
-    MDR_DCV(0x00000002, 0x0005, 0x0000)
+    MDR_DCV(0x00000003, 0x0005, 0x0000)
 extern const struct mdr_spec *msg_bootstrap_dialin_resp;
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED \
-    MDR_DCV(0x00000002, 0x0005, 0x0001)
+    MDR_DCV(0x00000003, 0x0005, 0x0001)
 extern const struct mdr_spec *msg_bootstrap_dialin_resp_failed;
 
 /*
@@ -52,13 +52,13 @@ extern const struct mdr_spec *msg_bootstrap_dialin_resp_failed;
  * a signed certificate which the client can install.
  */
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_REQ \
-    MDR_DCV(0x00000002, 0x0008, 0x0000)
+    MDR_DCV(0x00000003, 0x0008, 0x0000)
 extern const struct mdr_spec *msg_bootstrap_req;
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP \
-    MDR_DCV(0x00000002, 0x0009, 0x0000)
+    MDR_DCV(0x00000003, 0x0009, 0x0000)
 extern const struct mdr_spec *msg_bootstrap_req_resp;
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP_FAILED \
-    MDR_DCV(0x00000002, 0x000A, 0x0001)
+    MDR_DCV(0x00000003, 0x000A, 0x0001)
 extern const struct mdr_spec *msg_bootstrap_req_resp_failed;
 
 /*
@@ -66,13 +66,13 @@ extern const struct mdr_spec *msg_bootstrap_req_resp_failed;
  * our authority internally.
  */
 #define MDR_DCV_CERTALATOR_COORD_SAVE_CERT_CHALLENGE \
-    MDR_DCV(0x00000002, 0x000B, 0x0000)
+    MDR_DCV(0x00000003, 0x000B, 0x0000)
 #define MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE \
-    MDR_DCV(0x00000002, 0x000C, 0x0000)
+    MDR_DCV(0x00000003, 0x000C, 0x0000)
 #define MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE_RESP \
-    MDR_DCV(0x00000002, 0x000D, 0x0000)
+    MDR_DCV(0x00000003, 0x000D, 0x0000)
 #define MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE_RESP_NOTFOUND \
-    MDR_DCV(0x00000002, 0x000D, 0x0001)
+    MDR_DCV(0x00000003, 0x000D, 0x0001)
 extern const struct mdr_spec *msg_coord_save_cert_challenge;
 extern const struct mdr_spec *msg_coord_get_cert_challenge;
 extern const struct mdr_spec *msg_coord_get_cert_challenge_resp;

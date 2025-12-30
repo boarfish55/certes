@@ -3,7 +3,7 @@ enable_coredumps = true
 ca_file = "/home/plalonde/prog/certalator/ca/root.pem"
 crl_file = "/home/plalonde/prog/certalator/ca/root.crl"
 
-crt_file = "/home/plalonde/prog/certalator/authority1/cert.pem"
+cert_file = "/home/plalonde/prog/certalator/authority1/cert.pem"
 key_file = "/home/plalonde/prog/certalator/authority1/key.pem"
 
 lock_file = "/home/plalonde/prog/certalator/lock"

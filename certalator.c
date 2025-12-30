@@ -192,7 +192,7 @@ mdrd_backend()
 	}
 
 	if (agent_init(xerrz(&e)) == -1) {
-		xlog(LOG_ERR, &e, "agent_init");
+		xlog(LOG_ERR, &e, __func__);
 		exit(1);
 	}
 
@@ -470,7 +470,7 @@ main(int argc, char **argv)
 		}
 		fclose(f);
 		if (agent_init(&e) == -1) {
-			xlog(LOG_ERR, &e, "agent_init");
+			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
 		if ((ctx = X509_STORE_CTX_new()) == NULL) {
@@ -484,7 +484,7 @@ main(int argc, char **argv)
 			errx(1, "no certificate file provided");
 
 		if (agent_init(&e) == -1) {
-			xlog(LOG_ERR, &e, "agent_init");
+			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
 

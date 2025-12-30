@@ -162,43 +162,43 @@ load_mdr_defs()
 	 */
 	if ((msg_bootstrap_setup =
 	    mdr_register_spec(&msgdef_bootstrap_setup)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_dialin =
 	    mdr_register_spec(&msgdef_bootstrap_dialin)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_answer_challenge =
 	    mdr_register_spec(&msgdef_bootstrap_answer_challenge)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_dialin_resp =
 	    mdr_register_spec(&msgdef_bootstrap_dialin_resp)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_dialin_resp_failed =
 	    mdr_register_spec(&msgdef_bootstrap_dialin_resp_failed)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_req =
 	    mdr_register_spec(&msgdef_bootstrap_req)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_req_resp =
 	    mdr_register_spec(&msgdef_bootstrap_req_resp)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_req_resp_failed =
 	    mdr_register_spec(&msgdef_bootstrap_req_resp_failed)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 
 	/*
 	 * Coordinator messages.
 	 */
 	if ((msg_coord_save_cert_challenge =
 	    mdr_register_spec(&msgdef_coord_save_cert_challenge)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_coord_get_cert_challenge =
 	    mdr_register_spec(&msgdef_coord_get_cert_challenge)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_coord_get_cert_challenge_resp =
 	    mdr_register_spec(&msgdef_coord_get_cert_challenge_resp)) == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 	if ((msg_coord_get_cert_challenge_resp_notfound =
 	    mdr_register_spec(&msgdef_coord_get_cert_challenge_notfound))
 	    == NULL)
-		err(1, "mdr_register_spec");
+		errx(1, "mdr_register_spec");
 }
