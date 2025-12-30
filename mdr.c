@@ -1007,6 +1007,7 @@ mdr_register_spec(struct mdr_def *def)
 
 	if (RB_INSERT(mdr_registry_tree, &mdr_registry.head, spec) != NULL) {
 		free(spec);
+		errno = EEXIST;
 		return NULL;
 	}
 

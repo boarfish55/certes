@@ -372,19 +372,19 @@ extern const struct mdr_spec *mdr_msg_featnotsup;
 extern const struct mdr_spec *mdr_msg_echo;
 extern const struct mdr_spec *mdr_msg_test;
 
-#define MDR_DOMAIN_MDRD          MDR_DCV(0x00000002, 0, 0)
-#define MDR_DCV_MDRD_ERROR       MDR_DCV(0x00000002, 0x0001, 0x0000)
-#define MDR_DCV_MDRD_BEREQ       MDR_DCV(0x00000002, 0x0002, 0x0000)
-#define MDR_DCV_MDRD_BERESP      MDR_DCV(0x00000002, 0x0003, 0x0000)
-#define MDR_DCV_MDRD_BERESP_WMSG MDR_DCV(0x00000002, 0x0003, 0x0001)
-#define MDR_DCV_MDRD_BECLOSE     MDR_DCV(0x00000002, 0x0004, 0x0000)
+#define MDR_DOMAIN_MDRD          MDR_DCV(0x00000001, 0, 0)
+#define MDR_DCV_MDRD_ERROR       MDR_DCV(0x00000001, 0x0001, 0x0000)
+#define MDR_DCV_MDRD_BEREQ       MDR_DCV(0x00000001, 0x0002, 0x0000)
+#define MDR_DCV_MDRD_BERESP      MDR_DCV(0x00000001, 0x0003, 0x0000)
+#define MDR_DCV_MDRD_BERESP_WMSG MDR_DCV(0x00000001, 0x0003, 0x0001)
+#define MDR_DCV_MDRD_BECLOSE     MDR_DCV(0x00000001, 0x0004, 0x0000)
 extern const struct mdr_spec *mdr_msg_mdrd_error;
 extern const struct mdr_spec *mdr_msg_mdrd_bereq;
 extern const struct mdr_spec *mdr_msg_mdrd_beresp;
 extern const struct mdr_spec *mdr_msg_mdrd_beresp_wmsg;
 extern const struct mdr_spec *mdr_msg_mdrd_beclose;
 
-#define MDR_DOMAIN_CERTALATOR    MDR_DCV(0x00000003, 0, 0)
+#define MDR_DOMAIN_CERTALATOR    MDR_DCV(0x00000002, 0, 0)
 
 __END_DECLS
 

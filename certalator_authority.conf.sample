@@ -15,7 +15,7 @@ coordinator_socket_path = "/home/plalonde/prog/certalator/.coordinator.sock"
 # for certificate generation and renewals.
 #
 
-serial_file = "/home/plalonde/prog/certalator/ca/serial"
+serial_file = "/home/plalonde/prog/certalator/authority1/serial"
 cert_org = "Example"
 cert_email = "cert@example.com"
 

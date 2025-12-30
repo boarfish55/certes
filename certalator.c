@@ -240,7 +240,8 @@ mdrd_backend()
 		if (umdr_domain(&msg) != MDR_DOMAIN_CERTALATOR) {
 			xlog(LOG_NOTICE, NULL,
 			    "%s: expected a certalator message (domain=%x) "
-			    "but got %x", __func__, umdr_domain(&msg));
+			    "but got %x", __func__, MDR_DOMAIN_CERTALATOR,
+			    umdr_domain(&msg));
 			continue;
 		}
 
