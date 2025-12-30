@@ -38,6 +38,9 @@ openssl verify -CAfile ca/root.pem authority1/cert.pem
 cp ca/root.pem authority1/trust_store/
 cp authority1/cert.pem authority1/trust_store/
 openssl rehash authority1/trust_store
+# Generate CRL
+openssl ca -config certalator.cnf \
+	-gencrl -out authority1/authority1.crl
 
 # Create a "ca-proxy" cert request for an mdrd daemon
 rm -rf proxy1
@@ -51,6 +54,7 @@ openssl req -nodes -config certalator.cnf -newkey ed25519 \
 yes | openssl ca -config certalator.cnf -in proxy1/req.pem \
 	-out proxy1/cert.pem -extensions intermediate_proxy_crt_ext
 openssl verify -CApath authority1/trust_store proxy1/cert.pem
+cat ca/root.pem authority1/cert.pem > proxy1/ca.pem
 
 # Create a "client1" cert request
 rm -rf client1
@@ -85,6 +89,7 @@ openssl ca -config certalator.cnf -section root_ca \
 	-gencrl -out ca/root.crl
 # View it and verify signature
 openssl crl -in ca/root.crl -text -noout -CAfile ca/root.pem
+cat ca/root.crl authority1/authority1.crl > proxy1/ca.crl
 
 # Test and see if client2's cert is indeed revoked, as it should
 openssl verify -CApath authority1/trust_store -CRLfile ca/root.crl \

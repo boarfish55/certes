@@ -22,7 +22,7 @@ struct certalator_flatconf certalator_conf = {
 	0,
 	"",
 	9790,
-	"ca/certdb.sqlite",
+	"certdb.sqlite",
 	"",
 	"",
 	"",
@@ -453,7 +453,7 @@ main(int argc, char **argv)
 	command = argv[opt++];
 
 	if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
-		xlog(LOG_ERR, &e, "certdb_init");
+		xlog(LOG_ERR, &e, __func__);
 		return -1;
 	}
 
