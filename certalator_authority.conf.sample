@@ -1,10 +1,10 @@
 enable_coredumps = true
 
-ca_file = "/home/plalonde/prog/certalator/ca/overnet.pem"
-crl_file = "/home/plalonde/prog/certalator/ca/overnet.crl"
+ca_file = "/home/plalonde/prog/certalator/ca/root.pem"
+crl_file = "/home/plalonde/prog/certalator/ca/root.crl"
 
-crt_file = "/home/plalonde/prog/certalator/authority1/overnet_crt.pem"
-key_file = "/home/plalonde/prog/certalator/authority1/overnet_key.pem"
+crt_file = "/home/plalonde/prog/certalator/authority1/cert.pem"
+key_file = "/home/plalonde/prog/certalator/authority1/key.pem"
 
 lock_file = "/home/plalonde/prog/certalator/lock"
 coordinator_socket_path = "/home/plalonde/prog/certalator/.coordinator.sock"
@@ -15,8 +15,8 @@ coordinator_socket_path = "/home/plalonde/prog/certalator/.coordinator.sock"
 #
 
 serial_file = "/home/plalonde/prog/certalator/ca/serial"
-cert_org = "Overnet"
-cert_email = "cert@overnet.ca"
+cert_org = "Example"
+cert_email = "cert@example.com"
 
 # This supports OpenSSL's bignum integers, we can shard amongst authorities
 # to avoid serial collisions.

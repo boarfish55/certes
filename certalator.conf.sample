@@ -3,11 +3,11 @@ bootstrap_key = "some_key"
 authority_fqdn = "localhost"
 authority_port = 9790
 
-ca_file = "/home/plalonde/prog/certalator/ca/overnet.pem"
-crl_file = "/home/plalonde/prog/certalator/ca/overnet.crl"
+ca_file = "/home/plalonde/prog/certalator/ca/root.pem"
+crl_file = "/home/plalonde/prog/certalator/ca/root.crl"
 
-crt_file = "/home/plalonde/prog/certalator/client1/overnet_crt.pem"
-key_file = "/home/plalonde/prog/certalator/client1/overnet_key.pem"
+crt_file = "/home/plalonde/prog/certalator/client1/cert.pem"
+key_file = "/home/plalonde/prog/certalator/client1/key.pem"
 key_bits = 4096
 
 lock_file = "/home/plalonde/prog/certalator/lock"
