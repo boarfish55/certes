@@ -4,10 +4,7 @@ certalator
 .vimtags
 *.o
 gdb.*
-ca/
-client*/
-proxy*/
-authority*/
+testdata/
 *.core
 *.gdb
 flatconf.c

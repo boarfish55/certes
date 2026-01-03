@@ -5,12 +5,12 @@ bootstrap_key = "HBxxXLjySp77NUyLjfgSPyakdM5QOZacFvylS+21GBWEh1XwW/aPI2zEWzcyAlG
 authority_fqdn = "localhost"
 authority_port = 9790
 
-ca_file = "/home/plalonde/prog/certalator/ca/root.pem"
-crl_file = "/home/plalonde/prog/certalator/ca/root.crl"
+ca_file = "/home/plalonde/prog/certalator/testdata/ca/root.pem"
+crl_file = "/home/plalonde/prog/certalator/testdata/ca/root.crl"
 
-cert_file = "/home/plalonde/prog/certalator/client1/cert.pem"
-key_file = "/home/plalonde/prog/certalator/client1/key.pem"
+cert_file = "/home/plalonde/prog/certalator/testdata/client1/cert.pem"
+key_file = "/home/plalonde/prog/certalator/testdata/client1/key.pem"
 key_bits = 4096
 
-lock_file = "/home/plalonde/prog/certalator/lock"
-coordinator_socket_path = "/home/plalonde/prog/certalator/.coordinator.sock"
+lock_file = "/home/plalonde/prog/certalator/testdata/client1/coordinator.lock"
+coordinator_socket_path = "/home/plalonde/prog/certalator/testdata/client1/coordinator.sock"

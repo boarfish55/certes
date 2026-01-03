@@ -1,3 +1,4 @@
+dir                     = testdata
 oid_section             = certalator_oids
 
 [certalator_oids]
@@ -7,11 +8,11 @@ certalatorRoles         = 1.3.6.1.4.1.35910.3.1
 default_ca              = intermediate_ca
 
 [root_ca]
-certificate             = ca/root.pem
-database                = ca/index.txt
-new_certs_dir           = ca/certs
-private_key             = ca/key.pem
-serial                  = ca/serial
+certificate             = $dir/ca/root.pem
+database                = $dir/ca/index.txt
+new_certs_dir           = $dir/ca/certs
+private_key             = $dir/ca/key.pem
+serial                  = $dir/ca/serial
 default_crl_days        = 365
 default_days            = 365
 default_md              = sha256
@@ -50,11 +51,11 @@ certalatorRoles.1       = IA5:authority
 certalatorRoles.2       = IA5:bootstrap
 
 [intermediate_ca]
-certificate             = authority1/cert.pem
-database                = authority1/index.txt
-new_certs_dir           = authority1/certs
-private_key             = authority1/key.pem
-serial                  = authority1/serial
+certificate             = $dir/authority1/cert.pem
+database                = $dir/authority1/index.txt
+new_certs_dir           = $dir/authority1/certs
+private_key             = $dir/authority1/key.pem
+serial                  = $dir/authority1/serial
 default_crl_days        = 365
 default_days            = 365
 default_md              = sha256

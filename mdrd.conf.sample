@@ -1,0 +1,75 @@
+uid = plalonde
+gid = plalonde
+enable_coredumps = true
+
+ca_file = "/home/plalonde/prog/certalator/testdata/proxy1/ca.pem"
+crl_file = "/home/plalonde/prog/certalator/testdata/proxy1/ca.crl"
+
+# We ue a certificate specifically made for mdrd which is
+# different than the one used to issue certs; clients will
+# expect this cert to have the "caproxy" role
+cert_file = "/home/plalonde/prog/certalator/testdata/proxy1/cert.pem"
+key_file = "/home/plalonde/prog/certalator/testdata/proxy1/key.pem"
+
+port = 9790
+listen_backlog = 1024
+prefork = 4
+pid_file = "/home/plalonde/prog/certalator/testdata/mdrd.pid"
+counters_sock = "/home/plalonde/prog/certalator/testdata/counters.sock"
+
+# Maximum number of concurrent client connections per fork
+max_clients = 10000
+
+# Maximum number of concurrent client connections some the same IP address,
+# per fork. This can be useful to prevent abusive clients from using up
+# all connection slots from max_clients.
+max_conn_per_ip = 25
+
+# When receiving an incomplete TLS record, the SO_RCVLOWAT socket option
+# will be used on the socket to ensure all remaining bytes are buffered
+# before waking on read on that socket.
+use_rcv_lowat = true
+
+# OpenBSD only; sets the SO_DEBUG option on the listening socket, which
+# is inherited on accept()
+so_debug = false
+
+# The TCP SO_RCVBUF and SO_SNDBUF socket options. If set to 0, we leave it
+# up to the operating system to decide and auto-tune.
+rcvbuf = 0
+sndbuf = 0
+
+socket_timeout_min = 3
+socket_timeout_max = 300
+
+# Because TLS records are normally smaller than 16 KiB, as well as to
+# prevent excessive memory usage, it is advised to keep the maximum payload
+# size under this amount and break down messages. Moreover, pipe size on
+# OpenBSD is 16KiB so going above this will require a blocking write.
+# Keep in mind that mdrd will also pass the client's cert along with the
+# message so the backend can receive message over this size.
+max_payload_size = 16384
+
+# Put an upper bound to avoid clients sending absurd certs.
+max_cert_size = 4096
+
+allowed_mdr_domains = [ 0x00000002 ]
+
+backend_argv = [
+	"/home/plalonde/prog/certalator/certalator"
+	"-config"
+	"/home/plalonde/prog/certalator/certalator_authority.conf.sample"
+	"mdrd-backend"
+]
+backend_uid = plalonde
+backend_gid = plalonde
+
+# The following only affect OpenBSD's pledge() and unveil() calls
+backend_promises = "stdio rpath"
+backend_unveils = [
+	"x=/home/plalonde/prog/certalator/certalator"
+	"r=/home/plalonde/prog/certalator/testdata/ca/root.pem"
+	"r=/home/plalonde/prog/certalator/testdata/ca/root.crl"
+	"r=/home/plalonde/prog/certalator/testdata/authority1/key.pem"
+	"r=/home/plalonde/prog/certalator/testdata/authority1/cert.pem"
+]
