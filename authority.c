@@ -24,19 +24,22 @@ extern struct certalator_flatconf certalator_conf;
 int
 authority_bootstrap_setup(const char *cn, const char **sans,
     size_t sans_sz, const char **roles, size_t roles_sz, uint32_t cert_expiry,
-    uint32_t timeout, struct xerr *e)
+    uint32_t timeout, uint32_t flags, struct xerr *e)
 {
 	int                     i;
 	uint8_t                 buf[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
-	char                    subject[CERTALATOR_MAX_SUBJET_LENGTH];
+	char                    subject[CERTALATOR_MAX_SUBJET_LENGTH] = "";
 	struct bootstrap_entry  be;
 	struct timespec         tp;
 
-	if (snprintf(subject, sizeof(subject), "/O=%s/CN=%s/emailAddress=%s",
-	    certalator_conf.cert_org, cn, certalator_conf.cert_email) >=
-	    sizeof(subject))
-		return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
-		    "resulting subject name is too long for commonName %s", cn);
+	if (flags & CERTDB_BOOTSTRAP_FLAG_SETCN) {
+		if (snprintf(subject, sizeof(subject),
+		    "/O=%s/CN=%s/emailAddress=%s", certalator_conf.cert_org,
+		    cn, certalator_conf.cert_email) >= sizeof(subject))
+			return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+			    "resulting subject name is too long "
+			    "for commonName %s", cn);
+	}
 
 	arc4random_buf(buf, sizeof(buf));
 
@@ -73,21 +76,6 @@ authority_bootstrap_setup(const char *cn, const char **sans,
 	return certdb_put_bootstrap(&be, e);
 }
 
-void
-authority_bootstrap_usage()
-{
-	printf("Usage: %s bootstrap-setup [options] <cn> <roles...>\n",
-	    CERTALATOR_PROGNAME);
-	printf("\t--help        Prints this help\n");
-	printf("\t--timeout     Validity of bootstrap entry in "
-	    "seconds (default 600)\n");
-	printf("\t--cert_expiry Validity of certificate in "
-	    "seconds (default 7*86400)\n");
-	printf("\t--san         Adds a Subject Alt Name to this "
-	    "bootstrap entry\n");
-	printf("\t--role        Adds a role to this bootstrap entry\n");
-}
-
 int
 authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
 {
@@ -96,7 +84,7 @@ authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
 	int32_t           roles_sz;
 	const char      **sans = NULL;
 	int32_t           sans_sz;
-	uint32_t          cert_expiry, timeout;
+	uint32_t          cert_expiry, timeout, flags;
 	struct umdr_vec   uv[4];
 
 	if (umdr_unpack(m, msg_bootstrap_setup, uv, UMDRVECLEN(uv)) == MDR_FAIL)
@@ -107,6 +95,7 @@ authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
 	roles_sz = umdr_vec_alen(&uv[2].v.as);
 	cert_expiry = uv[3].v.u32;
 	timeout = uv[4].v.u32;
+	flags = uv[5].v.u32;
 
 	if ((sans = malloc(sizeof(char *) * (sans_sz + 1))) == NULL)
 		goto fail;
@@ -119,7 +108,7 @@ authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
 		goto fail;
 
 	if (authority_bootstrap_setup(subject, sans, sans_sz, roles,
-	    roles_sz, cert_expiry, timeout, e) == -1)
+	    roles_sz, cert_expiry, timeout, flags, e) == -1)
 		goto fail;
 
 	free(sans);
@@ -129,85 +118,6 @@ fail:
 	free(sans);
 	free(roles);
 	return -1;
-}
-
-int
-authority_bootstrap_setup_cli(int argc, char **argv, struct xerr *e)
-{
-	int        opt, r;
-	uint32_t   timeout = 600;
-	uint32_t   cert_expiry = 7 * 86400;
-	char     **roles = NULL;
-	size_t     roles_sz = 0;
-	char     **sans = NULL;
-	size_t     sans_sz = 0;
-
-	for (opt = 0; opt < argc; opt++) {
-		if (argv[opt][0] != '-')
-			break;
-
-		if (strcmp(argv[opt], "-help") == 0) {
-			authority_bootstrap_usage();
-			exit(0);
-		}
-
-		if (strcmp(argv[opt], "-timeout") == 0) {
-			opt++;
-			if (opt > argc) {
-				authority_bootstrap_usage();
-				exit(1);
-			}
-			timeout = atoi(argv[opt]);
-			continue;
-		}
-
-		if (strcmp(argv[opt], "-cert_expiry") == 0) {
-			opt++;
-			if (opt > argc) {
-				authority_bootstrap_usage();
-				exit(1);
-			}
-			cert_expiry = atoi(argv[opt]);
-			continue;
-		}
-
-		if (strcmp(argv[opt], "-san") == 0) {
-			opt++;
-			if (opt > argc) {
-				authority_bootstrap_usage();
-				exit(1);
-			}
-			sans = strlist_add(sans, argv[opt]);
-			if (sans == NULL)
-				err(1, "strlist_add");
-			sans_sz++;
-			continue;
-		}
-
-		if (strcmp(argv[opt], "-role") == 0) {
-			opt++;
-			if (opt > argc) {
-				authority_bootstrap_usage();
-				exit(1);
-			}
-			roles = strlist_add(roles, argv[opt]);
-			if (roles == NULL)
-				err(1, "strlist_add");
-			roles_sz++;
-			continue;
-		}
-	}
-
-	if (opt >= argc) {
-		authority_bootstrap_usage();
-		exit(1);
-	}
-
-	r = authority_bootstrap_setup(argv[opt], (const char **)sans, sans_sz,
-	    (const char **)roles, roles_sz, cert_expiry, timeout, e);
-	free(sans);
-	free(roles);
-	return r;
 }
 
 int

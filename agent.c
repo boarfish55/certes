@@ -13,6 +13,7 @@
 #include "cert.h"
 #include "mdr.h"
 #include "xlog.h"
+#include "util.h"
 
 static EVP_PKEY    *key = NULL;
 static X509        *cert = NULL;
@@ -102,7 +103,7 @@ agent_send(struct pmdr *m, struct xerr *e)
 
 }
 
-static int
+int
 agent_recv(char *buf, size_t buf_sz, struct xerr *e)
 {
 	int r;

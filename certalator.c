@@ -24,14 +24,14 @@ struct certalator_flatconf certalator_conf = {
 	9790,
 	"certdb.sqlite",
 	"",
-	"",
-	"",
-	"",
-	"",
-	".lock",
+	"ca.pem",
+	"crl",
+	"key.pem",
+	"cert.pem",
+	"agent.lock",
 	"agent.sock",
 	4096,
-	"ca/serial",
+	"serial",
 	"",
 	"",
 
@@ -160,6 +160,21 @@ usage()
 	printf("\tmdrd-backend     Run as an mdrd backend\n");
 	printf("\tbootstrap-setup  Create a bootstrap entry on the "
 	    "authority\n");
+}
+
+void
+bootstrap_setup_usage()
+{
+	printf("Usage: %s bootstrap-setup [options] <cn> <roles...>\n",
+	    CERTALATOR_PROGNAME);
+	printf("\t--help        Prints this help\n");
+	printf("\t--timeout     Validity of bootstrap entry in "
+	    "seconds (default 600)\n");
+	printf("\t--cert_expiry Validity of certificate in "
+	    "seconds (default 7*86400)\n");
+	printf("\t--san         Adds a Subject Alt Name to this "
+	    "bootstrap entry\n");
+	printf("\t--role        Adds a role to this bootstrap entry\n");
 }
 
 int
@@ -377,6 +392,117 @@ fail:
 }
 
 void
+bootstrap_setup_cli(int argc, char **argv)
+{
+	int               opt;
+	uint32_t          timeout = 600;
+	uint32_t          flags = 0;
+	uint32_t          cert_expiry = 7 * 86400;
+	char            **roles = NULL;
+	size_t            roles_sz = 0;
+	char             *cn = NULL;
+	char            **sans = NULL;
+	size_t            sans_sz = 0;
+	struct pmdr       pm;
+	struct pmdr_vec   pv[6];
+	char              pbuf[1024];
+	struct xerr       e;
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			bootstrap_setup_usage();
+			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-timeout") == 0) {
+			opt++;
+			if (opt > argc) {
+				bootstrap_setup_usage();
+				exit(1);
+			}
+			timeout = atoi(argv[opt]);
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-cert_expiry") == 0) {
+			opt++;
+			if (opt > argc) {
+				bootstrap_setup_usage();
+				exit(1);
+			}
+			cert_expiry = atoi(argv[opt]);
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-san") == 0) {
+			opt++;
+			if (opt > argc) {
+				bootstrap_setup_usage();
+				exit(1);
+			}
+			sans = strlist_add(sans, argv[opt]);
+			if (sans == NULL)
+				err(1, "strlist_add");
+			sans_sz++;
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-cn") == 0) {
+			opt++;
+			if (opt > argc) {
+				bootstrap_setup_usage();
+				exit(1);
+			}
+			cn = argv[opt];
+			flags |= CERTDB_BOOTSTRAP_FLAG_SETCN;
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-role") == 0) {
+			opt++;
+			if (opt > argc) {
+				bootstrap_setup_usage();
+				exit(1);
+			}
+			roles = strlist_add(roles, argv[opt]);
+			if (roles == NULL)
+				err(1, "strlist_add");
+			roles_sz++;
+			continue;
+		}
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = cn;
+	pv[1].type = MDR_AS;
+	pv[1].v.as.items = (const char **)sans;
+	pv[1].v.as.length = sans_sz;
+	pv[2].type = MDR_AS;
+	pv[2].v.as.items = (const char **)roles;
+	pv[2].v.as.length = roles_sz;
+	pv[3].type = MDR_U32;
+	pv[3].v.u32 = cert_expiry;
+	pv[4].type = MDR_U32;
+	pv[4].v.u32 = timeout;
+	pv[5].type = MDR_U32;
+	pv[5].v.u32 = flags;
+	if (pmdr_pack(&pm, msg_bootstrap_setup, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		err(1, "pmdr_pack");
+
+	if (agent_send(&pm, xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	free(sans);
+	free(roles);
+}
+
+void
 cleanup()
 {
 	flatconf_free(certalator_config_vars);
@@ -406,7 +532,7 @@ main(int argc, char **argv)
 		if (strcmp(argv[opt], "-config") == 0) {
 			opt++;
 			if (opt > argc) {
-				authority_bootstrap_usage();
+				usage();
 				exit(1);
 			}
 			strlcpy(config_file_path, argv[opt],
@@ -515,11 +641,7 @@ main(int argc, char **argv)
 	} else if (strcmp(command, "mdrd-backend") == 0) {
 		status = mdrd_backend();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
-		if (authority_bootstrap_setup_cli(argc - opt,
-		    argv + opt, &e) == -1) {
-			xlog(LOG_ERR, &e, "bootstrap");
-			return -1;
-		}
+		bootstrap_setup_cli(argc - opt, argv + opt);
 	} else {
 		usage();
 		status = 1;
