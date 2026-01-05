@@ -25,7 +25,8 @@ struct certalator_flatconf certalator_conf = {
 	"certdb.sqlite",
 	"",
 	"ca.pem",
-	"crl",
+	"",
+	"",
 	"key.pem",
 	"cert.pem",
 	"agent.lock",
@@ -81,6 +82,12 @@ struct flatconf certalator_config_vars[] = {
 		FLATCONF_STRING,
 		certalator_conf.crl_file,
 		sizeof(certalator_conf.crl_file)
+	},
+	{
+		"crl_path",
+		FLATCONF_STRING,
+		certalator_conf.crl_path,
+		sizeof(certalator_conf.crl_path)
 	},
 	{
 		"key_file",
@@ -408,6 +415,11 @@ bootstrap_setup_cli(int argc, char **argv)
 	char              pbuf[1024];
 	struct xerr       e;
 
+	if (agent_init(&e) == -1) {
+		xlog(LOG_ERR, &e, __func__);
+		exit(1);
+	}
+
 	for (opt = 0; opt < argc; opt++) {
 		if (argv[opt][0] != '-')
 			break;
@@ -498,6 +510,7 @@ bootstrap_setup_cli(int argc, char **argv)
 		exit(1);
 	}
 
+	// TODO: receive
 	free(sans);
 	free(roles);
 }

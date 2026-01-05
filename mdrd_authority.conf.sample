@@ -3,19 +3,19 @@ gid = plalonde
 enable_coredumps = true
 
 ca_file = "/home/plalonde/prog/certalator/testdata/ca/root.pem"
-crl_file = "/home/plalonde/prog/certalator/testdata/authority1/combined.crl"
+crl_path = "/home/plalonde/prog/certalator/testdata/authority1/crl_store"
 
 # We ue a certificate specifically made for mdrd which is
 # different than the one used to issue certs; clients will
 # expect this cert to have the "caproxy" role
-cert_file = "/home/plalonde/prog/certalator/testdata/client1/cert.pem"
-key_file = "/home/plalonde/prog/certalator/testdata/client1/key.pem"
+cert_file = "/home/plalonde/prog/certalator/testdata/proxy1/cert.pem"
+key_file = "/home/plalonde/prog/certalator/testdata/proxy1/key.pem"
 
-port = 9790
+port = 9791
 listen_backlog = 1024
 prefork = 4
-pid_file = "/home/plalonde/prog/certalator/testdata/client1/mdrd.pid"
-counters_sock = "/home/plalonde/prog/certalator/testdata/client1/counters.sock"
+pid_file = "/home/plalonde/prog/certalator/testdata/authority1/mdrd.pid"
+counters_sock = "/home/plalonde/prog/certalator/testdata/authority1/counters.sock"
 
 # Maximum number of concurrent client connections per fork
 max_clients = 10000
@@ -58,7 +58,7 @@ allowed_mdr_domains = [ 0x00000002 ]
 backend_argv = [
 	"/home/plalonde/prog/certalator/certalator"
 	"-config"
-	"/home/plalonde/prog/certalator/certalator.conf.sample"
+	"/home/plalonde/prog/certalator/certalator_authority.conf.sample"
 	"mdrd-backend"
 ]
 backend_uid = plalonde
@@ -68,8 +68,12 @@ backend_gid = plalonde
 backend_promises = "stdio rpath"
 backend_unveils = [
 	"x=/home/plalonde/prog/certalator/certalator"
-	"r=/home/plalonde/prog/certalator/testdata/client1/ca.pem"
-	"r=/home/plalonde/prog/certalator/testdata/client1/ca.crl"
-	"r=/home/plalonde/prog/certalator/testdata/client1/key.pem"
-	"r=/home/plalonde/prog/certalator/testdata/client1/cert.pem"
+	"r=/home/plalonde/prog/certalator/testdata/ca/root.pem"
+	"r=/home/plalonde/prog/certalator/testdata/ca/root.crl"
+	"r=/home/plalonde/prog/certalator/testdata/authority1/key.pem"
+	"r=/home/plalonde/prog/certalator/testdata/authority1/cert.pem"
+	"r=/home/plalonde/prog/certalator/testdata/authority1/coordinator.lock"
+	"rw=/home/plalonde/prog/certalator/testdata/authority1/coordinator.sock"
+	"rw=/home/plalonde/prog/certalator/testdata/authority1/serial"
+	"rw=/home/plalonde/prog/certalator/testdata/authority1/certdb.sqlite"
 ]

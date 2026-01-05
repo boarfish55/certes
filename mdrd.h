@@ -12,6 +12,8 @@
 #define MDRD_ST_DENIED   1  /* Client is denied this operation */
 #define MDRD_ST_CERTFAIL 2  /* Client certificate verification failed */
 #define MDRD_ST_NOCERT   3  /* Client certificate is missing */
+#define MDRD_ST_NOBEMSG  4  /* mdrd expected a message from its backend for
+			       the client, but there was none. */
 
 /* Backend response flags */
 #define MDRD_BERESP_FNONE  0x00000000

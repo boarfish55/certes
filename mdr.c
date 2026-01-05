@@ -65,6 +65,8 @@ static struct mdr_def mdrd_error = {
 	MDR_DCV_MDRD_ERROR,
 	"mdrd.error",
 	{
+		MDR_U32, /* Error code */
+		MDR_S,   /* Error description */
 		MDR_LAST
 	}
 };

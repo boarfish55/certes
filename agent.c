@@ -6,6 +6,7 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <stdio.h>
+#include <dirent.h>
 #include <unistd.h>
 #include "agent.h"
 #include "certalator.h"
@@ -23,7 +24,6 @@ static BIO         *bio = NULL;
 static int          connected = 0;
 static int          is_authority = 0;
 static X509        *ca_crt = NULL;
-static X509_CRL    *ca_crl = NULL;
 static X509_STORE  *store;
 
 extern struct certalator_flatconf certalator_conf;
@@ -314,7 +314,7 @@ agent_bootstrap(struct xerr *e)
 	ptrdiff_t        r;
 	unsigned char   *req_buf;
 	size_t           req_len;
-	X509            *cert;
+	X509            *crt;
 	FILE            *f;
 
 	if (strlen(certalator_conf.bootstrap_key) !=
@@ -486,9 +486,9 @@ agent_bootstrap(struct xerr *e)
 		return NULL;
 	}
 
-	cert = d2i_X509(NULL, (const unsigned char **)&uv[1].v.b.bytes,
+	crt = d2i_X509(NULL, (const unsigned char **)&uv[1].v.b.bytes,
 	    uv[1].v.b.sz);
-        if (cert == NULL) {
+        if (crt == NULL) {
 		XERRF(e, XLOG_APP, XLOG_BADMSG,
 		    "bootstrap reply did not contain a valid "
 		    "DER-encoded X.509");
@@ -496,7 +496,7 @@ agent_bootstrap(struct xerr *e)
         }
 
 	f = fopen(certalator_conf.cert_file, "w");
-	if (PEM_write_X509(f, cert) == 0) {
+	if (PEM_write_X509(f, crt) == 0) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
 		return NULL;
 	}
@@ -508,12 +508,38 @@ agent_bootstrap(struct xerr *e)
 	return f;
 }
 
+static int
+load_crl(const char *crl_path, struct xerr *e)
+{
+	X509_CRL *crl;
+	FILE     *f;
+
+	if ((f = fopen(crl_path, "r")) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
+
+	if ((crl = PEM_read_X509_CRL(f, NULL, NULL, NULL)) == NULL) {
+		fclose(f);
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509_CRL");
+	}
+
+	fclose(f);
+
+	if (!X509_STORE_add_crl(store, crl))
+		return XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "X509_STORE_add_crl");
+	return 0;
+}
+
 int
 agent_load_keys(struct xerr *e)
 {
-	FILE        *f;
+	FILE          *f;
+	DIR           *d;
+	struct dirent *de;
+	int            de_len;
+	char           crl_path[PATH_MAX + NAME_MAX + 1];
 #ifndef __OpenBSD__
-	int          pkey_sz;
+	int            pkey_sz;
 #endif
 	if ((f = fopen(certalator_conf.key_file, "r")) == NULL) {
 		if (errno == ENOENT) {
@@ -563,19 +589,41 @@ agent_load_keys(struct xerr *e)
 		goto fail;
 	}
 
-	if ((f = fopen(certalator_conf.crl_file, "r")) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "fopen");
-		goto fail;
+	if (*certalator_conf.crl_file != '\0') {
+		if (load_crl(certalator_conf.crl_file, xerrz(e)) == -1) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
 	}
-	if ((ca_crl = PEM_read_X509_CRL(f, NULL, NULL, NULL)) == NULL) {
-		fclose(f);
-		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509_CRL");
-		goto fail;
-	}
-	fclose(f);
-	if (!X509_STORE_add_crl(store, ca_crl)) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_add_crl");
-		goto fail;
+	if (*certalator_conf.crl_path != '\0') {
+		if ((d = opendir(certalator_conf.crl_path)) == NULL) {
+			XERRF(e, XLOG_ERRNO, errno, "opendir");
+			goto fail;
+		}
+
+		for (;;) {
+			errno = 0;
+			de = readdir(d);
+			if (de == NULL) {
+				if (errno == 0)
+					break;
+				XERRF(e, XLOG_ERRNO, errno, "readdir");
+				goto fail;
+			}
+			if (de->d_type != DT_REG)
+				continue;
+			de_len = strlen(de->d_name);
+			if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
+				continue;
+
+			snprintf(crl_path, sizeof(crl_path), "%s/%s",
+			    certalator_conf.crl_path, de->d_name);
+			if (load_crl(crl_path, xerrz(e)) == -1) {
+				XERR_PREPENDFN(e);
+				goto fail;
+			}
+		}
+		closedir(d);
 	}
 
 	if ((f = fopen(certalator_conf.cert_file, "r")) == NULL) {
@@ -625,10 +673,6 @@ agent_cleanup()
 		X509_free(ca_crt);
 		ca_crt = NULL;
 	}
-	if (ca_crl != NULL) {
-		X509_CRL_free(ca_crl);
-		ca_crl = NULL;
-	}
 	if (cert != NULL) {
 		X509_free(cert);
 		cert = NULL;
@@ -637,9 +681,9 @@ agent_cleanup()
 		EVP_PKEY_free(key);
 		key = NULL;
 	}
-	if (store != NULL) {
-		X509_STORE_free(store);
-		store = NULL;
+	if (ssl_ctx != NULL) {
+		SSL_CTX_free(ssl_ctx);
+		ssl_ctx = NULL;
 	}
 }
 

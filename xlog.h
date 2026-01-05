@@ -13,7 +13,7 @@ enum xerr_space {
 	XLOG_DB        /* DB error */
 };
 
-enum xerr_code {
+enum {
 	XLOG_SUCCESS = 0,
 	XLOG_EOF,               /* EOF on a pipe/socket */
 	XLOG_INVAL,             /* An invalid value was obtained */
@@ -48,7 +48,7 @@ extern const struct module_dbg_map_entry {
 struct xerr {
 	char            msg[LINE_MAX];
 	enum xerr_space sp;
-	enum xerr_code  code;
+	int64_t         code;
 };
 #define XLOG_ERR_INITIALIZER {"", 0, 0}
 

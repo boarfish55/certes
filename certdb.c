@@ -516,7 +516,7 @@ certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	switch (sqlite3_step(qry_cert_put.stmt)) {
+	switch ((r = sqlite3_step(qry_cert_put.stmt))) {
 	case SQLITE_DONE:
 		/* Nothing */
 		break;

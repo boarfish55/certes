@@ -6,7 +6,7 @@ authority_fqdn = "localhost"
 authority_port = 9790
 
 ca_file = "/home/plalonde/prog/certalator/testdata/ca/root.pem"
-crl_file = "/home/plalonde/prog/certalator/testdata/ca/root.crl"
+crl_file = "/home/plalonde/prog/certalator/testdata/authority1/combined.crl"
 
 cert_file = "/home/plalonde/prog/certalator/testdata/client1/cert.pem"
 key_file = "/home/plalonde/prog/certalator/testdata/client1/key.pem"

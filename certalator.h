@@ -39,6 +39,7 @@ struct certalator_flatconf {
 	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH + 1];
 	char     ca_file[PATH_MAX];
 	char     crl_file[PATH_MAX];
+	char     crl_path[PATH_MAX];
 	char     key_file[PATH_MAX];
 	char     cert_file[PATH_MAX];
 	char     lock_file[PATH_MAX];

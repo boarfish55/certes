@@ -1,7 +1,7 @@
 #include <err.h>
 #include <errno.h>
 #include <limits.h>
-#include <locale.h>
+#include <openssl/err.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +16,6 @@ const struct module_dbg_map_entry module_dbg_map[] = {
 };
 
 static xlog_mask_t  debug_mask = 0;
-locale_t            log_locale;
 FILE               *log_file = NULL;
 static int          log_level = LOG_INFO;
 
@@ -148,9 +147,6 @@ xlog_init(const char *progname, const char *dbg_spec, const char *logf,
 	if (perror)
 		opt |= LOG_PERROR;
 
-	if ((log_locale = newlocale(LC_CTYPE_MASK, "C", 0)) == 0)
-		return -1;
-
 	if (logf != NULL && logf[0] != '\0' && log_file == NULL)
 		if ((log_file = fopen(logf, "a")) == NULL)
 			warn("fopen");
@@ -206,6 +202,7 @@ xlog(int priority, const struct xerr *e, const char *fmt, ...)
 {
 	va_list ap;
 	char    msg[LINE_MAX];
+	char    errmsg[256] = "";
 	size_t  written;
 
 	if (priority > log_level)
@@ -232,33 +229,41 @@ xlog(int priority, const struct xerr *e, const char *fmt, ...)
 	}
 
 	if (e->sp == XLOG_ERRNO && e->code != 0) {
+		strerror_r(e->code, errmsg, sizeof(errmsg));
 		if (fmt) {
-			syslog(priority, "[sp=%d, code=%d]: "
-			    "%s: %s: %s",
-			    e->sp, e->code, msg, e->msg,
-			    strerror_l(e->code, log_locale));
-			xlog_fprintf("[sp=%d, code=%d]: "
-			    "%s: %s: %s",
-			    e->sp, e->code, msg, e->msg,
-			    strerror_l(e->code, log_locale));
+			syslog(priority, "[sp=%d, code=%ld]: %s: %s: %s",
+			    e->sp, e->code, msg, e->msg, errmsg);
+			xlog_fprintf("[sp=%d, code=%ld]: %s: %s: %s",
+			    e->sp, e->code, msg, e->msg, errmsg);
 		} else {
-			syslog(priority, "[sp=%d, code=%d]: %s: %s",
-			    e->sp, e->code, e->msg,
-			    strerror_l(e->code, log_locale));
-			xlog_fprintf("[sp=%d, code=%d]: %s: %s",
-			    e->sp, e->code, e->msg,
-			    strerror_l(e->code, log_locale));
+			syslog(priority, "[sp=%d, code=%ld]: %s: %s",
+			    e->sp, e->code, e->msg, errmsg);
+			xlog_fprintf("[sp=%d, code=%ld]: %s: %s",
+			    e->sp, e->code, e->msg, errmsg);
+		}
+	} else if (e->sp == XLOG_SSL && e->code != 0) {
+		ERR_error_string_n(e->code, errmsg, sizeof(errmsg));
+		if (fmt) {
+			syslog(priority, "[sp=%d, code=%ld]: %s: %s: %s",
+			    e->sp, e->code, msg, e->msg, errmsg);
+			xlog_fprintf("[sp=%d, code=%ld]: %s: %s: %s",
+			    e->sp, e->code, msg, e->msg, errmsg);
+		} else {
+			syslog(priority, "[sp=%d, code=%ld]: %s: %s",
+			    e->sp, e->code, e->msg, errmsg);
+			xlog_fprintf("[sp=%d, code=%ld]: %s: %s",
+			    e->sp, e->code, e->msg, errmsg);
 		}
 	} else {
 		if (fmt) {
-			syslog(priority, "[sp=%d, code=%d]: %s: %s",
+			syslog(priority, "[sp=%d, code=%ld]: %s: %s",
 			    e->sp, e->code, msg, e->msg);
-			xlog_fprintf("[sp=%d, code=%d]: %s: %s",
+			xlog_fprintf("[sp=%d, code=%ld]: %s: %s",
 			    e->sp, e->code, msg, e->msg);
 		} else {
-			syslog(priority, "[sp=%d, code=%d]: %s",
+			syslog(priority, "[sp=%d, code=%lu]: %s",
 			    e->sp, e->code, e->msg);
-			xlog_fprintf("[sp=%d, code=%d]: %s",
+			xlog_fprintf("[sp=%d, code=%ld]: %s",
 			    e->sp, e->code, e->msg);
 		}
 	}
@@ -269,6 +274,7 @@ xlog_strerror(int priority, int err, const char *fmt, ...)
 {
 	va_list ap;
 	char    msg[LINE_MAX];
+	char    errmsg[256] = "";
 
 	if (priority > log_level)
 		return;
@@ -279,22 +285,29 @@ xlog_strerror(int priority, int err, const char *fmt, ...)
 	vsnprintf(msg, sizeof(msg), fmt, ap);
 	va_end(ap);
 
-	syslog(priority, "%s: %s", msg, strerror_l(err, log_locale));
-	xlog_fprintf("%s: %s", msg, strerror_l(err, log_locale));
+	strerror_r(err, errmsg, sizeof(errmsg));
+	syslog(priority, "%s: %s", msg, errmsg);
+	xlog_fprintf("%s: %s", msg, errmsg);
 }
 
 void
 xerr_print(const struct xerr *e)
 {
+	char errmsg[256] = "";
+
 	if (e == NULL)
 		return;
 
-	if (e->sp == XLOG_ERRNO && e->code != 0)
-		warnx("[err=%d, c_err=%d]: %s: %s",
-		    e->sp, e->code, e->msg,
-		    strerror_l(e->code, log_locale));
-	else
-		warnx("[err=%d, c_err=%d]: %s", e->sp, e->code, e->msg);
+	if (e->sp == XLOG_ERRNO && e->code != 0) {
+		strerror_r(e->code, errmsg, sizeof(errmsg));
+		warnx("[sp=%d, code=%ld]: %s: %s",
+		    e->sp, e->code, e->msg, errmsg);
+	} else if (e->sp == XLOG_SSL && e->code != 0) {
+		ERR_error_string_n(e->code, errmsg, sizeof(errmsg));
+		warnx("[sp=%d, code=%ld]: %s: %s",
+		    e->sp, e->code, e->msg, errmsg);
+	} else
+		warnx("[sp=%d, code=%ld]: %s", e->sp, e->code, e->msg);
 }
 
 int
