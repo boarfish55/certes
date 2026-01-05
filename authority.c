@@ -1,3 +1,4 @@
+#include <openssl/err.h>
 #include <err.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -44,10 +45,8 @@ authority_bootstrap_setup(const char *cn, const char **sans,
 	arc4random_buf(buf, sizeof(buf));
 
 	if (b64enc(be.bootstrap_key, sizeof(be.bootstrap_key),
-	    buf, sizeof(buf)) == -1) {
-		// TODO: handle openssl error
-		return -1;
-	}
+	    buf, sizeof(buf)) == -1)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "b64enc");
 
 	clock_gettime(CLOCK_REALTIME, &tp);
 
