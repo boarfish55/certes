@@ -54,6 +54,7 @@ authority_bootstrap_setup(const char *cn, const char **sans,
 	be.not_before_sec = tp.tv_sec;
 	be.not_after_sec = tp.tv_sec + cert_expiry;
 	be.subject = subject;
+	be.flags = flags;
 
 	for (i = 0; i < roles_sz; i++)
 		if (strlen(roles[i]) > CERTALATOR_MAX_ROLE_LENGTH)
@@ -84,7 +85,7 @@ authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
 	const char      **sans = NULL;
 	int32_t           sans_sz;
 	uint32_t          cert_expiry, timeout, flags;
-	struct umdr_vec   uv[4];
+	struct umdr_vec   uv[6];
 
 	if (umdr_unpack(m, msg_bootstrap_setup, uv, UMDRVECLEN(uv)) == MDR_FAIL)
 		return -1;
@@ -101,9 +102,9 @@ authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
 	if ((roles = malloc(sizeof(char *) * (roles_sz + 1))) == NULL)
 		goto fail;
 
-	if (umdr_vec_as(&uv[1].v.as, sans, sans_sz) == MDR_FAIL)
+	if (umdr_vec_as(&uv[1].v.as, sans, sans_sz + 1) == MDR_FAIL)
 		goto fail;
-	if (umdr_vec_as(&uv[2].v.as, roles, roles_sz) == MDR_FAIL)
+	if (umdr_vec_as(&uv[2].v.as, roles, roles_sz + 1) == MDR_FAIL)
 		goto fail;
 
 	if (authority_bootstrap_setup(subject, sans, sans_sz, roles,

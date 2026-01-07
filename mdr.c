@@ -42,15 +42,16 @@ static struct mdr_def mdr_pong = {
 	}
 };
 const struct mdr_spec *mdr_msg_pong;
-static struct mdr_def mdr_featnotsup = {
-	MDR_DCV_MDR_FEATNOTSUP,
-	"mdr.featnotsup",
+static struct mdr_def mdr_error = {
+	MDR_DCV_MDR_ERROR,
+	"mdr.error",
 	{
-		MDR_U32,
+		MDR_U32, /* Error code */
+		MDR_S,   /* Error description */
 		MDR_LAST
 	}
 };
-const struct mdr_spec *mdr_msg_featnotsup;
+const struct mdr_spec *mdr_msg_error;
 static struct mdr_def mdr_echo = {
 	MDR_DCV_MDR_ECHO,
 	"mdr.echo",
@@ -966,7 +967,7 @@ mdr_register_builtin_specs()
 {
 	if ((mdr_msg_ping = mdr_register_spec(&mdr_ping)) == NULL ||
 	    (mdr_msg_pong = mdr_register_spec(&mdr_pong)) == NULL ||
-	    (mdr_msg_featnotsup = mdr_register_spec(&mdr_featnotsup)) == NULL ||
+	    (mdr_msg_error = mdr_register_spec(&mdr_error)) == NULL ||
 	    (mdr_msg_echo = mdr_register_spec(&mdr_echo)) == NULL ||
 	    (mdr_msg_mdrd_error = mdr_register_spec(&mdrd_error)) == NULL ||
 	    (mdr_msg_mdrd_bereq = mdr_register_spec(&mdrd_bereq)) == NULL ||

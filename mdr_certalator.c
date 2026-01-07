@@ -16,6 +16,25 @@ struct mdr_def msgdef_bootstrap_setup = {
 };
 const struct mdr_spec *msg_bootstrap_setup;
 
+struct mdr_def msgdef_bootstrap_setup_resp_ok = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP_RESP_OK,
+	"certalator.bootstrap_setup_resp_ok",
+	{
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_bootstrap_setup_resp_ok;
+
+struct mdr_def msgdef_bootstrap_setup_resp_err = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP_RESP_ERR,
+	"certalator.bootstrap_setup_resp_err",
+	{
+		MDR_S,   /* Error message */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_bootstrap_setup_resp_err;
+
 struct mdr_def msgdef_bootstrap_dialin = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN,
 	"certalator.bootstrap_dialin",
@@ -162,6 +181,12 @@ load_mdr_defs()
 	 */
 	if ((msg_bootstrap_setup =
 	    mdr_register_spec(&msgdef_bootstrap_setup)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_bootstrap_setup_resp_ok =
+	    mdr_register_spec(&msgdef_bootstrap_setup_resp_ok)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_bootstrap_setup_resp_err =
+	    mdr_register_spec(&msgdef_bootstrap_setup_resp_err)) == NULL)
 		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_dialin =
 	    mdr_register_spec(&msgdef_bootstrap_dialin)) == NULL)

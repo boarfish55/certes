@@ -7,13 +7,17 @@
 #include <stdint.h>
 #include "mdr.h"
 
+/* Backend errors with no session information */
+#define MDRD_ERROR_OS        1
+
 /* Backend response statuses */
-#define MDRD_ST_OK       0
-#define MDRD_ST_DENIED   1  /* Client is denied this operation */
-#define MDRD_ST_CERTFAIL 2  /* Client certificate verification failed */
-#define MDRD_ST_NOCERT   3  /* Client certificate is missing */
-#define MDRD_ST_NOBEMSG  4  /* mdrd expected a message from its backend for
-			       the client, but there was none. */
+#define MDRD_BERESP_OK       0
+#define MDRD_BERESP_DENIED   1  /* Client is denied this operation */
+#define MDRD_BERESP_CERTFAIL 2  /* Client certificate verification failed */
+#define MDRD_BERESP_NOCERT   3  /* Client certificate is missing */
+#define MDRD_BERESP_BEFAIL   4  /* A failure on the backend prevented successful
+			           completion */
+#define MDRD_BERESP_BADMSG   5  /* Bad message format, or unsupported message */
 
 /* Backend response flags */
 #define MDRD_BERESP_FNONE  0x00000000

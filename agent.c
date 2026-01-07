@@ -41,6 +41,8 @@ agent_connect(struct xerr *e)
 		if ((ssl_ctx = SSL_CTX_new(TLS_client_method())) == NULL)
 			return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
 
+		// TODO: make sure we are talking to a ca-proxy, optionally.
+		SSL_CTX_set_security_level(ssl_ctx, 3);
 		SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, NULL);
 		SSL_CTX_set_cert_store(ssl_ctx, store);
 

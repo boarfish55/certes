@@ -55,14 +55,15 @@ struct {
         int           i_subject;
         int           i_sans;
         int           i_roles;
+        int           i_flags;
         int           i_not_before_sec;
         int           i_not_after_sec;
 } qry_bootstrap_put = {
         NULL,
         "insert or replace into bootstrap(bootstrap_key, valid_until_sec, "
-	    "subject, sans, roles, not_before_sec, not_after_sec) "
-            "values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        1, 2, 3, 4, 5, 6, 7
+	    "subject, sans, roles, flags, not_before_sec, not_after_sec) "
+            "values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        1, 2, 3, 4, 5, 6, 7, 8
 };
 
 struct {
@@ -73,13 +74,14 @@ struct {
         int           o_subject;
         int           o_sans;
         int           o_roles;
+        int           o_flags;
         int           o_not_before_sec;
         int           o_not_after_sec;
 } qry_bootstrap_get = {
         NULL,
-        "select valid_until_sec, subject, sans, roles, not_before_sec, "
+        "select valid_until_sec, subject, sans, roles, flags, not_before_sec, "
 	    "not_after_sec from bootstrap where bootstrap_key = ?1",
-        1, 0, 1, 2, 3, 4, 5
+        1, 0, 1, 2, 3, 4, 5, 6
 };
 
 struct {
@@ -169,6 +171,10 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const char *bootstrap_key,
                     sqlite3_errmsg(db), r);
                 goto fail;
         }
+
+	dst->flags = (uint32_t)sqlite3_column_int(
+	    qry_bootstrap_get.stmt,
+	    qry_bootstrap_get.o_flags);
 
 	dst->valid_until_sec = (uint64_t)sqlite3_column_int64(
 	    qry_bootstrap_get.stmt,
@@ -416,6 +422,8 @@ certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 
 	if ((r = sqlite3_bind_int64(qry_bootstrap_put.stmt,
 	    qry_bootstrap_put.i_valid_until_sec, entry->valid_until_sec)) ||
+	    (r = sqlite3_bind_int(qry_bootstrap_put.stmt,
+	    qry_bootstrap_put.i_flags, entry->flags)) ||
 	    (r = sqlite3_bind_int64(qry_bootstrap_put.stmt,
 	    qry_bootstrap_put.i_not_before_sec, entry->not_before_sec)) ||
 	    (r = sqlite3_bind_int64(qry_bootstrap_put.stmt,

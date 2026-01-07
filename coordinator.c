@@ -38,10 +38,9 @@ challenge_cmp(struct challenge *c1, struct challenge *c2)
 	return memcmp(c1->req_id, c2->req_id, sizeof(c1->req_id));
 }
 
-SPLAY_HEAD(challenge_tree, challenge);
+SPLAY_HEAD(challenge_tree, challenge) challenges = SPLAY_INITIALIZER(&challenges);
 SPLAY_PROTOTYPE(challenge_tree, challenge, entries, challenge_cmp);
 SPLAY_GENERATE(challenge_tree, challenge, entries, challenge_cmp);
-struct challenge_tree challenges = SPLAY_INITIALIZER(challenges_list);
 
 struct client {
 	int     fd;
@@ -60,10 +59,9 @@ client_cmp(struct client *c1, struct client *c2)
 	return c1->fd - c2->fd;
 }
 
-SPLAY_HEAD(client_tree, client);
+SPLAY_HEAD(client_tree, client) clients = SPLAY_INITIALIZER(&clients);
 SPLAY_PROTOTYPE(client_tree, client, entries, client_cmp);
 SPLAY_GENERATE(client_tree, client, entries, client_cmp);
-struct client_tree clients = SPLAY_INITIALIZER(client_list);
 
 static void
 client_free(struct client *c)

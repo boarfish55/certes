@@ -360,18 +360,29 @@ void                   mdr_registry_clear();
  * variant are 16 bits.
  */
 
+/*
+ * Messages exchanged between mdrd and its clients; clients must support
+ * MDR_DCV_MDR_ERROR responses.
+ */
 #define MDR_DOMAIN_MDR           MDR_DCV(0x00000000, 0, 0)
 #define MDR_DCV_MDR_PING         MDR_DCV(0x00000000, 0x0001, 0x0000)
 #define MDR_DCV_MDR_PONG         MDR_DCV(0x00000000, 0x0002, 0x0000)
-#define MDR_DCV_MDR_FEATNOTSUP   MDR_DCV(0x00000000, 0x0003, 0x0000)
+#define MDR_DCV_MDR_ERROR        MDR_DCV(0x00000000, 0x0003, 0x0000)
 #define MDR_DCV_MDR_ECHO         MDR_DCV(0x00000000, 0x0004, 0x0000)
+#define     MDR_ERR_BEFAIL       1 /* Failure on backend prevented
+				      a successful response */
+#define     MDR_ERR_NOTSUPP      2 /* Message not supported */
+#define     MDR_ERR_CERTFAIL     3 /* Cerfificate validation failure */
+#define     MDR_ERR_DENIED       4 /* Client is not authorized for
+				      this operation */
 #define MDR_DCV_MDR_TEST         MDR_DCV(0x00000000, 0x0005, 0x0000)
 extern const struct mdr_spec *mdr_msg_ping;
 extern const struct mdr_spec *mdr_msg_pong;
-extern const struct mdr_spec *mdr_msg_featnotsup;
+extern const struct mdr_spec *mdr_msg_error;
 extern const struct mdr_spec *mdr_msg_echo;
 extern const struct mdr_spec *mdr_msg_test;
 
+/* Messages exchanged between mdrd and its backend */
 #define MDR_DOMAIN_MDRD          MDR_DCV(0x00000001, 0, 0)
 #define MDR_DCV_MDRD_ERROR       MDR_DCV(0x00000001, 0x0001, 0x0000)
 #define MDR_DCV_MDRD_BEREQ       MDR_DCV(0x00000001, 0x0002, 0x0000)

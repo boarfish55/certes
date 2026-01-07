@@ -14,7 +14,7 @@
 #define CERTDB_FLAG_ALL     0xFFFFFFFF
 
 struct bootstrap_entry {
-	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
+	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64];
 	time_t   valid_until_sec;
 	char    *subject;
 	char   **sans;

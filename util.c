@@ -179,7 +179,7 @@ b64enc(char *dst, size_t dst_sz, const uint8_t *bytes, size_t sz)
 	}
 	BIO_push(b64, b);
 
-	if (BIO_write(b64, bytes, sizeof(sz)) <= 0) {
+	if (BIO_write(b64, bytes, sz) <= 0) {
 		BIO_free_all(b64);
 		return -1;
 	}
