@@ -16,14 +16,13 @@
 
 extern struct certalator_flatconf certalator_conf;
 
-static int  coordinator_start();
 static int  coordinator_connect(struct xerr *);
 static void purge_challenges();
 static int  coordinator_rcv_challenge(struct umdr *, struct xerr *);
 static int  coordinator_get_challenge(struct umdr *, struct xerr *);
 
 static struct timespec last_challenge_purge = {0, 0};
-static int coordinator_fd = -1;
+static int             coordinator_fd = -1;
 
 struct challenge {
 	char            req_id[CERTALATOR_REQ_ID_LENGTH];
@@ -62,6 +61,7 @@ client_cmp(struct client *c1, struct client *c2)
 SPLAY_HEAD(client_tree, client) clients = SPLAY_INITIALIZER(&clients);
 SPLAY_PROTOTYPE(client_tree, client, entries, client_cmp);
 SPLAY_GENERATE(client_tree, client, entries, client_cmp);
+static int client_tree_sz = 0;
 
 static void
 client_free(struct client *c)
@@ -69,6 +69,7 @@ client_free(struct client *c)
 	free(c->in_buf);
 	free(c->out_buf);
 	free(c);
+	client_tree_sz--;
 }
 
 static void
@@ -115,10 +116,9 @@ coordinator_connect(struct xerr *e)
 			if (errno != ENOENT && errno != ECONNREFUSED)
 				return XERRF(e, XLOG_ERRNO, errno, "connect");
 
-			if (coordinator_start() == -1) {
+			if (coordinator_start(xerrz(e)) == -1) {
 				if (errno != EWOULDBLOCK)
-					return XERRF(e, XLOG_ERRNO, errno,
-					    "%s: coordinator_start", __func__);
+					return XERR_PREPENDFN(e);
 			}
 			nanosleep(&tp, NULL);
 			continue;
@@ -240,17 +240,17 @@ coordinator_run(int lsock, struct xerr *e)
 {
 	struct pollfd *fds;
 	int            ready;
-	int            nfds = 0, fds_sz = 32, fd;
+	int            fd, nfds, fds_sz = 32;
 	struct client *c, needle;
 	ssize_t        r;
 	struct umdr    um;
 	void          *tmp;
 
-
 	if ((fds = malloc(sizeof(struct pollfd) * fds_sz)) == NULL)
 		return XERRF(e, XLOG_ERRNO, errno, "malloc");
 
 	for (;;) {
+		nfds = 0;
 		fds[0].fd = lsock;
 		fds[0].events = POLLIN;
 		nfds++;
@@ -267,8 +267,14 @@ coordinator_run(int lsock, struct xerr *e)
 			goto fail;
 		}
 
-		if (ready == 0)
+		if (ready == 0) {
+			if (getppid() == 1) {
+				xlog(LOG_NOTICE, NULL, "%s: parent exited, so "
+				    "we will too", __func__);
+				return 0;
+			}
 			continue;
+		}
 
 		for (; ready > 0; ready--) {
 			if (fds[ready].revents & POLLERR) {
@@ -295,6 +301,17 @@ coordinator_run(int lsock, struct xerr *e)
 			/* Handle our listening socket for new clients. */
 			if (fds[ready].fd == lsock &&
 			    fds[ready].revents & POLLIN) {
+				if (client_tree_sz >= fds_sz) {
+					tmp = realloc(fds, client_tree_sz + 32);
+					if (tmp == NULL) {
+						xlog_strerror(LOG_ERR, errno,
+						    "%s: realloc", __func__);
+						continue;
+					}
+					fds = tmp;
+					fds_sz = client_tree_sz + 32;
+				}
+
 				fd = accept(lsock, NULL, 0);
 				if (fd == -1) {
 					if (errno != EAGAIN && errno != EINTR)
@@ -329,6 +346,7 @@ coordinator_run(int lsock, struct xerr *e)
 					continue;
 				}
 				SPLAY_INSERT(client_tree, &clients, c);
+				client_tree_sz++;
 				continue;
 			}
 
@@ -337,7 +355,7 @@ coordinator_run(int lsock, struct xerr *e)
 			c = SPLAY_FIND(client_tree, &clients, &needle);
 			if (c == NULL) {
 				xlog(LOG_ERR, NULL, "%s: client fd %d not "
-				    "found", fds[ready].fd, __func__);
+				    "found", __func__, fds[ready].fd);
 				continue;
 			}
 
@@ -416,30 +434,36 @@ fail:
 	return -1;
 }
 
-static int
-coordinator_start()
+int
+coordinator_start(struct xerr *e)
 {
-	pid_t               pid;
-	char                pid_line[32];
-	int                 lock_fd, null_fd;
-	int                 lsock, lsock_flags;
-	struct sockaddr_un  saddr;
-	struct xerr         e;
+	pid_t              pid;
+	char               pid_line[32];
+	int                lock_fd, null_fd;
+	int                lsock, lsock_flags;
+	struct sockaddr_un saddr;
 
 	if ((lock_fd = open(certalator_conf.lock_file,
-	    O_CREAT|O_WRONLY|O_CLOEXEC, 0644)) == -1)
+	    O_CREAT|O_WRONLY|O_CLOEXEC, 0644)) == -1) {
+		xlog_strerror(LOG_ERR, errno, "%s: open", __func__);
 		return -1;
+	}
+
 	if (flock(lock_fd, LOCK_EX|LOCK_NB) == -1) {
 		if (errno == EWOULDBLOCK) {
-			warnx("lock file %s is already locked; "
+			xlog_strerror(LOG_ERR, errno,
+			    "%s: lock file %s is already locked; "
 			    "is another instance running?",
-			    certalator_conf.lock_file);
+			    __func__, certalator_conf.lock_file);
+		} else {
+			xlog_strerror(LOG_ERR, errno, "%s: flock", __func__);
 		}
 		return -1;
 	}
 
 	if ((pid = fork()) == -1) {
 		close(lock_fd);
+		xlog_strerror(LOG_ERR, errno, "%s: fork", __func__);
 		return -1;
 	} else if (pid != 0) {
 		close(lock_fd);
@@ -449,7 +473,7 @@ coordinator_start()
 	chdir("/");
 
 	if ((null_fd = open("/dev/null", O_RDWR)) == -1) {
-		warn("open");
+		xlog_strerror(LOG_ERR, errno, "%s: open /dev/null", __func__);
 		_exit(1);
 	}
 
@@ -460,12 +484,12 @@ coordinator_start()
 		close(null_fd);
 
 	if (xlog_init(CERTALATOR_AGENT_PROGNAME, NULL, NULL, 0) == -1) {
-		warn("xlog_init");
+		xlog_strerror(LOG_ERR, errno, "%s: xlog_init", __func__);
 		_exit(1);
 	}
 
 	if (setsid() == -1) {
-		xlog_strerror(LOG_ERR, errno, "setsid");
+		xlog_strerror(LOG_ERR, errno, "%s: setsid", __func__);
 		_exit(1);
 	}
 
@@ -473,30 +497,30 @@ coordinator_start()
 
 	snprintf(pid_line, sizeof(pid_line), "%d\n", getpid());
 	if (write(lock_fd, pid_line, strlen(pid_line)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "write");
+		xlog_strerror(LOG_ERR, errno, "%s: write", __func__);
 		_exit(1);
 	}
 	if (fsync(lock_fd) == -1) {
-		xlog_strerror(LOG_ERR, errno, "fsync");
+		xlog_strerror(LOG_ERR, errno, "%s: fsync", __func__);
 		_exit(1);
 	}
 
 	if ((lsock = socket(AF_LOCAL, SOCK_STREAM, 0)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "socket");
+		xlog_strerror(LOG_ERR, errno, "%s: sock", __func__);
 		_exit(1);
 	}
 	unlink(certalator_conf.coordinator_sock_path);
 
 	if (fcntl(lsock, F_SETFD, FD_CLOEXEC) == -1) {
-		xlog_strerror(LOG_ERR, errno, "fcntl");
+		xlog_strerror(LOG_ERR, errno, "%s: fcntl", __func__);
 		_exit(1);
 	}
 	if ((lsock_flags = fcntl(lsock, F_GETFL, 0)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "fcntl");
+		xlog_strerror(LOG_ERR, errno, "%s: fcntl", __func__);
 		_exit(1);
 	}
 	if (fcntl(lsock, F_SETFL, lsock_flags | O_NONBLOCK) == -1) {
-		xlog_strerror(LOG_ERR, errno, "fcntl");
+		xlog_strerror(LOG_ERR, errno, "%s: fcntl", __func__);
 		_exit(1);
 	}
 
@@ -506,17 +530,17 @@ coordinator_start()
 	    sizeof(saddr.sun_path));
 
 	if (bind(lsock, (struct sockaddr *)&saddr, SUN_LEN(&saddr)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "bind");
+		xlog_strerror(LOG_ERR, errno, "%s: bind", __func__);
 		_exit(1);
 	}
 
 	if (listen(lsock, 64) == -1) {
-		xlog_strerror(LOG_ERR, errno, "listen");
+		xlog_strerror(LOG_ERR, errno, "%s: listen", __func__);
 		_exit(1);
 	}
 
-	if (coordinator_run(lsock, xerrz(&e)) == -1) {
-		xlog(LOG_ERR, &e, "coordinator_run");
+	if (coordinator_run(lsock, xerrz(e)) == -1) {
+		xlog(LOG_ERR, e, "coordinator_run");
 		_exit(1);
 	}
 

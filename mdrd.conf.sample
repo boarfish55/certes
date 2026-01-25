@@ -3,19 +3,19 @@ gid = plalonde
 enable_coredumps = true
 
 ca_file = "/home/plalonde/prog/certalator/testdata/ca/root.pem"
-crl_file = "/home/plalonde/prog/certalator/testdata/authority1/combined.crl"
+crl_path = "/home/plalonde/prog/certalator/testdata/authority1/crl_store"
 
 # We ue a certificate specifically made for mdrd which is
 # different than the one used to issue certs; clients will
 # expect this cert to have the "caproxy" role
-cert_file = "/home/plalonde/prog/certalator/testdata/client1/cert.pem"
-key_file = "/home/plalonde/prog/certalator/testdata/client1/key.pem"
+cert_file = "/home/plalonde/prog/certalator/testdata/client3/cert.pem"
+key_file = "/home/plalonde/prog/certalator/testdata/client3/key.pem"
 
 port = 9790
 listen_backlog = 1024
 prefork = 4
-pid_file = "/home/plalonde/prog/certalator/testdata/client1/mdrd.pid"
-counters_sock = "/home/plalonde/prog/certalator/testdata/client1/counters.sock"
+pid_file = "/home/plalonde/prog/certalator/testdata/client3/mdrd.pid"
+counters_sock = "/home/plalonde/prog/certalator/testdata/client3/counters.sock"
 
 # Maximum number of concurrent client connections per fork
 max_clients = 10000
@@ -68,8 +68,5 @@ backend_gid = plalonde
 backend_promises = "stdio rpath"
 backend_unveils = [
 	"x=/home/plalonde/prog/certalator/certalator"
-	"r=/home/plalonde/prog/certalator/testdata/client1/ca.pem"
-	"r=/home/plalonde/prog/certalator/testdata/client1/ca.crl"
-	"r=/home/plalonde/prog/certalator/testdata/client1/key.pem"
-	"r=/home/plalonde/prog/certalator/testdata/client1/cert.pem"
+	"r=/home/plalonde/prog/certalator/testdata/client3"
 ]

@@ -303,6 +303,11 @@ mdrd_backend()
 		return 1;
 	}
 
+	if (coordinator_start(xerrz(&e)) == -1) {
+		xlog(LOG_ERR, &e, __func__);
+		exit(1);
+	}
+
 	if (agent_init(xerrz(&e)) == -1) {
 		xlog(LOG_ERR, &e, __func__);
 		exit(1);

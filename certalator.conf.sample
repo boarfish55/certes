@@ -8,9 +8,9 @@ authority_port = 9790
 ca_file = "/home/plalonde/prog/certalator/testdata/ca/root.pem"
 crl_path = "/home/plalonde/prog/certalator/testdata/authority1/crl_store"
 
-cert_file = "/home/plalonde/prog/certalator/testdata/client1/cert.pem"
-key_file = "/home/plalonde/prog/certalator/testdata/client1/key.pem"
+cert_file = "/home/plalonde/prog/certalator/testdata/client3/cert.pem"
+key_file = "/home/plalonde/prog/certalator/testdata/client3/key.pem"
 key_bits = 4096
 
-lock_file = "/home/plalonde/prog/certalator/testdata/client1/coordinator.lock"
-coordinator_socket_path = "/home/plalonde/prog/certalator/testdata/client1/coordinator.sock"
+lock_file = "/home/plalonde/prog/certalator/testdata/client3/coordinator.lock"
+coordinator_socket_path = "/home/plalonde/prog/certalator/testdata/client3/coordinator.sock"
