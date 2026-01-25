@@ -311,7 +311,10 @@ mdr_pack_bytes_nochk(struct mdr *m, const void *bytes, uint64_t bytes_sz)
 static ptrdiff_t
 mdr_pack_str_nochk(struct mdr *m, const char *bytes)
 {
-	return mdr_pack_bytes_nochk(m, bytes, strlen(bytes) + 1);
+	if (bytes == NULL)
+		return mdr_pack_bytes_nochk(m, "", 1);
+	else
+		return mdr_pack_bytes_nochk(m, bytes, strlen(bytes) + 1);
 }
 
 static ptrdiff_t
