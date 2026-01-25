@@ -41,7 +41,7 @@ struct mdr_def msgdef_bootstrap_dialin = {
 	{
 		MDR_S,   /* Bootstrap identifier, used by the agent to
 			    easily find the challenge later. */
-		MDR_S,   /* Bootstrap key */
+		MDR_B,   /* Bootstrap key */
 		MDR_LAST
 	}
 };

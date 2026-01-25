@@ -27,11 +27,10 @@ authority_bootstrap_setup(const char *cn, const char **sans,
     size_t sans_sz, const char **roles, size_t roles_sz, uint32_t cert_expiry,
     uint32_t timeout, uint32_t flags, struct xerr *e)
 {
-	int                     i;
-	uint8_t                 buf[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
-	char                    subject[CERTALATOR_MAX_SUBJET_LENGTH] = "";
-	struct bootstrap_entry  be;
-	struct timespec         tp;
+	int                    i;
+	char                   subject[CERTALATOR_MAX_SUBJET_LENGTH] = "";
+	struct bootstrap_entry be;
+	struct timespec        tp;
 
 	if (flags & CERTDB_BOOTSTRAP_FLAG_SETCN) {
 		if (snprintf(subject, sizeof(subject),
@@ -42,11 +41,7 @@ authority_bootstrap_setup(const char *cn, const char **sans,
 			    "for commonName %s", cn);
 	}
 
-	arc4random_buf(buf, sizeof(buf));
-
-	if (b64enc(be.bootstrap_key, sizeof(be.bootstrap_key),
-	    buf, sizeof(buf)) == -1)
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "b64enc");
+	arc4random_buf(be.bootstrap_key, sizeof(be.bootstrap_key));
 
 	clock_gettime(CLOCK_REALTIME, &tp);
 
@@ -173,7 +168,7 @@ authority_bootstrap_dialin(struct umdr *msg, struct xerr *e)
 		return XERRF(e, XLOG_APP, XLOG_BADMSG,
 		    "bootstrap key received from client has incorrect length");
 
-	if (certdb_get_bootstrap(&be, uv[1].v.s.bytes, e) == -1)
+	if (certdb_get_bootstrap(&be, uv[1].v.b.bytes, uv[1].v.b.sz, e) == -1)
 		return XERR_PREPENDFN(e);
 
 	clock_gettime(CLOCK_REALTIME, &now);

@@ -36,7 +36,7 @@ struct certalator_flatconf {
 	char     authority_fqdn[256];
 	uint64_t authority_port;
 	char     certdb_path[PATH_MAX];
-	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH + 1];
+	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64 + 1];
 	char     ca_file[PATH_MAX];
 	char     crl_file[PATH_MAX];
 	char     crl_path[PATH_MAX];

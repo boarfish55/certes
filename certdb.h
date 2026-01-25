@@ -14,7 +14,7 @@
 #define CERTDB_FLAG_ALL     0xFFFFFFFF
 
 struct bootstrap_entry {
-	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64];
+	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
 	time_t   valid_until_sec;
 	char    *subject;
 	char   **sans;
@@ -42,8 +42,8 @@ int  certdb_init(const char *, struct xerr *);
 void certdb_shutdown();
 
 int  certdb_put_bootstrap(const struct bootstrap_entry *, struct xerr *);
-int  certdb_get_bootstrap(struct bootstrap_entry *, const char *,
-         struct xerr *);
+int  certdb_get_bootstrap(struct bootstrap_entry *, const uint8_t *,
+         size_t, struct xerr *);
 int  certdb_put_cert(const struct cert_entry *, struct xerr *);
 int  certdb_get_cert(struct cert_entry *, const char *, struct xerr *);
 

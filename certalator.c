@@ -166,6 +166,7 @@ usage()
 	    "authority\n");
 	printf("\tsign             Re-signs the certificate\n");
 	printf("\tmdrd-backend     Run as an mdrd backend\n");
+	printf("\tinit-db          Create the cert DB then exit\n");
 	printf("\tbootstrap-setup  Create a bootstrap entry on the "
 	    "authority\n");
 }
@@ -614,6 +615,11 @@ bootstrap_setup_cli(int argc, char **argv)
 		}
 	}
 
+	if (cn == NULL || *cn == '\0') {
+		usage();
+		exit(1);
+	}
+
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	pv[0].type = MDR_S;
 	pv[0].v.s = cn;
@@ -745,11 +751,6 @@ main(int argc, char **argv)
 
 	command = argv[opt++];
 
-	if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
-		xlog(LOG_ERR, &e, __func__);
-		return -1;
-	}
-
 	load_mdr_defs();
 
 	if (strcmp(command, "verify") == 0) {
@@ -805,9 +806,18 @@ main(int argc, char **argv)
 		}
 		fclose(f);
 	} else if (strcmp(command, "mdrd-backend") == 0) {
+		if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
+			xlog(LOG_ERR, &e, __func__);
+			return -1;
+		}
 		status = mdrd_backend();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
 		bootstrap_setup_cli(argc - opt, argv + opt);
+	} else if (strcmp(command, "init-db") == 0) {
+		if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
+			xlog(LOG_ERR, &e, __func__);
+			return -1;
+		}
 	} else {
 		usage();
 		status = 1;

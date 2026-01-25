@@ -133,8 +133,8 @@ certdb_qry_cleanup(sqlite3_stmt *stmt, struct xerr *e)
 }
 
 int
-certdb_get_bootstrap(struct bootstrap_entry *dst, const char *bootstrap_key,
-    struct xerr *e)
+certdb_get_bootstrap(struct bootstrap_entry *dst, const uint8_t *bootstrap_key,
+    size_t bootstrap_key_sz, struct xerr *e)
 {
 	int          r;
 	struct xerr  e2;
@@ -145,8 +145,8 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const char *bootstrap_key,
 	int          subject_len;
 
 	if ((r = sqlite3_bind_blob(qry_bootstrap_get.stmt,
-	    qry_bootstrap_put.i_bootstrap_key, bootstrap_key,
-	    strlen(bootstrap_key), SQLITE_STATIC))) {
+	    qry_bootstrap_get.i_bootstrap_key, bootstrap_key,
+	    bootstrap_key_sz, SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
 		    sqlite3_errmsg(db));
 		goto fail;

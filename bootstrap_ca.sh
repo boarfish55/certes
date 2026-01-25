@@ -105,4 +105,18 @@ openssl verify -CApath $basedir/authority1/trust_store \
 	-CRLfile $basedir/authority1/authority1.crl \
 	-crl_check $basedir/client2/cert.pem || true
 
+# Load up a sample bootstrap entry for our tests. The key should
+# match our sample config.
+./certalator -config certalator_authority.conf.sample init-db
+now=`date +%s`
+valid_until=$((now + 3600))
+not_after_sec=$((now + 31536000))
+sqlite3 $basedir/authority1/certdb.sqlite "insert into
+	bootstrap(bootstrap_key, valid_until_sec, subject, flags,
+	not_before_sec, not_after_sec) values(
+	unhex('9CBEBB889B04FFA750446F996589A0666DDB4B2336DA94A53B65183182DFC6FC4AA5710B5B755FAD916B9CF7DB2CFB72'),
+	$valid_until,
+	'/O=Example/CN=example/emailAddress=cert@example.com',
+	1, $now, $not_after_sec);"
+
 echo "All good!"
