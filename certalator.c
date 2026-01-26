@@ -818,6 +818,17 @@ main(int argc, char **argv)
 		status = mdrd_backend();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
 		bootstrap_setup_cli(argc - opt, argv + opt);
+	} else if (strcmp(command, "init") == 0) {
+		// TODO: do a standalone
+		// run to get our initial key/cert, without mdrd.
+		if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
+			xlog(LOG_ERR, &e, __func__);
+			return -1;
+		}
+		if (agent_init(xerrz(&e)) == -1) {
+			xlog(LOG_ERR, &e, __func__);
+			exit(1);
+		}
 	} else if (strcmp(command, "init-db") == 0) {
 		if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
 			xlog(LOG_ERR, &e, __func__);

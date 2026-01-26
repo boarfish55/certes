@@ -196,6 +196,38 @@ b64enc(char *dst, size_t dst_sz, const uint8_t *bytes, size_t sz)
 }
 
 int
+b64dec(uint8_t *dst, size_t dst_sz, const char *str)
+{
+	BIO *b, *b64;
+	int  r;
+
+	if ((b64 = BIO_new(BIO_f_base64())) == NULL)
+		return -1;
+
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	if ((b = BIO_new(BIO_s_mem())) == NULL) {
+		BIO_free(b64);
+		return -1;
+	}
+	BIO_push(b64, b);
+
+	if (BIO_write(b, str, strlen(str)) <= 0) {
+		BIO_free_all(b64);
+		return -1;
+	}
+	BIO_flush(b);
+
+	if ((r = BIO_read(b64, dst, dst_sz)) < dst_sz) {
+		BIO_free_all(b64);
+		errno = EAGAIN;
+		return -1;
+	}
+
+	BIO_free_all(b64);
+	return r;
+}
+
+int
 open_wflock(const char *path, int flags, mode_t mode, int lk)
 {
 	int             fd;

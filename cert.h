@@ -14,6 +14,6 @@ int             cert_verify(X509_STORE_CTX *, X509 *, X509_STORE *, int);
 BIGNUM         *cert_new_serial(struct xerr *);
 int             cert_add_ext(X509V3_CTX *, X509 *, int, char *);
 X509 *          cert_sign(X509 *, X509 *, EVP_PKEY *, const char **);
-FILE *          cert_new_privkey();
+FILE *          cert_new_privkey(struct xerr *);
 
 #endif

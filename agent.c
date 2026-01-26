@@ -311,6 +311,7 @@ agent_bootstrap(struct xerr *e)
 	char             ubuf[16384];
 	char            *subject = NULL;
 	char             req_id[CERTALATOR_REQ_ID_LENGTH];
+	uint8_t          bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
 	struct timespec  now;
 	int              try;
 	ptrdiff_t        r;
@@ -323,6 +324,12 @@ agent_bootstrap(struct xerr *e)
 	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64) {
 		XERRF(e, XLOG_APP, XLOG_INVAL,
 		    "bad bootstrap key format in configuration; bad length");
+		return NULL;
+	}
+
+	if (b64dec(bootstrap_key, sizeof(bootstrap_key),
+	    certalator_conf.bootstrap_key) < sizeof(bootstrap_key)) {
+		XERRF(e, XLOG_ERRNO, errno, "%s: b64dec", __func__);
 		return NULL;
 	}
 
@@ -341,8 +348,9 @@ agent_bootstrap(struct xerr *e)
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	pv[0].type = MDR_S;
 	pv[0].v.s = req_id;
-	pv[1].type = MDR_S;
-	pv[1].v.s = certalator_conf.bootstrap_key;
+	pv[1].type = MDR_B;
+	pv[1].v.b.bytes = bootstrap_key;
+	pv[1].v.b.sz = sizeof(bootstrap_key);
 	if (pmdr_pack(&pm,  msg_bootstrap_dialin, pv,
 	    PMDRVECLEN(pv)) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/msg_bootstrap_dialin");
@@ -506,6 +514,7 @@ agent_bootstrap(struct xerr *e)
 		XERRF(e, XLOG_ERRNO, errno, "fflush");
 		return NULL;
 	}
+	rewind(f);
 
 	return f;
 }
@@ -547,7 +556,9 @@ agent_load_keys(struct xerr *e)
 		if (errno == ENOENT) {
 			xlog(LOG_WARNING, NULL,
 			    "no private key found, generating one");
-			f = cert_new_privkey();
+			f = cert_new_privkey(xerrz(e));
+			if (f == NULL)
+				return XERR_PREPENDFN(e);
 		} else
 			return XERRF(e, XLOG_ERRNO, errno, "fopen");
 	}

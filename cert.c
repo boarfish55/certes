@@ -489,39 +489,52 @@ cert_sign(X509 *crt, X509 *issuer, EVP_PKEY *key, const char **roles)
 }
 
 FILE *
-cert_new_privkey()
+cert_new_privkey(struct xerr *e)
 {
 	EVP_PKEY_CTX *ctx;
 	EVP_PKEY     *pkey = NULL;
 	FILE         *f;
 
-	if ((ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL)) == NULL)
-		goto fail;
+	if ((ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_CTX_new_id");
+		return NULL;
+	}
 
-	if (EVP_PKEY_keygen_init(ctx) <= 0)
-		goto fail;
+	if (EVP_PKEY_keygen_init(ctx) <= 0) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_keygen_init");
+		return NULL;
+	}
 
-	if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx,
-	    certalator_conf.key_bits) <= 0)
-		goto fail;
+	if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "EVP_PKEY_keygen");
+		return NULL;
+	}
 
-	if (EVP_PKEY_keygen(ctx, &pkey) <= 0)
-		goto fail;
+	if ((f = fopen(certalator_conf.key_file, "w")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+		    certalator_conf.key_file);
+		return NULL;
+	}
 
-	if ((f = fopen(certalator_conf.key_file, "w")) == NULL)
-		err(1, "fopen");
+	if (!PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "PEM_write_PrivateKey");
+		return NULL;
+	}
 
-	if (!PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL))
-		goto fail;
+	if (fclose(f) == EOF) {
+		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
+		    certalator_conf.key_file);
+		return NULL;
+	}
 
-	if (fclose(f) == EOF)
-		err(1, "fclose: %s", certalator_conf.key_file);
-
-	if ((f = fopen(certalator_conf.key_file, "r")) == NULL)
-		err(1, "fopen: %s", certalator_conf.key_file);
+	/* We reopen because we only want a read fd */
+	if ((f = fopen(certalator_conf.key_file, "r")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+		    certalator_conf.key_file);
+		return NULL;
+	}
 
 	return f;
-fail:
-	ERR_print_errors_fp(stderr);
-	exit(1);
 }
