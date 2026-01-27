@@ -21,9 +21,12 @@ char config_file_path[PATH_MAX] = "/etc/certalator.conf";
 
 struct certalator_flatconf certalator_conf = {
 	0,
+	9790,
 	"",
 	9790,
 	"certdb.sqlite",
+	60000,
+	60000,
 	"",
 	"ca.pem",
 	"",
@@ -49,6 +52,12 @@ struct flatconf certalator_config_vars[] = {
 		sizeof(certalator_conf.enable_coredumps)
 	},
 	{
+		"agent_bootstrap_port",
+		FLATCONF_ULONG,
+		&certalator_conf.agent_bootstrap_port,
+		sizeof(certalator_conf.agent_bootstrap_port)
+	},
+	{
 		"authority_fqdn",
 		FLATCONF_STRING,
 		certalator_conf.authority_fqdn,
@@ -65,6 +74,18 @@ struct flatconf certalator_config_vars[] = {
 		FLATCONF_STRING,
 		certalator_conf.certdb_path,
 		sizeof(certalator_conf.certdb_path)
+	},
+	{
+		"agent_send_timeout_ms",
+		FLATCONF_ULONG,
+		&certalator_conf.agent_send_timeout_ms,
+		sizeof(certalator_conf.agent_send_timeout_ms)
+	},
+	{
+		"agent_recv_timeout_ms",
+		FLATCONF_ULONG,
+		&certalator_conf.agent_recv_timeout_ms,
+		sizeof(certalator_conf.agent_recv_timeout_ms)
 	},
 	{
 		"bootstrap_key",

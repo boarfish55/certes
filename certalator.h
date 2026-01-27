@@ -33,9 +33,12 @@
 
 struct certalator_flatconf {
 	int      enable_coredumps;
+	uint64_t agent_bootstrap_port;
 	char     authority_fqdn[256];
 	uint64_t authority_port;
 	char     certdb_path[PATH_MAX];
+	uint64_t agent_send_timeout_ms;
+	uint64_t agent_recv_timeout_ms;
 	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64 + 1];
 	char     ca_file[PATH_MAX];
 	char     crl_file[PATH_MAX];
