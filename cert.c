@@ -122,8 +122,7 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 
 	roles_idx = X509_get_ext_by_NID(crt, NID_certalator_roles, -1);
 	if (roles_idx == -1)
-		return XERRF(e, XLOG_APP, XLOG_SSLEXTNIDNOTFOUND,
-		    "%s: certalatorRoles extension NID not found", __func__);
+		return 0;
 
 	if ((ext = X509_get_ext(crt, roles_idx)) == NULL)
 		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
@@ -488,12 +487,112 @@ cert_sign(X509 *crt, X509 *issuer, EVP_PKEY *key, const char **roles)
 	return newcrt;
 }
 
+static X509 *
+cert_selfsign(EVP_PKEY *pkey, struct xerr *e)
+{
+	X509        *newcrt;
+	X509V3_CTX   ctx;
+	char         hostname[256];
+	X509_NAME   *name;
+
+	if (gethostname(hostname, sizeof(hostname)) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "gethostname");
+		return NULL;
+	}
+
+	if ((newcrt = X509_new()) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_new");
+		return NULL;
+	}
+
+	if (!X509_set_version(newcrt, 2)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_version");
+		goto fail;
+	}
+
+	if (BN_to_ASN1_INTEGER(BN_value_one(),
+	    X509_get_serialNumber(newcrt)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_to_ASN1_INTEGER");
+		goto fail;
+	}
+
+	if ((name = X509_NAME_new()) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_NAME_new");
+		goto fail;
+	} else if (!X509_NAME_add_entry_by_txt(name, "CN",
+	    MBSTRING_ASC, (unsigned char *)hostname, -1, -1, 0)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "X509_NAME_add_entry_by_txt: CN=%s", hostname);
+		X509_NAME_free(name);
+		goto fail;
+	}
+
+	if (!X509_set_subject_name(newcrt, name)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_subject_name");
+		X509_NAME_free(name);
+		goto fail;
+	}
+
+	if (!X509_set_issuer_name(newcrt, name)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_issuer_name");
+		goto fail;
+	}
+
+	if (!X509_set_pubkey(newcrt, pkey)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_pubkey");
+		goto fail;
+	}
+
+	X509_gmtime_adj(X509_get_notBefore(newcrt), 0);
+	X509_gmtime_adj(X509_get_notAfter(newcrt), 86400);
+
+	X509V3_set_ctx(&ctx, newcrt, newcrt, NULL, NULL, 0);
+
+	if (!cert_add_ext(&ctx, newcrt, NID_basic_constraints,
+	    "critical,CA:false")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "add_ext / NID_basic_constraints");
+		goto fail;
+	}
+	if (!cert_add_ext(&ctx, newcrt, NID_key_usage,
+	    "critical,nonRepudiation,digitalSignature,keyEncipherment")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "add_ext / NID_key_usage");
+		goto fail;
+	}
+	if (!cert_add_ext(&ctx, newcrt, NID_ext_key_usage,
+	    "serverAuth,clientAuth")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "add_ext / NID_ext_key_usage");
+		goto fail;
+	}
+	if (!cert_add_ext(&ctx, newcrt, NID_subject_key_identifier, "hash")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "add_ext / NID_subject_key_identifier");
+		goto fail;
+	}
+
+	if (!X509_sign(newcrt, pkey, NULL)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
+		goto fail;
+	}
+
+	return newcrt;
+fail:
+	X509_free(newcrt);
+	return NULL;
+}
+
+/*
+ * Create a key and a temporary self-signed cert just so we
+ * can perform our bootstrap process over TLS.
+ */
 FILE *
 cert_new_privkey(struct xerr *e)
 {
 	EVP_PKEY_CTX *ctx;
 	EVP_PKEY     *pkey = NULL;
 	FILE         *f;
+	X509         *selfcrt;
 
 	if ((ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL)) == NULL) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_CTX_new_id");
@@ -526,6 +625,26 @@ cert_new_privkey(struct xerr *e)
 	if (fclose(f) == EOF) {
 		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
 		    certalator_conf.key_file);
+		return NULL;
+	}
+
+	if ((selfcrt = cert_selfsign(pkey, e)) == NULL) {
+		XERR_PREPENDFN(e);
+		return NULL;
+	}
+
+	if ((f = fopen(certalator_conf.cert_file, "w")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+		    certalator_conf.cert_file);
+		return NULL;
+	}
+	if (!PEM_write_X509(f, selfcrt)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
+		return NULL;
+	}
+	if (fclose(f) == EOF) {
+		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
+		    certalator_conf.cert_file);
 		return NULL;
 	}
 

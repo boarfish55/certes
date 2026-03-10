@@ -53,6 +53,7 @@ agent_connect(struct xerr *e)
 		if (SSL_CTX_use_PrivateKey(ssl_ctx, key) != 1)
 			return XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "SSL_CTX_use_PrivateKey");
+
 		if (SSL_CTX_use_certificate(ssl_ctx, cert) != 1)
 			return XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "SSL_CTX_use_certificate");
@@ -709,7 +710,7 @@ agent_bootstrap2(struct xerr *e)
 	pv[1].type = MDR_B;
 	pv[1].v.b.bytes = bootstrap_key;
 	pv[1].v.b.sz = sizeof(bootstrap_key);
-	if (pmdr_pack(&pm,  msg_bootstrap_dialin, pv,
+	if (pmdr_pack(&pm, msg_bootstrap_dialin, pv,
 	    PMDRVECLEN(pv)) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/msg_bootstrap_dialin");
 		return NULL;

@@ -187,6 +187,8 @@ usage()
 	    "authority\n");
 	printf("\tsign             Re-signs the certificate\n");
 	printf("\tmdrd-backend     Run as an mdrd backend\n");
+	printf("\tinit             Generate our initial key and "
+	    "self-signed cert\n");
 	printf("\tinit-db          Create the cert DB then exit\n");
 	printf("\tbootstrap-setup  Create a bootstrap entry on the "
 	    "authority\n");
@@ -840,8 +842,10 @@ main(int argc, char **argv)
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
 		bootstrap_setup_cli(argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
-		// TODO: do a standalone
-		// run to get our initial key/cert, without mdrd.
+		/*
+		 * Do a standalone run to get our initial key/cert,
+		 * without mdrd.
+		 */
 		if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
 			xlog(LOG_ERR, &e, __func__);
 			return -1;
