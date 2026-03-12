@@ -354,6 +354,8 @@ void                   mdr_registry_clear();
 #define MDR_MASK_D   0xffffffff00000000
 #define MDR_MASK_DC  0xffffffffffff0000
 #define MDR_MASK_DCV 0xffffffffffffffff
+#define MDR_MAKE_VARIANT(dcv, variant) \
+    (((uint64_t)dcv & MDR_MASK_DC) | (uint64_t)variant)
 
 /*
  * Built-in DCVs (Domain/Code/Variant). Domains are 32 bits, code and
@@ -364,36 +366,46 @@ void                   mdr_registry_clear();
  * Messages exchanged between mdrd and its clients; clients must support
  * MDR_DCV_MDR_ERROR responses.
  */
-#define MDR_DOMAIN_MDR           MDR_DCV(0x00000000, 0, 0)
-#define MDR_DCV_MDR_PING         MDR_DCV(0x00000000, 0x0001, 0x0000)
-#define MDR_DCV_MDR_PONG         MDR_DCV(0x00000000, 0x0002, 0x0000)
-#define MDR_DCV_MDR_ERROR        MDR_DCV(0x00000000, 0x0003, 0x0000)
-#define MDR_DCV_MDR_ECHO         MDR_DCV(0x00000000, 0x0004, 0x0000)
-#define     MDR_ERR_BEFAIL       1 /* Failure on backend prevented
-				      a successful response */
-#define     MDR_ERR_NOTSUPP      2 /* Message not supported */
-#define     MDR_ERR_CERTFAIL     3 /* Cerfificate validation failure */
-#define     MDR_ERR_DENIED       4 /* Client is not authorized for
-				      this operation */
-#define MDR_DCV_MDR_TEST         MDR_DCV(0x00000000, 0x0005, 0x0000)
+#define MDR_DOMAIN_MDR             MDR_DCV(0x00000000, 0, 0)
+#define MDR_DCV_MDR_PING           MDR_DCV(0x00000000, 0x0001, 0x0000)
+#define MDR_DCV_MDR_PONG           MDR_DCV(0x00000000, 0x0001, 0x0001)
+#define MDR_DCV_MDR_OK             MDR_DCV(0x00000000, 0x0002, 0x0000)
+                                   /* Generic response to signify success,
+                                      with nothing else to return to client */
+#define MDR_DCV_MDR_ERROR          MDR_DCV(0x00000000, 0x0003, 0x0000)
+enum mdr_err_code {
+	MDR_ERR_BEFAIL = 1, /* Failure on backend */
+	MDR_ERR_BADMSG,     /* Bad message format */
+	MDR_ERR_NOTSUPP,    /* Message not supported */
+	MDR_ERR_CERTFAIL,   /* Cerfificate validation failure */
+	MDR_ERR_DENIED,     /* Client is not authorized for this operation */
+
+	MDR_ERR_LAST,
+
+	/*
+	 * Applications can define their own errors
+	 * starting at this index.
+	 */
+	MDR_ERR_LOCAL = 1073741824,
+};
+#define MDR_DCV_MDR_TEST           MDR_DCV(0x00000000, 0x0004, 0x0000)
 extern const struct mdr_spec *mdr_msg_ping;
 extern const struct mdr_spec *mdr_msg_pong;
 extern const struct mdr_spec *mdr_msg_error;
-extern const struct mdr_spec *mdr_msg_echo;
 extern const struct mdr_spec *mdr_msg_test;
 
 /* Messages exchanged between mdrd and its backend */
 #define MDR_DOMAIN_MDRD          MDR_DCV(0x00000001, 0, 0)
-#define MDR_DCV_MDRD_ERROR       MDR_DCV(0x00000001, 0x0001, 0x0000)
-#define MDR_DCV_MDRD_BEREQ       MDR_DCV(0x00000001, 0x0002, 0x0000)
-#define MDR_DCV_MDRD_BERESP      MDR_DCV(0x00000001, 0x0003, 0x0000)
-#define MDR_DCV_MDRD_BERESP_WMSG MDR_DCV(0x00000001, 0x0003, 0x0001)
-#define MDR_DCV_MDRD_BECLOSE     MDR_DCV(0x00000001, 0x0004, 0x0000)
-extern const struct mdr_spec *mdr_msg_mdrd_error;
+#define MDR_DCV_MDRD_BEREQ       MDR_DCV(0x00000001, 0x0001, 0x0000)
+#define MDR_DCV_MDRD_BERESP      MDR_DCV(0x00000001, 0x0002, 0x0000)
+#define MDR_DCV_MDRD_BECLOSE     MDR_DCV(0x00000001, 0x0003, 0x0000)
+#define MDR_DCV_MDRD_BESESSERR   MDR_DCV(0x00000001, 0x0004, 0x0000)
+                                 /* Backend tried to send a response but
+                                    mdrd could not find an active session */
 extern const struct mdr_spec *mdr_msg_mdrd_bereq;
 extern const struct mdr_spec *mdr_msg_mdrd_beresp;
-extern const struct mdr_spec *mdr_msg_mdrd_beresp_wmsg;
 extern const struct mdr_spec *mdr_msg_mdrd_beclose;
+extern const struct mdr_spec *mdr_msg_mdrd_besesserr;
 
 #define MDR_DOMAIN_CERTALATOR    MDR_DCV(0x00000002, 0, 0)
 

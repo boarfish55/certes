@@ -52,26 +52,7 @@ static struct mdr_def mdr_error = {
 	}
 };
 const struct mdr_spec *mdr_msg_error;
-static struct mdr_def mdr_echo = {
-	MDR_DCV_MDR_ECHO,
-	"mdr.echo",
-	{
-		MDR_S,
-		MDR_LAST
-	}
-};
-const struct mdr_spec *mdr_msg_echo;
 
-static struct mdr_def mdrd_error = {
-	MDR_DCV_MDRD_ERROR,
-	"mdrd.error",
-	{
-		MDR_U32, /* Error code */
-		MDR_S,   /* Error description */
-		MDR_LAST
-	}
-};
-const struct mdr_spec *mdr_msg_mdrd_error;
 static struct mdr_def mdrd_bereq = {
 	MDR_DCV_MDRD_BEREQ,
 	"mdrd.bereq",
@@ -92,25 +73,12 @@ static struct mdr_def mdrd_beresp = {
 	{
 		MDR_U64, /* id */
 		MDR_I32, /* fd */
-		MDR_U32, /* status */
-		MDR_U32, /* flags */
-		MDR_LAST
-	}
-};
-const struct mdr_spec *mdr_msg_mdrd_beresp;
-static struct mdr_def mdrd_beresp_wmsg = {
-	MDR_DCV_MDRD_BERESP_WMSG,
-	"mdrd.beresp_wmsg",
-	{
-		MDR_U64, /* id */
-		MDR_I32, /* fd */
-		MDR_U32, /* status */
 		MDR_U32, /* flags */
 		MDR_M,   /* msg */
 		MDR_LAST
 	}
 };
-const struct mdr_spec *mdr_msg_mdrd_beresp_wmsg;
+const struct mdr_spec *mdr_msg_mdrd_beresp;
 static struct mdr_def mdrd_beclose = {
 	MDR_DCV_MDRD_BECLOSE,
 	"mdrd.beclose",
@@ -120,6 +88,15 @@ static struct mdr_def mdrd_beclose = {
 	}
 };
 const struct mdr_spec *mdr_msg_mdrd_beclose;
+static struct mdr_def mdrd_besesserr = {
+	MDR_DCV_MDRD_BESESSERR,
+	"mdrd.besesserr",
+	{
+		MDR_U64, /* id */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *mdr_msg_mdrd_besesserr;
 
 static int
 speccmp(struct mdr_spec *s1, struct mdr_spec *s2)
@@ -971,13 +948,11 @@ mdr_register_builtin_specs()
 	if ((mdr_msg_ping = mdr_register_spec(&mdr_ping)) == NULL ||
 	    (mdr_msg_pong = mdr_register_spec(&mdr_pong)) == NULL ||
 	    (mdr_msg_error = mdr_register_spec(&mdr_error)) == NULL ||
-	    (mdr_msg_echo = mdr_register_spec(&mdr_echo)) == NULL ||
-	    (mdr_msg_mdrd_error = mdr_register_spec(&mdrd_error)) == NULL ||
 	    (mdr_msg_mdrd_bereq = mdr_register_spec(&mdrd_bereq)) == NULL ||
 	    (mdr_msg_mdrd_beresp = mdr_register_spec(&mdrd_beresp)) == NULL ||
-	    (mdr_msg_mdrd_beresp_wmsg =
-	     mdr_register_spec(&mdrd_beresp_wmsg)) == NULL ||
-	    (mdr_msg_mdrd_beclose = mdr_register_spec(&mdrd_beclose)) == NULL)
+	    (mdr_msg_mdrd_beclose = mdr_register_spec(&mdrd_beclose)) == NULL ||
+	    (mdr_msg_mdrd_besesserr =
+	     mdr_register_spec(&mdrd_besesserr)) == NULL)
 		return MDR_FAIL;
 
 	return 0;

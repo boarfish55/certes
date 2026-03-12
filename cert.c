@@ -479,7 +479,7 @@ cert_sign(X509 *crt, X509 *issuer, EVP_PKEY *key, const char **roles)
 		return NULL;
 	}
 
-	if (!X509_sign(newcrt, key, EVP_sha256())) {
+	if (!X509_sign(newcrt, key, NULL)) {
 		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_sign");
 		return NULL;
 	}

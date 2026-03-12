@@ -160,7 +160,6 @@ const struct mdr_spec *msg_coord_get_cert_challenge_resp_notfound;
 
 /* Built-ins */
 const struct mdr_spec *msg_pack_beresp;
-const struct mdr_spec *msg_pack_beresp_wmsg;
 
 void
 load_mdr_defs()
@@ -171,9 +170,6 @@ load_mdr_defs()
 	if (mdr_register_builtin_specs() == MDR_FAIL)
 		err(1, "mdr_register_builtin_specs");
 	if ((msg_pack_beresp = mdr_registry_get(MDR_DCV_MDRD_BERESP)) == NULL)
-		err(1, "mdr_registry_get");
-	if ((msg_pack_beresp_wmsg =
-	    mdr_registry_get(MDR_DCV_MDRD_BERESP_WMSG)) == NULL)
 		err(1, "mdr_registry_get");
 
 	/*

@@ -92,16 +92,44 @@ mdrd_unpack_bereq(struct umdr *m, uint64_t *id, int *fd, struct sockaddr *peer,
 }
 
 int
-mdrd_unpack_error(struct umdr *m, uint32_t *status, const char **reason,
-    uint64_t *reason_sz)
+mdrd_unpack_besesserr(struct umdr *m, uint64_t *id)
 {
-	struct umdr_vec uv[2];
+	struct umdr_vec uv[1];
 
-	if (umdr_unpack(m, mdr_msg_mdrd_error, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+	if (umdr_unpack(m, mdr_msg_mdrd_besesserr, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL)
 		return MDR_FAIL;
-	*status = uv[0].v.u32;
-	*reason = uv[1].v.s.bytes;
-	*reason_sz = uv[1].v.s.sz;
+	*id = uv[0].v.u64;
+
+	return 0;
+}
+
+int
+mdrd_pack_error(struct pmdr *m, uint64_t id, int fd, uint32_t flags,
+    uint32_t errcode, const char *errdesc)
+{
+	struct pmdr_vec pv[4];
+	struct pmdr     msg;
+	char            buf[64];
+
+	pmdr_init(&msg, buf, sizeof(buf), MDR_FNONE);
+	pv[0].type = MDR_U32;
+	pv[0].v.u32 = errcode;
+	pv[1].type = MDR_S;
+	pv[1].v.s = errdesc;
+	if (pmdr_pack(&msg, mdr_msg_error, pv, 2) == MDR_FAIL)
+		return -1;
+
+	pv[0].type = MDR_U64;
+	pv[0].v.u64 = id;
+	pv[1].type = MDR_I32;
+	pv[1].v.i32 = fd;
+	pv[2].type = MDR_U32;
+	pv[2].v.u32 = flags;
+	pv[3].type = MDR_M;
+	pv[3].v.pmdr = &msg;
+	if (pmdr_pack(m, mdr_msg_mdrd_beresp, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		return -1;
 
 	return 0;
 }
