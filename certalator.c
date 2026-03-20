@@ -21,13 +21,14 @@ char config_file_path[PATH_MAX] = "/etc/certalator.conf";
 
 struct certalator_flatconf certalator_conf = {
 	0,
-	9790,
+	CERTALATOR_AGENT_PORT,
 	"",
-	9790,
-	"certdb.sqlite",
+	CERTALATOR_AGENT_PORT,
+	"",
 	60000,
 	60000,
 	"",
+	30,                       /* challenge_timeout */
 	"ca.pem",
 	"",
 	"",
@@ -92,6 +93,12 @@ struct flatconf certalator_config_vars[] = {
 		FLATCONF_STRING,
 		certalator_conf.bootstrap_key,
 		sizeof(certalator_conf.bootstrap_key)
+	},
+	{
+		"challenge_timeout_seconds",
+		FLATCONF_ULONG,
+		&certalator_conf.challenge_timeout_seconds,
+		sizeof(certalator_conf.challenge_timeout_seconds)
 	},
 	{
 		"ca_file",
@@ -197,16 +204,17 @@ usage()
 void
 bootstrap_setup_usage()
 {
-	printf("Usage: %s bootstrap-setup [options] <cn> <roles...>\n",
+	printf("Usage: %s bootstrap-setup [options]\n",
 	    CERTALATOR_PROGNAME);
-	printf("\t--help        Prints this help\n");
-	printf("\t--timeout     Validity of bootstrap entry in "
+	printf("\t-help        Prints this help\n");
+	printf("\t-timeout     Validity of bootstrap entry in "
 	    "seconds (default 600)\n");
-	printf("\t--cert_expiry Validity of certificate in "
+	printf("\t-cert_expiry Validity of certificate in "
 	    "seconds (default 7*86400)\n");
-	printf("\t--san         Adds a Subject Alt Name to this "
+	printf("\t-san         Adds a Subject Alt Name to this "
 	    "bootstrap entry\n");
-	printf("\t--role        Adds a role to this bootstrap entry\n");
+	printf("\t-role        Adds a role to this bootstrap entry\n");
+	printf("\t-cn          Sets de CommonName for the entry\n");
 }
 
 struct cl_session
@@ -257,8 +265,8 @@ mdrd_error_resp(uint64_t id, int fd, uint32_t flags, uint32_t errcode,
 	return 0;
 }
 
-int
-mdrd_beresp_wmsg(uint64_t id, int fd, struct pmdr *msg)
+static int
+mdrd_beresp(uint64_t id, int fd, struct pmdr *msg)
 {
 	struct pmdr     pm;
 	struct pmdr_vec pv[4];
@@ -283,6 +291,18 @@ mdrd_beresp_wmsg(uint64_t id, int fd, struct pmdr *msg)
 		return -1;
 	}
 	return 0;
+}
+
+static int
+mdrd_beresp_ok(uint64_t id, int fd)
+{
+	struct pmdr pm;
+	char        pbuf[32];
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	if (pmdr_pack(&pm, mdr_msg_ok, NULL, 0) == MDR_FAIL)
+		return -1;
+	return mdrd_beresp(id, fd, &pm);
 }
 
 int
@@ -315,14 +335,16 @@ mdrd_backend()
 		return 1;
 	}
 
-	if (coordinator_start(xerrz(&e)) == -1) {
+	/* Coordinator might already be running, don't die if that's the case */
+	if (coordinator_start(xerrz(&e)) == -1 &&
+	    !xerr_is(&e, XLOG_ERRNO, EWOULDBLOCK)) {
 		xlog(LOG_ERR, &e, __func__);
-		exit(1);
+		return 1;
 	}
 
 	if (agent_init(xerrz(&e)) == -1) {
 		xlog(LOG_ERR, &e, __func__);
-		exit(1);
+		return 1;
 	}
 
 	if ((ctx = X509_STORE_CTX_new()) == NULL) {
@@ -350,13 +372,13 @@ mdrd_backend()
 			if (pmdr_pack(&pm, mdr_msg_error, pv, 2) == MDR_FAIL) {
 				xlog_strerror(LOG_ERR, errno, "%s: pmdr_pack",
 				    __func__);
-				return -1;
+				goto fail;
 			}
 			if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) <
 			    pmdr_size(&pm)) {
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: writeall", __func__);
-				return -1;
+				goto fail;
 			}
 			continue;
 		}
@@ -459,9 +481,9 @@ mdrd_backend()
 			    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN) {
 				xlog(LOG_NOTICE, NULL,
 				    "%s: client did not provide a cert; only "
-				    "a bootstrap setup message (id=%x) can be "
-				    "processed but got %x", __func__,
-				    MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP,
+				    "a bootstrap setup message (id=0x%x) is "
+				    "allowed, but we got 0x%x", __func__,
+				    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN,
 				    umdr_dcv(&msg));
 				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_CERTFAIL, "no cert provided");
@@ -508,9 +530,7 @@ mdrd_backend()
 				if (authority_bootstrap_dialin(&msg, &e)
 				    == MDR_FAIL) {
 					// TODO: return error to client
-					xlog(LOG_ERR, &e,
-					    "%s: authority_bootstrap_dialin",
-					    __func__);
+					xlog(LOG_ERR, &e, "%s", __func__);
 				}
 				// TODO: successful response?
 				continue;
@@ -538,16 +558,27 @@ mdrd_backend()
 				continue;
 			}
 			if (authority_bootstrap_dialin(&msg, &e) == MDR_FAIL) {
-				// TODO: return error to client
 				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
+				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				    MDR_ERR_BEFAIL,
+				    (e.sp == XLOG_APP)
+				    ? e.msg
+				    : "we are not an authority");
 			}
-			// TODO: successful response
+			if (mdrd_beresp_ok(id, fd) == MDR_FAIL) {
+				xlog_strerror(LOG_ERR, errno,
+				    "%s: mdrd_beresp_ok", __func__);
+				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				    MDR_ERR_BEFAIL, "mdrd_beresp_ok");
+				continue;
+			}
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP:
-			if (!cert_has_role(csess->cert, "bootstrap",
+			if (!cert_has_role(csess->cert, ROLE_BOOTSTRAP,
 			    xerrz(&e))) {
 				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_DENIED, "bootstrap role required");
+				    MDR_ERR_DENIED,
+				    ROLE_BOOTSTRAP " role required");
 				continue;
 			}
 
@@ -560,22 +591,29 @@ mdrd_backend()
 				continue;
 			}
 
-			if (pmdr_pack(&pm, msg_bootstrap_setup_resp_ok, NULL, 0)
-			    == MDR_FAIL) {
+			if (mdrd_beresp_ok(id, fd) == MDR_FAIL) {
 				xlog_strerror(LOG_ERR, errno,
-				    "%s: pmdr_pack", __func__);
+				    "%s: mdrd_beresp_ok", __func__);
 				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL,
-				    "pmdr_pack/msg_bootstrap_setup_resp_ok");
+				    MDR_ERR_BEFAIL, "mdrd_beresp_ok");
 				continue;
 			}
-			mdrd_beresp_wmsg(id, fd, &pm);
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
-			// TODO: needs to have role "agent", and the client
-			// needs to have the "authority" role
-			mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
-			    MDR_ERR_NOTSUPP, "not implemented");
+			if (!cert_has_role(csess->cert, ROLE_AUTHORITY,
+			    xerrz(&e))) {
+				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				    MDR_ERR_DENIED,
+				    ROLE_AUTHORITY " role required");
+				continue;
+			}
+			if (agent_bootstrap_dialback(&msg, &e)
+			    == MDR_FAIL) {
+				xlog(LOG_ERR, &e,
+				    "%s: agent_bootstrap_dialback",
+				    __func__);
+			}
+			/* Authority does not expect a response here. */
 			break;
 		default:
 			mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
@@ -720,13 +758,8 @@ bootstrap_setup_cli(int argc, char **argv)
 	}
 
 	switch (umdr_dcv(&um)) {
-	case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP_RESP_OK:
+	case MDR_DCV_MDR_OK:
 		break;
-	case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP_RESP_ERR:
-		if (umdr_unpack(&um, msg_bootstrap_setup_resp_err, uv,
-		    UMDRVECLEN(uv)) == MDR_FAIL)
-			err(1, "umdr_unpack");
-		errx(1, "bootstrap setup failed: %s", uv[0].v.s.bytes);
 	case MDR_DCV_MDR_ERROR:
 		if (umdr_unpack(&um, mdr_msg_error, uv,
 		    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -872,9 +905,10 @@ main(int argc, char **argv)
 		}
 		fclose(f);
 	} else if (strcmp(command, "mdrd-backend") == 0) {
-		if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
+		if (*certalator_conf.certdb_path != '\0' &&
+		    certdb_init(certalator_conf.certdb_path, xerrz(&e)) == -1) {
 			xlog(LOG_ERR, &e, __func__);
-			return -1;
+			exit(1);
 		}
 		status = mdrd_backend();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
@@ -884,18 +918,21 @@ main(int argc, char **argv)
 		 * Do a standalone run to get our initial key/cert,
 		 * without mdrd.
 		 */
-		if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
+		if (*certalator_conf.certdb_path != '\0' &&
+		    certdb_init(certalator_conf.certdb_path, xerrz(&e)) == -1) {
 			xlog(LOG_ERR, &e, __func__);
-			return -1;
+			exit(1);
 		}
-		if (agent_init(xerrz(&e)) == -1) {
+		if (cert_new_privkey(xerrz(&e))) {
 			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
 	} else if (strcmp(command, "init-db") == 0) {
+		if (*certalator_conf.certdb_path == '\0')
+			errx(1, "certdb_path is unset");
 		if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
 			xlog(LOG_ERR, &e, __func__);
-			return -1;
+			exit(1);
 		}
 	} else {
 		usage();

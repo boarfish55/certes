@@ -1,7 +1,10 @@
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <openssl/err.h>
 #include <err.h>
 #include <errno.h>
 #include <limits.h>
-#include <openssl/err.h>
+#include <netdb.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -241,6 +244,18 @@ xlog(int priority, const struct xerr *e, const char *fmt, ...)
 			xlog_fprintf("[sp=%d, code=%ld]: %s: %s",
 			    e->sp, e->code, e->msg, errmsg);
 		}
+	} else if (e->sp == XLOG_EAI && e->code != 0) {
+		if (fmt) {
+			syslog(priority, "[sp=%d, code=%ld]: %s: %s: %s",
+			    e->sp, e->code, msg, e->msg, gai_strerror(e->code));
+			xlog_fprintf("[sp=%d, code=%ld]: %s: %s: %s",
+			    e->sp, e->code, msg, e->msg, gai_strerror(e->code));
+		} else {
+			syslog(priority, "[sp=%d, code=%ld]: %s: %s",
+			    e->sp, e->code, e->msg, gai_strerror(e->code));
+			xlog_fprintf("[sp=%d, code=%ld]: %s: %s",
+			    e->sp, e->code, e->msg, gai_strerror(e->code));
+		}
 	} else if (e->sp == XLOG_SSL && e->code != 0) {
 		ERR_error_string_n(e->code, errmsg, sizeof(errmsg));
 		if (fmt) {
@@ -302,6 +317,9 @@ xerr_print(const struct xerr *e)
 		strerror_r(e->code, errmsg, sizeof(errmsg));
 		warnx("[sp=%d, code=%ld]: %s: %s",
 		    e->sp, e->code, e->msg, errmsg);
+	} else if (e->sp == XLOG_EAI && e->code != 0) {
+		warnx("[sp=%d, code=%ld]: %s: %s",
+		    e->sp, e->code, e->msg, gai_strerror(e->code));
 	} else if (e->sp == XLOG_SSL && e->code != 0) {
 		ERR_error_string_n(e->code, errmsg, sizeof(errmsg));
 		warnx("[sp=%d, code=%ld]: %s: %s",

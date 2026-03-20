@@ -13,7 +13,9 @@ int             cert_has_role(X509 *, const char *, struct xerr *);
 int             cert_verify(X509_STORE_CTX *, X509 *, X509_STORE *, int);
 BIGNUM         *cert_new_serial(struct xerr *);
 int             cert_add_ext(X509V3_CTX *, X509 *, int, char *);
-X509 *          cert_sign(X509 *, X509 *, EVP_PKEY *, const char **);
-FILE *          cert_new_privkey(struct xerr *);
+X509           *cert_sign(X509 *, X509 *, EVP_PKEY *, const char **);
+int             cert_new_privkey(struct xerr *);
+int             cert_subject_cn(const char *, char *, size_t, struct xerr *);
+int             cert_is_selfsigned(X509 *crt);
 
 #endif

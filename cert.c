@@ -1,7 +1,11 @@
-#include <err.h>
-#include <fcntl.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
+#include <err.h>
+#include <fcntl.h>
+#include <netdb.h>
 #include <unistd.h>
 #include "certalator.h"
 #include "cert.h"
@@ -375,6 +379,16 @@ cert_add_ext(X509V3_CTX *ctx, X509 *crt, int nid, char *value)
 	return X509_add_ext(crt, ex, -1);
 }
 
+int
+cert_is_selfsigned(X509 *crt)
+{
+	if (X509_NAME_cmp(X509_get_subject_name(crt),
+	    X509_get_issuer_name(crt)) == 0)
+		return 1;
+
+	return 0;
+}
+
 X509 *
 cert_sign(X509 *crt, X509 *issuer, EVP_PKEY *key, const char **roles)
 {
@@ -449,7 +463,7 @@ cert_sign(X509 *crt, X509 *issuer, EVP_PKEY *key, const char **roles)
 		return NULL;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_key_usage,
-	    "critical,nonRepudiation,digitalSignature,keyEncipherment")) {
+	    "critical,nonRepudiation,digitalSignature")) {
 		XERRF(&e, XLOG_SSL, ERR_get_error(), "add_ext / NID_key_usage");
 		return NULL;
 	}
@@ -487,16 +501,50 @@ cert_sign(X509 *crt, X509 *issuer, EVP_PKEY *key, const char **roles)
 	return newcrt;
 }
 
+static int
+cert_self(char *name, size_t name_sz, struct xerr *e)
+{
+	char             p[256];
+	int              r;
+	struct addrinfo  hints;
+	struct addrinfo *addrs;
+	struct addrinfo *ai;
+
+	if (gethostname(p, sizeof(p)) == -1)
+		return XERRF(e, XLOG_ERRNO, errno, "gethostname");
+
+	bzero(&hints, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	if ((r = getaddrinfo(p, NULL, &hints, &addrs)) != 0)
+		return XERRF(e, XLOG_EAI, r, "getaddrinfo");
+
+	for (ai = addrs; ai != NULL; ai = ai->ai_next) {
+		if (getnameinfo(ai->ai_addr, ai->ai_addrlen,
+		    name, name_sz, NULL, 0, 0) != 0)
+			continue;
+
+		if (strcmp(name, "localhost") != 0)
+			break;
+	}
+	freeaddrinfo(addrs);
+
+	if (ai != NULL)
+		return 0;
+
+	return XERRF(e, XLOG_APP, XLOG_NOENT, "no name found");
+}
+
 static X509 *
 cert_selfsign(EVP_PKEY *pkey, struct xerr *e)
 {
 	X509        *newcrt;
 	X509V3_CTX   ctx;
-	char         hostname[256];
 	X509_NAME   *name;
+	char         hostname[NI_MAXHOST];
 
-	if (gethostname(hostname, sizeof(hostname)) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "gethostname");
+	if (cert_self(hostname, sizeof(hostname), xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
 		return NULL;
 	}
 
@@ -570,6 +618,12 @@ cert_selfsign(EVP_PKEY *pkey, struct xerr *e)
 		    "add_ext / NID_subject_key_identifier");
 		goto fail;
 	}
+	if (!cert_add_ext(&ctx, newcrt, NID_authority_key_identifier,
+	    "keyid,issuer")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "add_ext / NID_authority_key_identifier");
+		goto fail;
+	}
 
 	if (!X509_sign(newcrt, pkey, NULL)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
@@ -586,7 +640,7 @@ fail:
  * Create a key and a temporary self-signed cert just so we
  * can perform our bootstrap process over TLS.
  */
-FILE *
+int
 cert_new_privkey(struct xerr *e)
 {
 	EVP_PKEY_CTX *ctx;
@@ -594,66 +648,94 @@ cert_new_privkey(struct xerr *e)
 	FILE         *f;
 	X509         *selfcrt;
 
-	if ((ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL)) == NULL) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_CTX_new_id");
-		return NULL;
-	}
+	if ((ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL)) == NULL)
+		return XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "EVP_PKEY_CTX_new_id");
 
-	if (EVP_PKEY_keygen_init(ctx) <= 0) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_keygen_init");
-		return NULL;
-	}
+	if (EVP_PKEY_keygen_init(ctx) <= 0)
+		return XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "EVP_PKEY_keygen_init");
 
-	if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
-		XERRF(e, XLOG_SSL, ERR_get_error(),
+	if (EVP_PKEY_keygen(ctx, &pkey) <= 0)
+		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "EVP_PKEY_keygen");
-		return NULL;
-	}
 
-	if ((f = fopen(certalator_conf.key_file, "w")) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+	if ((f = fopen(certalator_conf.key_file, "w")) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
 		    certalator_conf.key_file);
-		return NULL;
-	}
 
 	if (!PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "PEM_write_PrivateKey");
-		return NULL;
+		fclose(f);
+		return -1;
 	}
 
-	if (fclose(f) == EOF) {
-		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
+	if (fclose(f) == EOF)
+		return XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
 		    certalator_conf.key_file);
-		return NULL;
-	}
 
-	if ((selfcrt = cert_selfsign(pkey, e)) == NULL) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-
-	if ((f = fopen(certalator_conf.cert_file, "w")) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+	/*
+	 * If we don't have a key, we certainly don't
+	 * have a cert. In fact, this is our first run.
+	 * We'll need a temporary self-signed cert during
+	 * our first run.
+	 */
+	if ((selfcrt = cert_selfsign(pkey, e)) == NULL)
+		return XERR_PREPENDFN(e);
+	if ((f = fopen(certalator_conf.cert_file, "w")) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
 		    certalator_conf.cert_file);
-		return NULL;
-	}
 	if (!PEM_write_X509(f, selfcrt)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
-		return NULL;
+		fclose(f);
+		return -1;
 	}
-	if (fclose(f) == EOF) {
-		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
+	if (fclose(f) == EOF)
+		return XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
 		    certalator_conf.cert_file);
-		return NULL;
+
+	X509_free(selfcrt);
+
+	return 0;
+}
+
+int
+cert_subject_cn(const char *subject, char *cn, size_t cn_sz, struct xerr *e)
+{
+	char  subject2[CERTALATOR_MAX_SUBJET_LENGTH];
+	char *token, *field, *value, *t;
+	char *save1, *save2;
+
+	strlcpy(subject2, subject, sizeof(subject2));
+
+	for (t = subject2; ; t = NULL) {
+		token = strtok_r(t, "/", &save1);
+		if (token == NULL)
+			break;
+
+		if (strcmp(token, "") == 0)
+			continue;
+
+		field = strtok_r(token, "=", &save2);
+		if (field == NULL)
+			return XERRF(e, XLOG_APP, XLOG_INVAL,
+			    "malformed subject");
+
+		if (strcmp(field, "CN") != 0)
+			continue;
+
+		value = strtok_r(NULL, "=", &save2);
+		if (value == NULL)
+			return XERRF(e, XLOG_APP, XLOG_INVAL,
+			    "malformed subject");
+
+		if (strlcpy(cn, value, cn_sz) >= cn_sz)
+			return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+			    "CN does not fit in buffer");
+
+		return 0;
 	}
 
-	/* We reopen because we only want a read fd */
-	if ((f = fopen(certalator_conf.key_file, "r")) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
-		    certalator_conf.key_file);
-		return NULL;
-	}
-
-	return f;
+	return XERRF(e, XLOG_APP, XLOG_NOENT, "no CN in subject");
 }

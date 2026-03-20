@@ -18,8 +18,8 @@ extern struct certalator_flatconf certalator_conf;
 
 static int  coordinator_connect(struct xerr *);
 static void purge_challenges();
-static int  coordinator_rcv_challenge(struct umdr *, struct xerr *);
-static int  coordinator_get_challenge(struct umdr *, struct xerr *);
+static int  coordinator_rcv_challenge(struct umdr *, int, struct xerr *);
+static int  coordinator_get_challenge(struct umdr *, int, struct xerr *);
 
 static struct timespec last_challenge_purge = {0, 0};
 static int             coordinator_fd = -1;
@@ -141,10 +141,11 @@ coordinator_send(struct pmdr *m, struct xerr *e)
 			return XERR_PREPENDFN(e);
 
 	if ((r = write(coordinator_fd, pmdr_buf(m), pmdr_size(m))) == -1)
-		return XERRF(e, XLOG_ERRNO, errno, "%s: write", __func__);
+		return XERRF(e, XLOG_ERRNO, errno, "write on fd %d",
+		    coordinator_fd);
 	else if (r < pmdr_size(m))
 		return XERRF(e, XLOG_APP, XLOG_SHORTIO,
-		    "%s: write", __func__);
+		    "write on fd %d", coordinator_fd);
 
 	return 0;
 }
@@ -154,24 +155,26 @@ coordinator_recv(void *buf, size_t buf_sz, struct xerr *e)
 {
 	if (coordinator_fd == -1) {
 		if (coordinator_connect(xerrz(e)) == -1)
-			xlog(LOG_ERR, e, "%s: coordinator_connect", __func__);
+			xlog(LOG_ERR, e, "%s", __func__);
 		/*
 		 * If we were disconnected and/or had to restart the
 		 * coordinator, it probably lost state so we'll have to restart
 		 * whatever operation we were doing.
 		 */
-		return XERRF(e, XLOG_ERRNO, EBADF,
-		    "%s: coordinator_fd is -1", __func__);
+		return XERRF(e, XLOG_ERRNO, EBADF, "coordinator_fd is -1");
 	}
 
 	return mdr_buf_from_fd(coordinator_fd, buf, buf_sz);
 }
 
 static int
-coordinator_rcv_challenge(struct umdr *m, struct xerr *e)
+coordinator_rcv_challenge(struct umdr *m, int fd, struct xerr *e)
 {
 	struct umdr_vec   uv[2];
 	struct challenge *chal;
+	struct pmdr       resp;
+	char              pbuf[32];
+	int               r;
 
 	if ((chal = malloc(sizeof(struct challenge))) == NULL)
 		return XERRF(e, XLOG_ERRNO, errno, "malloc");
@@ -188,11 +191,22 @@ coordinator_rcv_challenge(struct umdr *m, struct xerr *e)
 	clock_gettime(CLOCK_REALTIME, &chal->created_at);
 	SPLAY_INSERT(challenge_tree, &challenges, chal);
 
+	pmdr_init(&resp, pbuf, sizeof(pbuf), MDR_FNONE);
+	if (pmdr_pack(&resp, mdr_msg_ok, NULL, 0) == MDR_FAIL)
+		return XERRF(e, XLOG_ERRNO, errno,
+		    "pmdr_pack/mdr_msg_ok");
+
+	if ((r = write(fd, pmdr_buf(&resp), pmdr_size(&resp))) == -1)
+		return XERRF(e, XLOG_ERRNO, errno, "%s: write", __func__);
+	else if (r < pmdr_size(&resp))
+		return XERRF(e, XLOG_APP, XLOG_SHORTIO,
+		    "%s: write", __func__);
+
 	return 0;
 }
 
 static int
-coordinator_get_challenge(struct umdr *m, struct xerr *e)
+coordinator_get_challenge(struct umdr *m, int fd, struct xerr *e)
 {
 	struct challenge needle, *chal;
 	struct pmdr      resp;
@@ -226,11 +240,13 @@ coordinator_get_challenge(struct umdr *m, struct xerr *e)
 			    "pmdr_pack/msg_coord_get_cert_challenge_resp");
 	}
 
-	if ((r = write(coordinator_fd, pmdr_buf(&resp), pmdr_size(&resp))) == -1)
-		return XERRF(e, XLOG_ERRNO, errno, "%s: write", __func__);
+	if ((r = write(fd, pmdr_buf(&resp),
+	    pmdr_size(&resp))) == -1)
+		return XERRF(e, XLOG_ERRNO, errno, "write on fd %d",
+		    coordinator_fd);
 	else if (r < pmdr_size(&resp))
-		return XERRF(e, XLOG_APP, XLOG_SHORTIO,
-		    "%s: write", __func__);
+		return XERRF(e, XLOG_APP, XLOG_SHORTIO, "write on fd %d",
+		    coordinator_fd);
 
 	return 0;
 }
@@ -239,7 +255,7 @@ int
 coordinator_run(int lsock, struct xerr *e)
 {
 	struct pollfd *fds;
-	int            ready;
+	int            ready, i;
 	int            fd, nfds, fds_sz = 32;
 	struct client *c, needle;
 	ssize_t        r;
@@ -250,13 +266,14 @@ coordinator_run(int lsock, struct xerr *e)
 		return XERRF(e, XLOG_ERRNO, errno, "malloc");
 
 	for (;;) {
-		nfds = 0;
 		fds[0].fd = lsock;
 		fds[0].events = POLLIN;
-		nfds++;
+		fds[0].revents = 0;
+		nfds = 1;
 		SPLAY_FOREACH(c, client_tree, &clients) {
 			fds[nfds].fd = c->fd;
 			fds[nfds].events = POLLIN;
+			fds[nfds].revents = 0;
 			nfds++;
 		}
 
@@ -276,19 +293,22 @@ coordinator_run(int lsock, struct xerr *e)
 			continue;
 		}
 
-		for (; ready > 0; ready--) {
-			if (fds[ready].revents & POLLERR) {
+		for (i = 0; i < nfds; i++) {
+			if (fds[i].revents == 0)
+				continue;
+
+			if (fds[i].revents & POLLERR) {
 				xlog(LOG_ERR, NULL, "%s: fd %d error", __func__,
-				    fds[ready].fd);
-				close(fds[ready].fd);
-				if (fds[ready].fd == lsock) {
+				    fds[i].fd);
+				close(fds[i].fd);
+				if (fds[i].fd == lsock) {
 					xlog(LOG_ERR, NULL, "%s: lsock %d "
 					    "closed unexpectedly", __func__,
 					    lsock);
 					_exit(1);
 				}
 
-				needle.fd = fds[ready].fd;
+				needle.fd = fds[i].fd;
 				c = SPLAY_FIND(client_tree, &clients, &needle);
 				if (c != NULL) {
 					SPLAY_REMOVE(client_tree, &clients, c);
@@ -299,8 +319,8 @@ coordinator_run(int lsock, struct xerr *e)
 			}
 
 			/* Handle our listening socket for new clients. */
-			if (fds[ready].fd == lsock &&
-			    fds[ready].revents & POLLIN) {
+			if (fds[i].fd == lsock &&
+			    fds[i].revents & POLLIN) {
 				if (client_tree_sz >= fds_sz) {
 					tmp = realloc(fds, client_tree_sz + 32);
 					if (tmp == NULL) {
@@ -351,11 +371,12 @@ coordinator_run(int lsock, struct xerr *e)
 			}
 
 			/* Any other event is communication from clients. */
-			needle.fd = fds[ready].fd;
+			needle.fd = fds[i].fd;
 			c = SPLAY_FIND(client_tree, &clients, &needle);
 			if (c == NULL) {
+				close(fds[i].fd);
 				xlog(LOG_ERR, NULL, "%s: client fd %d not "
-				    "found", __func__, fds[ready].fd);
+				    "found; closing", __func__, fds[i].fd);
 				continue;
 			}
 
@@ -403,18 +424,14 @@ coordinator_run(int lsock, struct xerr *e)
 
 			switch (umdr_dcv(&um)) {
 			case MDR_DCV_CERTALATOR_COORD_SAVE_CERT_CHALLENGE:
-				if (coordinator_rcv_challenge(&um, xerrz(e))
-				    == MDR_FAIL)
-					xlog(LOG_ERR, e,
-					    "%s: coordinator_rcv_challenge",
-					    __func__);
+				if (coordinator_rcv_challenge(&um, c->fd,
+				    xerrz(e)) == MDR_FAIL)
+					xlog(LOG_ERR, e, "%s", __func__);
 				break;
 			case MDR_DCV_CERTALATOR_COORD_GET_CERT_CHALLENGE:
-				if (coordinator_get_challenge(&um, xerrz(e))
-				    == MDR_FAIL)
-					xlog(LOG_ERR, e,
-					    "%s: coordinator_get_challenge",
-					    __func__);
+				if (coordinator_get_challenge(&um, c->fd,
+				    xerrz(e)) == MDR_FAIL)
+					xlog(LOG_ERR, e, "%s", __func__);
 				break;
 			default:
 				xlog(LOG_ERR, NULL, "%s: unknown message %lu",
@@ -445,25 +462,26 @@ coordinator_start(struct xerr *e)
 
 	if ((lock_fd = open(certalator_conf.lock_file,
 	    O_CREAT|O_WRONLY|O_CLOEXEC, 0644)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "%s: open", __func__);
+		XERRF(e, XLOG_ERRNO, errno, "open: %s",
+		    certalator_conf.lock_file);
 		return -1;
 	}
 
 	if (flock(lock_fd, LOCK_EX|LOCK_NB) == -1) {
 		if (errno == EWOULDBLOCK) {
-			xlog_strerror(LOG_ERR, errno,
-			    "%s: lock file %s is already locked; "
+			XERRF(e, XLOG_ERRNO, errno,
+			    "lock file %s is already locked; "
 			    "is another instance running?",
-			    __func__, certalator_conf.lock_file);
+			    certalator_conf.lock_file);
 		} else {
-			xlog_strerror(LOG_ERR, errno, "%s: flock", __func__);
+			XERRF(e, XLOG_ERRNO, errno, "flock");
 		}
 		return -1;
 	}
 
 	if ((pid = fork()) == -1) {
 		close(lock_fd);
-		xlog_strerror(LOG_ERR, errno, "%s: fork", __func__);
+		XERRF(e, XLOG_ERRNO, errno, "fork");
 		return -1;
 	} else if (pid != 0) {
 		close(lock_fd);
@@ -493,7 +511,9 @@ coordinator_start(struct xerr *e)
 		_exit(1);
 	}
 
-	setproctitle("agent");
+	setproctitle("coordinator");
+
+	xlog(LOG_NOTICE, NULL, "%s: running with pid %u", __func__, getpid());
 
 	snprintf(pid_line, sizeof(pid_line), "%d\n", getpid());
 	if (write(lock_fd, pid_line, strlen(pid_line)) == -1) {
@@ -540,7 +560,7 @@ coordinator_start(struct xerr *e)
 	}
 
 	if (coordinator_run(lsock, xerrz(e)) == -1) {
-		xlog(LOG_ERR, e, "coordinator_run");
+		xlog(LOG_ERR, e, "%s", __func__);
 		_exit(1);
 	}
 

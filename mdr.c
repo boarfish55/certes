@@ -42,6 +42,14 @@ static struct mdr_def mdr_pong = {
 	}
 };
 const struct mdr_spec *mdr_msg_pong;
+static struct mdr_def mdr_ok = {
+	MDR_DCV_MDR_OK,
+	"mdr.ok",
+	{
+		MDR_LAST
+	}
+};
+const struct mdr_spec *mdr_msg_ok;
 static struct mdr_def mdr_error = {
 	MDR_DCV_MDR_ERROR,
 	"mdr.error",
@@ -947,6 +955,7 @@ mdr_register_builtin_specs()
 {
 	if ((mdr_msg_ping = mdr_register_spec(&mdr_ping)) == NULL ||
 	    (mdr_msg_pong = mdr_register_spec(&mdr_pong)) == NULL ||
+	    (mdr_msg_ok = mdr_register_spec(&mdr_ok)) == NULL ||
 	    (mdr_msg_error = mdr_register_spec(&mdr_error)) == NULL ||
 	    (mdr_msg_mdrd_bereq = mdr_register_spec(&mdrd_bereq)) == NULL ||
 	    (mdr_msg_mdrd_beresp = mdr_register_spec(&mdrd_beresp)) == NULL ||

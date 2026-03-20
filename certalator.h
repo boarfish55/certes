@@ -10,6 +10,8 @@
 #define CERTALATOR_PROGNAME "certalator"
 #define CERTALATOR_AGENT_PROGNAME "certalator-agent"
 
+#define CERTALATOR_AGENT_PORT 9790
+
 #define CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64 64
 #define CERTALATOR_BOOTSTRAP_KEY_LENGTH     48
 #define CERTALATOR_CHALLENGE_LENGTH     64
@@ -40,6 +42,7 @@ struct certalator_flatconf {
 	uint64_t agent_send_timeout_ms;
 	uint64_t agent_recv_timeout_ms;
 	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64 + 1];
+	uint64_t challenge_timeout_seconds;
 	char     ca_file[PATH_MAX];
 	char     crl_file[PATH_MAX];
 	char     crl_path[PATH_MAX];

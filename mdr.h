@@ -391,6 +391,7 @@ enum mdr_err_code {
 #define MDR_DCV_MDR_TEST           MDR_DCV(0x00000000, 0x0004, 0x0000)
 extern const struct mdr_spec *mdr_msg_ping;
 extern const struct mdr_spec *mdr_msg_pong;
+extern const struct mdr_spec *mdr_msg_ok;
 extern const struct mdr_spec *mdr_msg_error;
 extern const struct mdr_spec *mdr_msg_test;
 

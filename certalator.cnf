@@ -72,7 +72,7 @@ organizationalUnitName  = optional
 
 [intermediate_proxy_crt_ext]
 basicConstraints        = critical,CA:false
-keyUsage                = critical,nonRepudiation,digitalSignature,keyEncipherment
+keyUsage                = critical,nonRepudiation,digitalSignature
 extendedKeyUsage        = serverAuth,clientAuth
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer
@@ -83,7 +83,7 @@ certalatorRoles.0       = IA5:caproxy
 
 [intermediate_client_crt_ext]
 basicConstraints        = critical,CA:false
-keyUsage                = critical,nonRepudiation,digitalSignature,keyEncipherment
+keyUsage                = critical,nonRepudiation,digitalSignature
 extendedKeyUsage        = serverAuth,clientAuth
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer

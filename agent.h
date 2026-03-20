@@ -14,6 +14,7 @@ EVP_PKEY   *agent_key();
 X509_STORE *agent_cert_store();
 int         agent_init(struct xerr *);
 int         agent_bootstrap_setup_cli(int, char **, struct xerr *);
+int         agent_bootstrap_dialback(struct umdr *, struct xerr *);
 int         agent_send(struct pmdr *, struct xerr *);
 int         agent_recv(char *, size_t, struct xerr *);
 

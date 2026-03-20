@@ -16,25 +16,6 @@ struct mdr_def msgdef_bootstrap_setup = {
 };
 const struct mdr_spec *msg_bootstrap_setup;
 
-struct mdr_def msgdef_bootstrap_setup_resp_ok = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP_RESP_OK,
-	"certalator.bootstrap_setup_resp_ok",
-	{
-		MDR_LAST
-	}
-};
-const struct mdr_spec *msg_bootstrap_setup_resp_ok;
-
-struct mdr_def msgdef_bootstrap_setup_resp_err = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP_RESP_ERR,
-	"certalator.bootstrap_setup_resp_err",
-	{
-		MDR_S,   /* Error message */
-		MDR_LAST
-	}
-};
-const struct mdr_spec *msg_bootstrap_setup_resp_err;
-
 struct mdr_def msgdef_bootstrap_dialin = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN,
 	"certalator.bootstrap_dialin",
@@ -46,6 +27,15 @@ struct mdr_def msgdef_bootstrap_dialin = {
 	}
 };
 const struct mdr_spec *msg_bootstrap_dialin;
+
+struct mdr_def msgdef_bootstrap_dialin_resp_failed = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED,
+	"certalator.bootstrap_dialin_resp_failed",
+	{
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_bootstrap_dialin_resp_failed;
 
 struct mdr_def msgdef_bootstrap_dialback = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK,
@@ -78,16 +68,6 @@ struct mdr_def msgdef_bootstrap_dialin_resp = {
 };
 const struct mdr_spec *msg_bootstrap_dialin_resp;
 
-struct mdr_def msgdef_bootstrap_dialin_resp_failed = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED,
-	"certalator.bootstrap_dialin_resp_failed",
-	{
-		MDR_U8,  /* Error code */
-		MDR_LAST
-	}
-};
-const struct mdr_spec *msg_bootstrap_dialin_resp_failed;
-
 struct mdr_def msgdef_bootstrap_req = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_REQ,
 	"certalator.bootstrap_req",
@@ -107,16 +87,6 @@ struct mdr_def msgdef_bootstrap_req_resp = {
 	}
 };
 const struct mdr_spec *msg_bootstrap_req_resp;
-
-struct mdr_def msgdef_bootstrap_req_resp_failed = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP_FAILED,
-	"certalator.bootstrap_req_resp_failed",
-	{
-		MDR_S,   /* Error message */
-		MDR_LAST
-	}
-};
-const struct mdr_spec *msg_bootstrap_req_resp_failed;
 
 struct mdr_def msgdef_coord_save_cert_challenge = {
 	MDR_DCV_CERTALATOR_COORD_SAVE_CERT_CHALLENGE,
@@ -178,14 +148,11 @@ load_mdr_defs()
 	if ((msg_bootstrap_setup =
 	    mdr_register_spec(&msgdef_bootstrap_setup)) == NULL)
 		errx(1, "mdr_register_spec");
-	if ((msg_bootstrap_setup_resp_ok =
-	    mdr_register_spec(&msgdef_bootstrap_setup_resp_ok)) == NULL)
-		errx(1, "mdr_register_spec");
-	if ((msg_bootstrap_setup_resp_err =
-	    mdr_register_spec(&msgdef_bootstrap_setup_resp_err)) == NULL)
-		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_dialin =
 	    mdr_register_spec(&msgdef_bootstrap_dialin)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_bootstrap_dialin_resp_failed =
+	    mdr_register_spec(&msgdef_bootstrap_dialin_resp_failed)) == NULL)
 		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_answer_challenge =
 	    mdr_register_spec(&msgdef_bootstrap_answer_challenge)) == NULL)
@@ -193,17 +160,15 @@ load_mdr_defs()
 	if ((msg_bootstrap_dialin_resp =
 	    mdr_register_spec(&msgdef_bootstrap_dialin_resp)) == NULL)
 		errx(1, "mdr_register_spec");
-	if ((msg_bootstrap_dialin_resp_failed =
-	    mdr_register_spec(&msgdef_bootstrap_dialin_resp_failed)) == NULL)
+	if ((msg_bootstrap_dialback =
+	    mdr_register_spec(&msgdef_bootstrap_dialback)) == NULL)
 		errx(1, "mdr_register_spec");
+
 	if ((msg_bootstrap_req =
 	    mdr_register_spec(&msgdef_bootstrap_req)) == NULL)
 		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_req_resp =
 	    mdr_register_spec(&msgdef_bootstrap_req_resp)) == NULL)
-		errx(1, "mdr_register_spec");
-	if ((msg_bootstrap_req_resp_failed =
-	    mdr_register_spec(&msgdef_bootstrap_req_resp_failed)) == NULL)
 		errx(1, "mdr_register_spec");
 
 	/*

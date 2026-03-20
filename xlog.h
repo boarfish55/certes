@@ -10,6 +10,7 @@ enum xerr_space {
 	XLOG_APP,      /* App-internal error */
 	XLOG_ERRNO,    /* Standard errno code used internally only */
 	XLOG_SSL,      /* SSL error codes */
+	XLOG_EAI,      /* getaddrinfo error codes */
 	XLOG_DB        /* DB error */
 };
 

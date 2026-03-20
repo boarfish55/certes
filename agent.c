@@ -106,6 +106,29 @@ agent_connect(struct xerr *e)
 	return 0;
 }
 
+void
+agent_disconnect()
+{
+	if (!connected)
+		return;
+
+	if (bio != NULL) {
+		BIO_ssl_shutdown(bio);
+		if (!BIO_free(bio))
+			xlog(LOG_ERR, NULL, "BIO_free: %s",
+			    ERR_error_string(ERR_get_error(), NULL));
+		bio = NULL;
+		ssl = NULL;
+	}
+
+	if (ssl_ctx != NULL) {
+		SSL_CTX_free(ssl_ctx);
+		ssl_ctx = NULL;
+	}
+
+	connected = 0;
+}
+
 int
 agent_send(struct pmdr *m, struct xerr *e)
 {
@@ -320,7 +343,7 @@ agent_is_authority()
  * TODO: this version may not work as it receives through mdrd which cannot
  * receive without a cert in the first place.
  */
-FILE *
+static X509 *
 agent_bootstrap(struct xerr *e)
 {
 	struct umdr      um;
@@ -339,6 +362,7 @@ agent_bootstrap(struct xerr *e)
 	size_t           req_len;
 	X509            *crt;
 	FILE            *f;
+	struct timespec  delay = {1, 0};
 
 	if (strlen(certalator_conf.bootstrap_key) !=
 	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64) {
@@ -382,13 +406,17 @@ agent_bootstrap(struct xerr *e)
 		return NULL;
 	}
 
+
+	xlog(LOG_INFO, NULL, "%s: awaiting challenge with req_id %s",
+	    __func__, req_id);
+
 	/*
 	 * The coordinator should be receiving a challenge from the authority,
 	 * so let's poll for a bit to see if we got it.
 	 * If the bootstrap key was wrong, we won't get a dialback, the
 	 * authority will quietly ignore the request.
 	 */
-	for (try = 0; try < 10; try++) {
+	for (try = 0; try < certalator_conf.challenge_timeout_seconds; try++) {
 		pv[0].type = MDR_S;
 		pv[0].v.s = req_id;
 		if (pmdr_pack(&pm, msg_coord_get_cert_challenge,
@@ -419,15 +447,17 @@ agent_bootstrap(struct xerr *e)
 			break;
 
 		/* Retry for any other answer */
+		nanosleep(&delay, NULL);
 	}
-	if (try == 10) {
+	if (try >= certalator_conf.challenge_timeout_seconds) {
 		XERRF(e, XLOG_APP, XLOG_TIMEOUT, "challenge timed out");
 		return NULL;
 	}
 
 	if (umdr_unpack(&um, msg_coord_get_cert_challenge_resp,
 	    uv, UMDRVECLEN(uv)) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
+		XERRF(e, XLOG_ERRNO, errno,
+		    "umdr_unpack/msg_coord_get_cert_challenge_resp");
 		return NULL;
 	}
 
@@ -455,11 +485,11 @@ agent_bootstrap(struct xerr *e)
 		XERRF(e, XLOG_ERRNO, errno, "umdr_init");
 		return NULL;
 	}
-
 	if (umdr_dcv(&um) == MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED) {
-		XERRF(e, XLOG_APP, XLOG_BADMSG, "failed challenge");
+		XERRF(e, XLOG_APP, XLOG_INVAL, "failed challenge");
 		return NULL;
-	} else if (umdr_dcv(&um) != MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP) {
+	}
+	if (umdr_dcv(&um) != MDR_DCV_MDR_OK) {
 		XERRF(e, XLOG_APP, XLOG_BADMSG,
 		    "unknown message from authority");
 		return NULL;
@@ -495,364 +525,23 @@ agent_bootstrap(struct xerr *e)
 		XERRF(e, XLOG_ERRNO, errno, "umdr_init");
 		return NULL;
 	}
-	if (umdr_dcv(&um) == MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP_FAILED) {
-		if (umdr_unpack(&um, msg_bootstrap_req_resp_failed,
-		    uv, UMDRVECLEN(uv)) == MDR_FAIL) {
-			XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
-			return NULL;
-		}
-		XERRF(e, XLOG_APP, XLOG_BADMSG, "signing REQ failed: %s",
-		    uv[1].v.s.bytes);
-		return NULL;
-	} else if (umdr_dcv(&um) != MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP) {
-		XERRF(e, XLOG_APP, XLOG_BADMSG,
-		    "unknown message from authority");
-		return NULL;
-	}
-	if (umdr_unpack(&um, msg_bootstrap_req_resp, uv, UMDRVECLEN(uv))
-	    == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno,
-		    "umdr_unpack/msg_bootstrap_req_resp");
-		return NULL;
-	}
 
-	crt = d2i_X509(NULL, (const unsigned char **)&uv[1].v.b.bytes,
-	    uv[1].v.b.sz);
-        if (crt == NULL) {
-		XERRF(e, XLOG_APP, XLOG_BADMSG,
-		    "bootstrap reply did not contain a valid "
-		    "DER-encoded X.509");
-		return NULL;
-        }
-
-	f = fopen(certalator_conf.cert_file, "w");
-	if (PEM_write_X509(f, crt) == 0) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
-		return NULL;
-	}
-	if (fflush(f) != 0) {
-		XERRF(e, XLOG_ERRNO, errno, "fflush");
-		return NULL;
-	}
-	rewind(f);
-
-	return f;
-}
-
-static int
-get_listen_socket(int domain, int type, unsigned short port, struct xerr *e)
-{
-	int                 fd;
-	struct sockaddr_in6 sa6;
-	struct sockaddr_in  sa;
-	int                 one = 1;
-
-	// TODO: error handling
-	if ((fd = socket(domain, type, 0)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "socket");
-		return -1;
-	}
-
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "setsockopt");
-		return -1;
-	}
-
-	if (domain == AF_INET6) {
-		bzero(&sa6, sizeof(sa6));
-		sa6.sin6_family = domain;
-		memcpy(&sa6.sin6_addr, &in6addr_any, sizeof(in6addr_any));
-		sa6.sin6_port = htons(port);
-		if (bind(fd, (struct sockaddr *)&sa6, sizeof(sa6)) == -1) {
-			xlog_strerror(LOG_ERR, errno, "bind");
-			return -1;
-		}
-	} else {
-		bzero(&sa, sizeof(sa));
-		sa.sin_family = domain;
-		sa.sin_port = htons(port);
-		if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) == -1) {
-			xlog_strerror(LOG_ERR, errno, "bind");
-			return -1;
-		}
-	}
-
-	if (listen(fd, 5) == -1) {
-		xlog_strerror(LOG_ERR, errno, "listen");
-		return -1;
-	}
-
-	return fd;
-}
-
-static int
-accept_agent_conn(int lsock6, int lsock4)
-{
-	int            cfd = -1;
-	struct pollfd  pfd[2];
-	int            nfds = 0;
-	int            i, r;
-	// TODO: make the timeout configurable? Or use recv timeout?
-	struct timeval timeout = {60, 0};
-
-	nfds++;
-	pfd[0].fd = lsock6;
-	pfd[0].events = POLLIN;
-
-	if (lsock4 >= 0) {
-		nfds++;
-		pfd[1].fd = lsock4;
-		pfd[1].events = POLLIN;
-	}
-poll:
-	// TODO: make the timeout configurable? Or use recv timeout?
-	r = poll(pfd, nfds, 60000);
-	if (r == -1) {
-		if (errno == EINTR)
-			goto poll;
-		xlog_strerror(LOG_ERR, errno, "poll");
-		return -1;
-	}
-
-	if (r == 0) {
-		xlog(LOG_ERR, NULL, "%s: accept timed out", __func__);
-		return -1;
-	}
-
-	for (i = 0; i < r; i++) {
-accept:
-		if ((cfd = accept(pfd[i].fd, NULL, 0)) == 0)
-			break;
-
-		if (errno == EINTR)
-			goto accept;
-		xlog_strerror(LOG_ERR, errno, "accept");
-	}
-
-	if (cfd == -1) {
-		xlog(LOG_ERR, NULL, "%s: accept failed for all polled "
-		    "sockets; aborting", __func__);
-		return -1;
-	}
-
-	if (fcntl(pfd[i].fd, F_SETFD, FD_CLOEXEC) == -1) {
-		xlog_strerror(LOG_ERR, errno, "fcntl");
-		close(pfd[i].fd);
-		return -1;
-	}
-
-	if (setsockopt(pfd[i].fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-	    sizeof(timeout)) == -1) {
-		xlog_strerror(LOG_ERR, errno, "setsockopt");
-		close(pfd[i].fd);
-		return -1;
-	}
-
-	return cfd;
-}
-
-/*
- * Contact the authority to send our bootstrap key in order to obtain
- * our certificate parameters and create our key and REQ.
- * TODO: this version does its own listen on a non-SSL socket, which is
- * necessary since we don't have a cert yet
- */
-FILE *
-agent_bootstrap2(struct xerr *e)
-{
-	struct umdr      um;
-	struct pmdr      pm;
-	struct pmdr_vec  pv[2];
-	struct umdr_vec  uv[1];
-	char             pbuf[16384];
-	char             ubuf[16384];
-	char            *subject = NULL;
-	char             req_id[CERTALATOR_REQ_ID_LENGTH];
-	uint8_t          bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
-	struct timespec  now;
-	ptrdiff_t        r;
-	unsigned char   *req_buf;
-	size_t           req_len;
-	X509            *crt;
-	FILE            *f;
-	int              lsock6 = -1, lsock4 = -1;
-	int              cfd = -1;
-	int              try;
-
-	if (strlen(certalator_conf.bootstrap_key) !=
-	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64) {
-		XERRF(e, XLOG_APP, XLOG_INVAL,
-		    "bad bootstrap key format in configuration; bad length");
-		return NULL;
-	}
-
-	if (b64dec(bootstrap_key, sizeof(bootstrap_key),
-	    certalator_conf.bootstrap_key) < sizeof(bootstrap_key)) {
-		XERRF(e, XLOG_ERRNO, errno, "%s: b64dec", __func__);
-		return NULL;
-	}
-
-	/*
-	 * The req_id is just echoed back to us by the authority, which we
-	 * then use to find the challenge sent to us on another connection.
-	 */
-	clock_gettime(CLOCK_REALTIME, &now);
-	if (snprintf(req_id, sizeof(req_id), "%d-%lu.%lu", getpid(),
-	    now.tv_sec, now.tv_nsec) >= sizeof(req_id)) {
-		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
-		    "resulting req_id too long; this is a bug");
-		return NULL;
-	}
-
-	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	pv[0].type = MDR_S;
-	pv[0].v.s = req_id;
-	pv[1].type = MDR_B;
-	pv[1].v.b.bytes = bootstrap_key;
-	pv[1].v.b.sz = sizeof(bootstrap_key);
-	if (pmdr_pack(&pm, msg_bootstrap_dialin, pv,
-	    PMDRVECLEN(pv)) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/msg_bootstrap_dialin");
-		return NULL;
-	}
-
-	if (agent_send(&pm, xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-
-	/* Listen for the authority sending us a challenge */
-	lsock6 = get_listen_socket(AF_INET6, SOCK_STREAM,
-	    certalator_conf.agent_bootstrap_port, xerrz(e));
-	if (lsock6 == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-#ifndef __linux__
-	/*
-	 * On OpenBSD (and other BSDs??), we don't get v4 compatibility when
-	 * creating a v6 listening socket. This function lets us create
-	 * listening sockets by family.
-	 */
-	lsock4 = get_listen_socket(AF_INET, SOCK_STREAM,
-	    certalator_conf.agent_bootstrap_port, xerrz(e));
-	if (lsock4 == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-#endif
-	for (try = 0; try < 10; try++) {
-		if ((cfd = accept_agent_conn(lsock6, lsock4)) == -1)
-			continue;
-
-		if ((r = mdr_buf_from_fd(cfd, ubuf, sizeof(ubuf)))
+	if (umdr_dcv(&um) == MDR_DCV_MDR_ERROR) {
+		if (umdr_unpack(&um, mdr_msg_error, uv, UMDRVECLEN(uv))
 		    == MDR_FAIL) {
-			xlog_strerror(LOG_ERR, errno, "mdr_buf_from_fd");
-			continue;
-		}
-
-		if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
-			xlog_strerror(LOG_ERR, errno, "umdr_init");
-			close(cfd);
-			continue;
-		}
-
-		if (umdr_unpack(&um, msg_coord_get_cert_challenge_resp,
-		    uv, UMDRVECLEN(uv)) != MDR_FAIL) {
-			close(cfd);
-			break;
-		}
-
-		close(cfd);
-		xlog_strerror(LOG_ERR, errno, "umdr_unpack");
-	}
-	close(lsock6);
-	if (lsock4 >= 0)
-		close(lsock4);
-	if (try == 0) {
-		XERRF(e, XLOG_APP, XLOG_IO, "%s: we never got a challenge "
-		    "from the authority", __func__);
-		return NULL;
-	}
-
-	/*
-	 * Send the challenge back to the authority.
-	 */
-	pv[0].type = MDR_B;
-	pv[0].v.b.bytes = uv[1].v.s.bytes;
-	pv[0].v.b.sz = uv[1].v.s.sz;
-	if (pmdr_pack(&pm, msg_bootstrap_answer_challenge,
-	    pv, PMDRVECLEN(pv)) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/msg_bootstrap_dialin");
-		return NULL;
-	}
-	if (agent_send(&pm, xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-
-	if ((r = agent_recv(ubuf, sizeof(ubuf), xerrz(e))) == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "umdr_init");
-		return NULL;
-	}
-
-	if (umdr_dcv(&um) == MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP_FAILED) {
-		XERRF(e, XLOG_APP, XLOG_BADMSG, "failed challenge");
-		return NULL;
-	} else if (umdr_dcv(&um) != MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN_RESP) {
-		XERRF(e, XLOG_APP, XLOG_BADMSG,
-		    "unknown message from authority");
-		return NULL;
-	}
-
-	/*
-	 * We passed the challenge, send our REQ.
-	 */
-	if (agent_new_req(subject, &req_buf, &req_len, xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-	pv[0].type = MDR_B;
-	pv[0].v.b.bytes = req_buf;
-	pv[0].v.b.sz = req_len;
-	if (pmdr_pack(&pm, msg_bootstrap_req, pv, PMDRVECLEN(pv)) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "mdr_pack/msg_bootstrap_req");
-		return NULL;
-	}
-	if (agent_send(&pm, xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-
-	/*
-	 * Finally, we get the cert back.
-	 */
-	if ((r = agent_recv(ubuf, sizeof(ubuf), xerrz(e))) == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "umdr_init");
-		return NULL;
-	}
-	if (umdr_dcv(&um) == MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP_FAILED) {
-		if (umdr_unpack(&um, msg_bootstrap_req_resp_failed,
-		    uv, UMDRVECLEN(uv)) == MDR_FAIL) {
-			XERRF(e, XLOG_ERRNO, errno, "mdr_unpack_payload");
+			XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
 			return NULL;
 		}
-		XERRF(e, XLOG_APP, XLOG_BADMSG, "signing REQ failed: %s",
-		    uv[1].v.s.bytes);
+		XERRF(e, XLOG_APP, XLOG_BADMSG, "signing REQ failed");
 		return NULL;
-	} else if (umdr_dcv(&um) != MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP) {
+	}
+
+	if (umdr_dcv(&um) != MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_RESP) {
 		XERRF(e, XLOG_APP, XLOG_BADMSG,
 		    "unknown message from authority");
 		return NULL;
 	}
+
 	if (umdr_unpack(&um, msg_bootstrap_req_resp, uv, UMDRVECLEN(uv))
 	    == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno,
@@ -874,13 +563,9 @@ agent_bootstrap2(struct xerr *e)
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
 		return NULL;
 	}
-	if (fflush(f) != 0) {
-		XERRF(e, XLOG_ERRNO, errno, "fflush");
-		return NULL;
-	}
-	rewind(f);
+	fclose(f);
 
-	return f;
+	return crt;
 }
 
 static int
@@ -916,23 +601,14 @@ agent_load_keys(struct xerr *e)
 #ifndef __OpenBSD__
 	int            pkey_sz;
 #endif
-	if ((f = fopen(certalator_conf.key_file, "r")) == NULL) {
-		if (errno == ENOENT) {
-			xlog(LOG_WARNING, NULL,
-			    "no private key found, generating one");
-			f = cert_new_privkey(xerrz(e));
-			if (f == NULL)
-				return XERR_PREPENDFN(e);
-		} else
-			return XERRF(e, XLOG_ERRNO, errno, "fopen");
-	}
+	if ((f = fopen(certalator_conf.key_file, "r")) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "fopen");
 	if ((key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
 		fclose(f);
 		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "PEM_read_PrivateKey");
 	}
 	fclose(f);
-
 #ifndef __OpenBSD__
 	if (!(pkey_sz = EVP_PKEY_size(key))) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_size");
@@ -1004,16 +680,9 @@ agent_load_keys(struct xerr *e)
 	}
 
 	if ((f = fopen(certalator_conf.cert_file, "r")) == NULL) {
-		if (errno != ENOENT) {
-			XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
-			    certalator_conf.cert_file);
-			goto fail;
-		}
-		f = agent_bootstrap2(e);
-		if (f == NULL) {
-			XERR_PREPENDFN(e);
-			goto fail;
-		}
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+		    certalator_conf.cert_file);
+		goto fail;
 	}
 	if ((cert = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
 		fclose(f);
@@ -1022,15 +691,31 @@ agent_load_keys(struct xerr *e)
 	}
 	fclose(f);
 
-	if (!X509_STORE_add_cert(store, cert)) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_add_cert");
-		goto fail;
+	if (cert_is_selfsigned(cert)) {
+		cert = agent_bootstrap(e);
+		if (cert == NULL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
 	}
 
 	is_authority = cert_has_role(cert, ROLE_AUTHORITY, xerrz(e));
 	if (is_authority == -1) {
 		XERR_PREPENDFN(e);
 		goto fail;
+	}
+
+	/*
+	 * Authorities need their own cert to the store, as well as all
+	 * other authorities, so they can validate the clients they signed.
+	 */
+	if (is_authority) {
+		// TODO: need to add other authorities too...
+		if (!X509_STORE_add_cert(store, cert)) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_STORE_add_cert");
+			goto fail;
+		}
 	}
 
 	/*
@@ -1062,6 +747,10 @@ agent_cleanup()
 		SSL_CTX_free(ssl_ctx);
 		ssl_ctx = NULL;
 	}
+	if (bio != NULL) {
+		BIO_free_all(bio);
+		bio = NULL;
+	}
 }
 
 X509 *
@@ -1082,3 +771,48 @@ agent_cert_store()
 	return store;
 }
 
+int
+agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
+{
+	struct umdr_vec        uv[2];
+	struct umdr            um;
+	char                   ubuf[64];
+	struct pmdr            pm;
+	char                   pbuf[128];
+	struct pmdr_vec        pv[2];
+	int                    r;
+
+	if (umdr_unpack(msg, msg_bootstrap_dialback, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL)
+		return XERRF(e, XLOG_ERRNO, errno,
+		    "umdr_unpack/msg_bootstrap_dialback");
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = uv[0].v.s.bytes;
+	pv[1].type = MDR_B;
+	pv[1].v.b.bytes = uv[1].v.b.bytes;
+	pv[1].v.b.sz = uv[1].v.b.sz;
+	if (pmdr_pack(&pm, msg_coord_save_cert_challenge,
+	    pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		return XERRF(e, XLOG_ERRNO, errno,
+		    "pmdr_pack/msg_coord_get_cert_challenge");
+
+	if (coordinator_send(&pm, xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
+
+	xlog(LOG_INFO, NULL, "%s: saved challenge with req_id %s",
+	    __func__, uv[0].v.s.bytes);
+
+	if ((r = coordinator_recv(ubuf, sizeof(ubuf), xerrz(e))) == -1)
+		return XERR_PREPENDFN(e);
+
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL)
+		return XERRF(e, XLOG_ERRNO, errno, "umdr_init");
+
+	if (umdr_dcv(&um) != MDR_DCV_MDR_OK)
+		return XERRF(e, XLOG_APP, XLOG_BADMSG,
+		    "expected MDR_DCV_MDR_OK");
+
+	return 0;
+}
