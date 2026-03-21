@@ -6,7 +6,6 @@
 #include <unistd.h>
 #include "agent.h"
 #include "authority.h"
-#include "coordinator.h"
 #include "cert.h"
 #include "certalator.h"
 #include "certdb.h"
@@ -137,10 +136,10 @@ struct flatconf certalator_config_vars[] = {
 		sizeof(certalator_conf.lock_file)
 	},
 	{
-		"coordinator_socket_path",
+		"agent_socket_path",
 		FLATCONF_STRING,
-		certalator_conf.coordinator_sock_path,
-		sizeof(certalator_conf.coordinator_sock_path)
+		certalator_conf.agent_sock_path,
+		sizeof(certalator_conf.agent_sock_path)
 	},
 	{
 		"key_bits",
@@ -201,22 +200,6 @@ usage()
 	    "authority\n");
 }
 
-void
-bootstrap_setup_usage()
-{
-	printf("Usage: %s bootstrap-setup [options]\n",
-	    CERTALATOR_PROGNAME);
-	printf("\t-help        Prints this help\n");
-	printf("\t-timeout     Validity of bootstrap entry in "
-	    "seconds (default 600)\n");
-	printf("\t-cert_expiry Validity of certificate in "
-	    "seconds (default 7*86400)\n");
-	printf("\t-san         Adds a Subject Alt Name to this "
-	    "bootstrap entry\n");
-	printf("\t-role        Adds a role to this bootstrap entry\n");
-	printf("\t-cn          Sets de CommonName for the entry\n");
-}
-
 struct cl_session
 {
 	uint64_t                 id;
@@ -246,74 +229,15 @@ cl_session_free(struct cl_session *cs)
 	free(cs);
 }
 
-static int
-mdrd_error_resp(uint64_t id, int fd, uint32_t flags, uint32_t errcode,
-    const char *errdesc)
-{
-	struct pmdr pm;
-	char        pbuf[256];
-
-	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	if (mdrd_pack_error(&pm, id, fd, flags, errcode, errdesc) == MDR_FAIL) {
-		xlog_strerror(LOG_ERR, errno, "%s: mdrd_pack_error", __func__);
-		return -1;
-	}
-	if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) < pmdr_size(&pm)) {
-		xlog_strerror(LOG_ERR, errno, "%s: writeall", __func__);
-		return -1;
-	}
-	return 0;
-}
-
-static int
-mdrd_beresp(uint64_t id, int fd, struct pmdr *msg)
-{
-	struct pmdr     pm;
-	struct pmdr_vec pv[4];
-	char            pbuf[16384];
-
-	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	pv[0].type = MDR_U64;
-	pv[0].v.u64 = id;
-	pv[1].type = MDR_I32;
-	pv[1].v.i32 = fd;
-	pv[2].type = MDR_U32;
-	pv[2].v.u32 = MDRD_BERESP_FNONE;
-	pv[3].type = MDR_M;
-	pv[3].v.pmdr = msg;
-	if (pmdr_pack(&pm, mdr_msg_mdrd_beresp, pv, PMDRVECLEN(pv)) ==
-	    MDR_FAIL) {
-		xlog_strerror(LOG_ERR, errno, "%s: pmdr_pack", __func__);
-		return -1;
-	}
-	if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) < pmdr_size(&pm)) {
-		xlog_strerror(LOG_ERR, errno, "%s: writeall", __func__);
-		return -1;
-	}
-	return 0;
-}
-
-static int
-mdrd_beresp_ok(uint64_t id, int fd)
-{
-	struct pmdr pm;
-	char        pbuf[32];
-
-	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	if (pmdr_pack(&pm, mdr_msg_ok, NULL, 0) == MDR_FAIL)
-		return -1;
-	return mdrd_beresp(id, fd, &pm);
-}
-
 int
 mdrd_backend()
 {
 	int                  r, fd;
 	struct pmdr          pm;
-	struct umdr          um, msg;
-	struct pmdr_vec      pv[5];
-	char                 ubuf[32768];
 	char                 pbuf[32768];
+	struct pmdr_vec      pv[2];
+	struct umdr          um, msg;
+	char                 ubuf[32768];
 	char                 msgbuf[16384];
 	uint64_t             id;
 	X509                *peer_cert = NULL;
@@ -336,7 +260,7 @@ mdrd_backend()
 	}
 
 	/* Coordinator might already be running, don't die if that's the case */
-	if (coordinator_start(xerrz(&e)) == -1 &&
+	if (agent_start(xerrz(&e)) == -1 &&
 	    !xerr_is(&e, XLOG_ERRNO, EWOULDBLOCK)) {
 		xlog(LOG_ERR, &e, __func__);
 		return 1;
@@ -355,6 +279,7 @@ mdrd_backend()
 
 	// TODO: we'll end up polling here between stdin and the agent's
 	// unix socket in case we get a control message of some sort.
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	while ((r = mdr_buf_from_fd(0, ubuf, sizeof(ubuf))) > 0) {
 		if (r == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
@@ -386,7 +311,7 @@ mdrd_backend()
 		if (!umdr_dcv_match(&um, MDR_DOMAIN_MDRD, MDR_MASK_D)) {
 			xlog(LOG_ERR, NULL, "mdr domain %u not accepted",
 			    umdr_domain(&um));
-			mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 			    MDR_ERR_NOTSUPP, "mdr domain not accepted");
 			continue;
 		}
@@ -402,7 +327,7 @@ mdrd_backend()
 					xlog_strerror(LOG_ERR, errno,
 					    "%s: mdrd_unpack_beclose",
 					    __func__);
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_BEFAIL,
 				    "mdrd_unpack_beclose failed");
 				continue;
@@ -426,7 +351,7 @@ mdrd_backend()
 			xlog(LOG_NOTICE, NULL,
 			    "%s: unexpected message DCV received: %x",
 			    __func__, umdr_dcv(&um));
-			mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 			    MDR_ERR_NOTSUPP, "unexpected message received");
 			continue;
 		}
@@ -441,7 +366,7 @@ mdrd_backend()
 			else
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: mdrd_unpack_bereq", __func__);
-			mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 			    MDR_ERR_BEFAIL, "mdrd_unpack_bereq failed");
 			continue;
 		}
@@ -451,7 +376,7 @@ mdrd_backend()
 			    "%s: expected a certalator message (domain=%x) "
 			    "but got %x", __func__, MDR_DOMAIN_CERTALATOR,
 			    umdr_domain(&msg));
-			mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 			    MDR_ERR_NOTSUPP, "unexpected message domain");
 			continue;
 		}
@@ -463,7 +388,7 @@ mdrd_backend()
 			if (csess == NULL) {
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: malloc", __func__);
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_BEFAIL, "session creation failed");
 				continue;
 			}
@@ -485,7 +410,7 @@ mdrd_backend()
 				    "allowed, but we got 0x%x", __func__,
 				    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN,
 				    umdr_dcv(&msg));
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_CERTFAIL, "no cert provided");
 				continue;
 			}
@@ -494,7 +419,7 @@ mdrd_backend()
 				xlog(LOG_ERR, NULL, "%s: we are not an "
 				    "authority and client has no certificate",
 				    __func__);
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_BEFAIL, "we are not an authority");
 				cl_session_free(csess);
 				continue;
@@ -521,7 +446,7 @@ mdrd_backend()
 					    "%s: we are not an authority and "
 					    "client had an invalid certificate",
 					    __func__);
-					mdrd_error_resp(id, fd,
+					mdrd_beresp_error(id, fd,
 					    MDRD_BERESP_FNONE,
 					    MDR_ERR_BEFAIL,
 					    "we are not an authority");
@@ -538,7 +463,7 @@ mdrd_backend()
 
 			xlog(LOG_NOTICE, NULL, "%s: cert_verify failed for "
 			    "client on fd %d", __func__, fd);
-			mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 			    MDR_ERR_CERTFAIL, "no certificate provided");
 			cl_session_free(csess);
 			continue;
@@ -547,36 +472,28 @@ mdrd_backend()
 		/*
 		 * Client is now verified; let's process their request.
 		 */
-		pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 		switch (umdr_dcv(&msg)) {
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN:
 			if (!agent_is_authority()) {
 				xlog(LOG_ERR, NULL, "%s: we are not an "
 				    "authority", __func__);
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_BEFAIL, "we are not an authority");
 				continue;
 			}
 			if (authority_bootstrap_dialin(&msg, &e) == MDR_FAIL) {
 				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_BEFAIL,
 				    (e.sp == XLOG_APP)
 				    ? e.msg
 				    : "we are not an authority");
 			}
-			if (mdrd_beresp_ok(id, fd) == MDR_FAIL) {
-				xlog_strerror(LOG_ERR, errno,
-				    "%s: mdrd_beresp_ok", __func__);
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL, "mdrd_beresp_ok");
-				continue;
-			}
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP:
 			if (!cert_has_role(csess->cert, ROLE_BOOTSTRAP,
 			    xerrz(&e))) {
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_DENIED,
 				    ROLE_BOOTSTRAP " role required");
 				continue;
@@ -585,38 +502,58 @@ mdrd_backend()
 			if (authority_bootstrap_setup_msg(&msg, &e) ==
 			    MDR_FAIL) {
 				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_BEFAIL,
 				    "authority_bootstrap_setup_msg failed");
 				continue;
 			}
 
-			if (mdrd_beresp_ok(id, fd) == MDR_FAIL) {
+			if (mdrd_beresp_ok(id, fd,
+			    MDRD_BERESP_FNONE) == MDR_FAIL) {
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: mdrd_beresp_ok", __func__);
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_BEFAIL, "mdrd_beresp_ok");
 				continue;
 			}
 			break;
+		case MDR_DCV_CERTALATOR_BOOTSTRAP_REQ:
+			if (!agent_is_authority()) {
+				xlog(LOG_ERR, NULL, "%s: we are not an "
+				    "authority", __func__);
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
+				    MDR_ERR_BEFAIL, "we are not an authority");
+				continue;
+			}
+			if (authority_bootstrap_req(&msg, &e) == MDR_FAIL) {
+				xlog(LOG_ERR, &e, "%s", __func__);
+				// TODO: there's a req_failed message for this
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
+				    MDR_ERR_BEFAIL,
+				    (e.sp == XLOG_APP)
+				    ? e.msg
+				    : "we are not an authority");
+			}
+			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
+		case MDR_DCV_CERTALATOR_BOOTSTRAP_SEND_CERT:
+			/*
+			 * For these messages we only need to forward to
+			 * the agent, if they come from an authority.
+			 */
 			if (!cert_has_role(csess->cert, ROLE_AUTHORITY,
 			    xerrz(&e))) {
-				mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 				    MDR_ERR_DENIED,
 				    ROLE_AUTHORITY " role required");
 				continue;
 			}
-			if (agent_bootstrap_dialback(&msg, &e)
-			    == MDR_FAIL) {
-				xlog(LOG_ERR, &e,
-				    "%s: agent_bootstrap_dialback",
-				    __func__);
-			}
-			/* Authority does not expect a response here. */
+			if (agent_send(umdr_buf(&msg), umdr_size(&msg),
+			    &e) == -1)
+				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		default:
-			mdrd_error_resp(id, fd, MDRD_BERESP_FNONE,
+			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
 			    MDR_ERR_NOTSUPP, "not supported");
 		}
 	}
@@ -625,152 +562,6 @@ mdrd_backend()
 fail:
 	X509_STORE_CTX_free(ctx);
 	return 1;
-}
-
-void
-bootstrap_setup_cli(int argc, char **argv)
-{
-	int               opt, r;
-	uint32_t          timeout = 600;
-	uint32_t          flags = 0;
-	uint32_t          cert_expiry = 7 * 86400;
-	char            **roles = NULL;
-	size_t            roles_sz = 0;
-	char             *cn = NULL;
-	char            **sans = NULL;
-	size_t            sans_sz = 0;
-	struct pmdr       pm;
-	struct pmdr_vec   pv[6];
-	char              pbuf[1024];
-	struct umdr       um;
-	struct umdr_vec   uv[1];
-	char              ubuf[1024];
-	struct xerr       e;
-
-	if (agent_init(&e) == -1) {
-		xlog(LOG_ERR, &e, __func__);
-		exit(1);
-	}
-
-	for (opt = 0; opt < argc; opt++) {
-		if (argv[opt][0] != '-')
-			break;
-
-		if (strcmp(argv[opt], "-help") == 0) {
-			bootstrap_setup_usage();
-			exit(0);
-		}
-
-		if (strcmp(argv[opt], "-timeout") == 0) {
-			opt++;
-			if (opt > argc) {
-				bootstrap_setup_usage();
-				exit(1);
-			}
-			timeout = atoi(argv[opt]);
-			continue;
-		}
-
-		if (strcmp(argv[opt], "-cert_expiry") == 0) {
-			opt++;
-			if (opt > argc) {
-				bootstrap_setup_usage();
-				exit(1);
-			}
-			cert_expiry = atoi(argv[opt]);
-			continue;
-		}
-
-		if (strcmp(argv[opt], "-san") == 0) {
-			opt++;
-			if (opt > argc) {
-				bootstrap_setup_usage();
-				exit(1);
-			}
-			sans = strlist_add(sans, argv[opt]);
-			if (sans == NULL)
-				err(1, "strlist_add");
-			sans_sz++;
-			continue;
-		}
-
-		if (strcmp(argv[opt], "-cn") == 0) {
-			opt++;
-			if (opt > argc) {
-				bootstrap_setup_usage();
-				exit(1);
-			}
-			cn = argv[opt];
-			flags |= CERTDB_BOOTSTRAP_FLAG_SETCN;
-			continue;
-		}
-
-		if (strcmp(argv[opt], "-role") == 0) {
-			opt++;
-			if (opt > argc) {
-				bootstrap_setup_usage();
-				exit(1);
-			}
-			roles = strlist_add(roles, argv[opt]);
-			if (roles == NULL)
-				err(1, "strlist_add");
-			roles_sz++;
-			continue;
-		}
-	}
-
-	if (cn == NULL || *cn == '\0') {
-		usage();
-		exit(1);
-	}
-
-	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	pv[0].type = MDR_S;
-	pv[0].v.s = cn;
-	pv[1].type = MDR_AS;
-	pv[1].v.as.items = (const char **)sans;
-	pv[1].v.as.length = sans_sz;
-	pv[2].type = MDR_AS;
-	pv[2].v.as.items = (const char **)roles;
-	pv[2].v.as.length = roles_sz;
-	pv[3].type = MDR_U32;
-	pv[3].v.u32 = cert_expiry;
-	pv[4].type = MDR_U32;
-	pv[4].v.u32 = timeout;
-	pv[5].type = MDR_U32;
-	pv[5].v.u32 = flags;
-	if (pmdr_pack(&pm, msg_bootstrap_setup, pv, PMDRVECLEN(pv)) == MDR_FAIL)
-		err(1, "pmdr_pack");
-
-	if (agent_send(&pm, xerrz(&e)) == -1) {
-		xerr_print(&e);
-		exit(1);
-	}
-
-	if ((r = agent_recv(ubuf, sizeof(ubuf), xerrz(&e))) == -1) {
-		xerr_print(&e);
-		exit(1);
-	}
-
-	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
-		xerr_print(&e);
-		exit(1);
-	}
-
-	switch (umdr_dcv(&um)) {
-	case MDR_DCV_MDR_OK:
-		break;
-	case MDR_DCV_MDR_ERROR:
-		if (umdr_unpack(&um, mdr_msg_error, uv,
-		    UMDRVECLEN(uv)) == MDR_FAIL)
-			err(1, "umdr_unpack");
-		errx(1, "bootstrap setup failed: %s", uv[0].v.s.bytes);
-	default:
-		errx(1, "bad response from authority");
-	}
-
-	free(sans);
-	free(roles);
 }
 
 void
@@ -912,7 +703,7 @@ main(int argc, char **argv)
 		}
 		status = mdrd_backend();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
-		bootstrap_setup_cli(argc - opt, argv + opt);
+		agent_bootstrap_setup_cli(argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
 		/*
 		 * Do a standalone run to get our initial key/cert,

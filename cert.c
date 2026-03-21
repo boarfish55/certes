@@ -567,10 +567,32 @@ cert_selfsign(EVP_PKEY *pkey, struct xerr *e)
 	if ((name = X509_NAME_new()) == NULL) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_NAME_new");
 		goto fail;
-	} else if (!X509_NAME_add_entry_by_txt(name, "CN",
+	}
+
+	if (!X509_NAME_add_entry_by_txt(name, "CN",
 	    MBSTRING_ASC, (unsigned char *)hostname, -1, -1, 0)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "X509_NAME_add_entry_by_txt: CN=%s", hostname);
+		X509_NAME_free(name);
+		goto fail;
+	}
+
+	if (!X509_NAME_add_entry_by_txt(name, "O",
+	    MBSTRING_ASC, (unsigned char *)certalator_conf.cert_org,
+	    -1, -1, 0)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "X509_NAME_add_entry_by_txt: O=%s",
+		    certalator_conf.cert_org);
+		X509_NAME_free(name);
+		goto fail;
+	}
+
+	if (!X509_NAME_add_entry_by_txt(name, "emailAddress",
+	    MBSTRING_ASC, (unsigned char *)certalator_conf.cert_email,
+	    -1, -1, 0)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "X509_NAME_add_entry_by_txt: emailAddress=%s",
+		    certalator_conf.cert_email);
 		X509_NAME_free(name);
 		goto fail;
 	}

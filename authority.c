@@ -12,15 +12,6 @@
 
 extern struct certalator_flatconf certalator_conf;
 
-// TODO: for boostrapping from the certalator server; this will generate a timed
-// challenge and can tie roles to the challenge. Boostrapping can also invoke a
-// shell command to perform a action to bring up the server (i.e. DHCP
-// reservation & reboot, cloud calls, etc.) The server must remember the
-// challenge until it expires.  Active challenges can be kept in an sqlite DB,
-// alongside available serial ranges and next allocatable serial.
-// When a client sends a successful response to this challenge, along with an
-// X509 REQ, the server can sign it if the commonName and subjectAltNames
-// match.
 /*
  * Create a bootstrap entry with certificate parameters and a challenge key
  * to be used when an agent connects with a DIALIN call.
@@ -126,7 +117,7 @@ fail:
  * be and send it back to us.
  */
 int
-authority_challenge(struct bootstrap_entry *be, const char *req_id,
+authority_challenge(struct bootstrap_entry *be, const char *op_id,
     const uint8_t *challenge, struct xerr *e)
 {
 	char             chal_host[256];
@@ -198,7 +189,7 @@ authority_challenge(struct bootstrap_entry *be, const char *req_id,
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	pv[0].type = MDR_S;
-	pv[0].v.s = req_id;
+	pv[0].v.s = op_id;
 	pv[1].type = MDR_B;
 	pv[1].v.b.bytes = challenge;
 	pv[1].v.b.sz = sizeof(challenge);
@@ -255,6 +246,18 @@ authority_bootstrap_dialin(struct umdr *msg, struct xerr *e)
 	arc4random_buf(challenge, sizeof(challenge));
 	if (authority_challenge(&be, uv[0].v.s.bytes, challenge, e) == -1)
 		return XERR_PREPENDFN(e);
+
+	return 0;
+}
+
+int
+authority_bootstrap_req(struct umdr *msg, struct xerr *e)
+{
+	struct umdr_vec uv[3];
+
+	if (umdr_unpack(msg, msg_bootstrap_req, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+                return XERRF(e, XLOG_ERRNO, errno,
+                    "umdr_unpack/msg_bootstrap_req");
 
 	return 0;
 }

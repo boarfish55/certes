@@ -12,5 +12,6 @@ int  authority_bootstrap_setup_cli(int, char **, struct xerr *);
 int  authority_challenge(struct bootstrap_entry *, const char *,
          const uint8_t *, struct xerr *);
 int  authority_bootstrap_dialin(struct umdr *, struct xerr *);
+int  authority_bootstrap_req(struct umdr *, struct xerr *);
 
 #endif

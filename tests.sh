@@ -28,8 +28,8 @@ ca_file = "$basedir/ca/root.pem"
 crl_path = "$basedir/authority1/crl_store"
 cert_file = "$basedir/authority1/cert.pem"
 key_file = "$basedir/authority1/key.pem"
-lock_file = "$basedir/authority1/coordinator.lock"
-coordinator_socket_path = "$basedir/authority1/coordinator.sock"
+lock_file = "$basedir/authority1/agent.lock"
+agent_socket_path = "$basedir/authority1/agent.sock"
 serial_file = "$basedir/authority1/serial"
 cert_org = "Example"
 cert_email = "cert@example.com"
@@ -82,8 +82,8 @@ backend_unveils = [
 	"r=$basedir/ca/root.crl"
 	"r=$basedir/authority1/key.pem"
 	"r=$basedir/authority1/cert.pem"
-	"r=$basedir/authority1/coordinator.lock"
-	"rw=$basedir/authority1/coordinator.sock"
+	"r=$basedir/authority1/agent.lock"
+	"rw=$basedir/authority1/agent.sock"
 	"rw=$basedir/authority1/serial"
 	"rw=$basedir/authority1/certdb.sqlite"
 ]
@@ -124,8 +124,8 @@ crl_path = "$basedir/client3/crl_store"
 cert_file = "$basedir/client3/cert.pem"
 key_file = "$basedir/client3/key.pem"
 key_bits = 4096
-lock_file = "$basedir/client3/coordinator.lock"
-coordinator_socket_path = "$basedir/client3/coordinator.sock"
+lock_file = "$basedir/client3/agent.lock"
+agent_socket_path = "$basedir/client3/agent.sock"
 EOF
 
 ./certalator -config $basedir/client3/certalator.conf init
@@ -173,8 +173,8 @@ backend_unveils = [
 	"r=$basedir/client3"
 	"rw=$basedir/client3/counters.sock"
 	"rw=$basedir/client3/mdrd.pid"
-	"rw=$basedir/client3/coordinator.lock"
-	"rw=$basedir/client3/coordinator.sock"
+	"rw=$basedir/client3/agent.lock"
+	"rw=$basedir/client3/agent.sock"
 ]
 EOF
 

@@ -14,8 +14,10 @@
 
 #define CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64 64
 #define CERTALATOR_BOOTSTRAP_KEY_LENGTH     48
-#define CERTALATOR_CHALLENGE_LENGTH     64
-#define CERTALATOR_REQ_ID_LENGTH        64 /* getpid() + two 64-bit uints to string, so ~50 */
+#define CERTALATOR_MAX_MSG_SIZE             16384
+
+#define CERTALATOR_CHALLENGE_LENGTH         64
+#define CERTALATOR_AUTHOP_ID_LENGTH         64 /* 3x 64-bit uints to string, so ~50 */
 
 
 #define CERTALATOR_MAX_SUBJET_LENGTH 1024
@@ -49,7 +51,7 @@ struct certalator_flatconf {
 	char     key_file[PATH_MAX];
 	char     cert_file[PATH_MAX];
 	char     lock_file[PATH_MAX];
-	char     coordinator_sock_path[PATH_MAX];
+	char     agent_sock_path[PATH_MAX];
 	uint64_t key_bits;
 	char     serial_file[PATH_MAX];
 	char     cert_org[256];

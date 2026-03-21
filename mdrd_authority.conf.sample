@@ -72,8 +72,8 @@ backend_unveils = [
 	"r=/home/plalonde/prog/certalator/testdata/ca/root.crl"
 	"r=/home/plalonde/prog/certalator/testdata/authority1/key.pem"
 	"r=/home/plalonde/prog/certalator/testdata/authority1/cert.pem"
-	"r=/home/plalonde/prog/certalator/testdata/authority1/coordinator.lock"
-	"rw=/home/plalonde/prog/certalator/testdata/authority1/coordinator.sock"
+	"r=/home/plalonde/prog/certalator/testdata/authority1/agent.lock"
+	"rw=/home/plalonde/prog/certalator/testdata/authority1/agent.sock"
 	"rw=/home/plalonde/prog/certalator/testdata/authority1/serial"
 	"rw=/home/plalonde/prog/certalator/testdata/authority1/certdb.sqlite"
 ]

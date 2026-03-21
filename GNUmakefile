@@ -9,7 +9,7 @@ YACC := byacc
 
 DEPFLAGS = -MMD -MP -MF $(DEPDIR)/$@.d
 
-SRCS = certalator.c coordinator.c flatconf.c xlog.c util.c mdr.c mdr_mdrd.c \
+SRCS = certalator.c flatconf.c xlog.c util.c mdr.c mdr_mdrd.c \
        certdb.c mdr_certalator.c authority.c cert.c agent.c
 OBJS = $(SRCS:.c=.o)
 
