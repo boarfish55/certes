@@ -123,7 +123,6 @@ ca_file = "$basedir/client3/root.pem"
 crl_path = "$basedir/client3/crl_store"
 cert_file = "$basedir/client3/cert.pem"
 key_file = "$basedir/client3/key.pem"
-key_bits = 4096
 lock_file = "$basedir/client3/agent.lock"
 agent_socket_path = "$basedir/client3/agent.sock"
 EOF

@@ -1950,6 +1950,12 @@ umdr_init(struct umdr *um, const void *buf, size_t buf_sz,
 	return mdr_tell(m);
 }
 
+/*
+ * Only unpacks the mdr header without looking past standard fields (not
+ * extra features). Useful when we only wish to initialize the buffer
+ * to receive data, such as when using umdr_copy (the destination must
+ * be initialized with umdr_init0).
+ */
 ptrdiff_t
 umdr_init0(struct umdr *um, const void *buf, size_t buf_sz,
     uint32_t accept_features)

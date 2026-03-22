@@ -52,7 +52,7 @@ struct certalator_flatconf {
 	char     cert_file[PATH_MAX];
 	char     lock_file[PATH_MAX];
 	char     agent_sock_path[PATH_MAX];
-	uint64_t key_bits;
+	uint64_t max_cert_size;
 	char     serial_file[PATH_MAX];
 	char     cert_org[256];
 	char     cert_email[512];

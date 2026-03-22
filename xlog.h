@@ -18,6 +18,7 @@ enum {
 	XLOG_SUCCESS = 0,
 	XLOG_FAIL,              /* Non-specific failure */
 	XLOG_EOF,               /* EOF on a pipe/socket */
+	XLOG_ACCES,             /* Access/permission denied */
 	XLOG_INVAL,             /* An invalid value was obtained */
 	XLOG_NOENT,             /* Entity not found */
 	XLOG_BUSY,              /* DB is busy with lock */

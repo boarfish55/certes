@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <unistd.h>
+#include "agent.h"
 #include "certalator.h"
 #include "cert.h"
 #include "util.h"
@@ -149,11 +150,16 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 }
 
 int
-cert_verify(X509_STORE_CTX *ctx, X509 *crt, X509_STORE *store, int challenge)
+cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
 {
-	X509_NAME *subject;
-	char       common_name[256];
-	int        r;
+	X509_NAME      *subject;
+	char            common_name[256];
+	int             r;
+
+	if (crt == NULL) {
+		xlog(LOG_ERR, NULL, "%s: no certificate", __func__);
+		return -1;
+	}
 
 	subject = X509_get_subject_name(crt);
 	if (subject == NULL) {
@@ -175,7 +181,7 @@ cert_verify(X509_STORE_CTX *ctx, X509 *crt, X509_STORE *store, int challenge)
 	if (challenge) {
 	}
 
-	if (!X509_STORE_CTX_init(ctx, store, crt, NULL)) {
+	if (!X509_STORE_CTX_init(ctx, agent_cert_store(), crt, NULL)) {
 		X509_STORE_CTX_cleanup(ctx);
 		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
 		    ERR_error_string(ERR_get_error(), NULL));

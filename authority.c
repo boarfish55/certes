@@ -68,7 +68,8 @@ authority_make_bootstrap(const char *cn, const char **sans,
 }
 
 int
-authority_bootstrap_setup(uint64_t id, int fd, struct umdr *m, struct xerr *e)
+authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
+    struct xerr *e)
 {
 	const char       *subject;
 	const char      **roles = NULL;
@@ -79,10 +80,17 @@ authority_bootstrap_setup(uint64_t id, int fd, struct umdr *m, struct xerr *e)
 	struct umdr_vec   uv[6];
 
 	if (!agent_is_authority()) {
-		mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE, MDR_ERR_NOTSUPP,
+		mdrd_beresp_error(sess, MDRD_BERESP_FNONE, MDR_ERR_NOTSUPP,
 		    "we are not an authority");
 		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
 		    "we are not an authority");
+	}
+
+	if (!cert_has_role(sess->cert, ROLE_BOOTSTRAP, xerrz(e))) {
+		mdrd_beresp_error(sess, MDRD_BERESP_FNONE,
+		    MDR_ERR_DENIED, ROLE_BOOTSTRAP " role required");
+		return XERRF(e, XLOG_APP, XLOG_ACCES,
+		    ROLE_BOOTSTRAP " role required");
 	}
 
 	if (umdr_unpack(m, msg_bootstrap_setup, uv,
@@ -125,7 +133,7 @@ authority_bootstrap_setup(uint64_t id, int fd, struct umdr *m, struct xerr *e)
 	free(sans);
 	free(roles);
 
-	if (mdrd_beresp_ok(id, fd, MDRD_BERESP_FNONE) == MDR_FAIL) {
+	if (mdrd_beresp_ok(sess, MDRD_BERESP_FNONE) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "mdrd_beresp_ok");
 		return -1;
 	}
@@ -134,7 +142,7 @@ authority_bootstrap_setup(uint64_t id, int fd, struct umdr *m, struct xerr *e)
 fail:
 	free(sans);
 	free(roles);
-	mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE, MDR_ERR_BEFAIL,
+	mdrd_beresp_error(sess, MDRD_BERESP_FNONE, MDR_ERR_BEFAIL,
 	    "backend failure");
 	return -1;
 }
@@ -241,7 +249,7 @@ authority_challenge(struct bootstrap_entry *be, const char *op_id,
  * a certificate.
  */
 int
-authority_bootstrap_dialin(uint64_t id, int fd, struct umdr *msg,
+authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
     struct xerr *e)
 {
 	struct bootstrap_entry be;
@@ -285,12 +293,13 @@ authority_bootstrap_dialin(uint64_t id, int fd, struct umdr *msg,
 }
 
 int
-authority_bootstrap_req(uint64_t id, int fd, struct umdr *msg, struct xerr *e)
+authority_bootstrap_req(struct mdrd_besession *sess, struct umdr *msg,
+    struct xerr *e)
 {
 	struct umdr_vec uv[3];
 
 	if (!agent_is_authority()) {
-		mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE, MDR_ERR_NOTSUPP,
+		mdrd_beresp_error(sess, MDRD_BERESP_FNONE, MDR_ERR_NOTSUPP,
 		    "we are not an authority");
 		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
 		    "we are not an authority");

@@ -142,10 +142,10 @@ struct flatconf certalator_config_vars[] = {
 		sizeof(certalator_conf.agent_sock_path)
 	},
 	{
-		"key_bits",
+		"max_cert_size",
 		FLATCONF_ULONG,
-		&certalator_conf.key_bits,
-		sizeof(certalator_conf.key_bits)
+		&certalator_conf.max_cert_size,
+		sizeof(certalator_conf.max_cert_size)
 	},
 	{
 		"serial_file",
@@ -200,54 +200,17 @@ usage()
 	    "authority\n");
 }
 
-struct cl_session
-{
-	uint64_t                 id;
-	int                      fd;
-	X509                    *cert;
-	SPLAY_ENTRY(cl_session)  entries;
-};
-
-static int
-cl_session_cmp(struct cl_session *c1, struct cl_session *c2)
-{
-	return (c1->id < c2->id) ? -1 : c1->id > c2->id;
-}
-
-SPLAY_HEAD(cl_session_tree, cl_session) cl_sessions = SPLAY_INITIALIZER(&cl_sessions);
-SPLAY_PROTOTYPE(cl_session_tree, cl_session, entries, cl_session_cmp);
-SPLAY_GENERATE(cl_session_tree, cl_session, entries, cl_session_cmp);
-
-void
-cl_session_free(struct cl_session *cs)
-{
-	if (cs == NULL)
-		return;
-
-	SPLAY_REMOVE(cl_session_tree, &cl_sessions, cs);
-	if (cs->cert != NULL)
-		X509_free(cs->cert);
-	free(cs);
-}
-
 int
 mdrd_backend()
 {
-	int                  r, fd;
-	struct pmdr          pm;
-	char                 pbuf[32768];
-	struct pmdr_vec      pv[2];
-	struct umdr          um, msg;
-	char                 ubuf[32768];
-	char                 msgbuf[16384];
-	uint64_t             id;
-	X509                *peer_cert = NULL;
-	X509_STORE_CTX      *ctx;
-	struct sigaction     act;
-	struct xerr          e;
-	struct sockaddr_in6  peer;
-	socklen_t            slen = sizeof(peer);
-	struct cl_session   *csess = NULL, needle;
+	struct pmdr             pm;
+	char                    pbuf[32768];
+	struct umdr             msg;
+	char                    msgbuf[16384];
+	X509_STORE_CTX         *ctx;
+	struct sigaction        act;
+	struct xerr             e;
+	struct mdrd_besession  *sess;
 
 	xlog_init(CERTALATOR_PROGNAME, NULL, NULL, 1);
 
@@ -279,194 +242,30 @@ mdrd_backend()
 	}
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	while ((r = mdrd_recv(ubuf, sizeof(ubuf))) > 0) {
-		if (r == MDR_FAIL) {
-			xlog_strerror(LOG_ERR, errno,
-			    "%s: mdrd_recv", __func__);
-			goto fail;
-		}
-
-		if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
-			xlog_strerror(LOG_ERR, errno,
-			    "%s: umdr_init", __func__);
-			// TODO: replace
-			pv[0].type = MDR_U32;
-			pv[0].v.u32 = MDR_ERR_BEFAIL;
-			pv[1].type = MDR_S;
-			pv[1].v.s = "failed to init umdr; see backend logs";
-			if (pmdr_pack(&pm, mdr_msg_error, pv, 2) == MDR_FAIL) {
-				xlog_strerror(LOG_ERR, errno, "%s: pmdr_pack",
-				    __func__);
-				goto fail;
-			}
-			if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) <
-			    pmdr_size(&pm)) {
-				xlog_strerror(LOG_ERR, errno,
-				    "%s: writeall", __func__);
-				goto fail;
-			}
-			continue;
-		}
-
-		if (!umdr_dcv_match(&um, MDR_DOMAIN_MDRD, MDR_MASK_D)) {
-			xlog(LOG_ERR, NULL, "mdr domain %u not accepted",
-			    umdr_domain(&um));
-			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-			    MDR_ERR_NOTSUPP, "mdr domain not accepted");
-			continue;
-		}
-
-		if (umdr_dcv(&um) == MDR_DCV_MDRD_BECLOSE) {
-			if (mdrd_unpack_beclose(&um, &id) == MDR_FAIL) {
-				if (errno == EAGAIN)
-					xlog(LOG_ERR, NULL,
-					    "%s: mdrd_unpack_beclose: "
-					    "missing bytes in payload",
-					    __func__);
-				else
-					xlog_strerror(LOG_ERR, errno,
-					    "%s: mdrd_unpack_beclose",
-					    __func__);
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL,
-				    "mdrd_unpack_beclose failed");
-				continue;
-			}
-			needle.id = id;
-			csess = SPLAY_FIND(cl_session_tree, &cl_sessions,
-			    &needle);
-			if (csess == NULL)
-				continue;
-
-			xlog(LOG_NOTICE, NULL,
-			    "cleaning up client session for id %lu", id);
-			cl_session_free(csess);
-			/*
-			 * No response is expected on BECLOSE.
-			 */
-			continue;
-		}
-
-		if (umdr_dcv(&um) != MDR_DCV_MDRD_BEREQ) {
-			xlog(LOG_NOTICE, NULL,
-			    "%s: unexpected message DCV received: %x",
-			    __func__, umdr_dcv(&um));
-			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-			    MDR_ERR_NOTSUPP, "unexpected message received");
-			continue;
-		}
-
-		umdr_init0(&msg, msgbuf, sizeof(msgbuf), MDR_FNONE);
-		if (mdrd_unpack_bereq(&um, &id, &fd, (struct sockaddr *)&peer,
-		    &slen, &msg, &peer_cert) == MDR_FAIL) {
-			if (errno == EAGAIN)
-				xlog(LOG_ERR, NULL,
-				    "%s: mdrd_unpack_bereq: missing bytes "
-				    "in payload", __func__);
-			else
-				xlog_strerror(LOG_ERR, errno,
-				    "%s: mdrd_unpack_bereq", __func__);
-			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-			    MDR_ERR_BEFAIL, "mdrd_unpack_bereq failed");
-			continue;
-		}
-
-		if (!umdr_dcv_match(&msg, MDR_DOMAIN_CERTALATOR, MDR_MASK_D)) {
-			xlog(LOG_NOTICE, NULL,
-			    "%s: expected a certalator message (domain=%x) "
-			    "but got %x", __func__, MDR_DOMAIN_CERTALATOR,
-			    umdr_domain(&msg));
-			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-			    MDR_ERR_NOTSUPP, "unexpected message domain");
-			continue;
-		}
-
-		needle.id = id;
-		csess = SPLAY_FIND(cl_session_tree, &cl_sessions, &needle);
-		if (csess == NULL) {
-			csess = malloc(sizeof(struct cl_session));
-			if (csess == NULL) {
-				xlog_strerror(LOG_ERR, errno,
-				    "%s: malloc", __func__);
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL, "session creation failed");
-				continue;
-			}
-			csess->id = id;
-			csess->fd = fd;
-			csess->cert = peer_cert;
-			SPLAY_INSERT(cl_session_tree, &cl_sessions, csess);
-		}
-
-		/*
-		 * If the client has no cert, then the only option is
-		 * to issue a new cert, if we are an authority.
-		 */
-		if (csess->cert == NULL) {
-			if (umdr_dcv(&msg) !=
-			    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN) {
-				xlog(LOG_NOTICE, NULL,
-				    "%s: client did not provide a cert; only "
-				    "a bootstrap setup message (id=0x%x) is "
-				    "allowed, but we got 0x%x", __func__,
-				    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN,
-				    umdr_dcv(&msg));
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_CERTFAIL, "no cert provided");
-				continue;
-			}
-
-			if (!agent_is_authority()) {
-				xlog(LOG_ERR, NULL, "%s: we are not an "
-				    "authority and client has no certificate",
-				    __func__);
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL, "we are not an authority");
-				cl_session_free(csess);
-				continue;
-			}
-
-			if (authority_bootstrap_dialin(id, fd, &msg, &e) == MDR_FAIL)
-				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
-				// TODO: return error to client
-			continue;
-		}
-
+	while (mdrd_recv(&msg, msgbuf, sizeof(msgbuf),
+	    certalator_conf.max_cert_size, MDR_DOMAIN_CERTALATOR, MDR_FNONE,
+	    &sess) > 0) {
 		/*
 		 * Verify the client's cert
 		 */
-		if (cert_verify(ctx, csess->cert, agent_cert_store(), 0) != 0) {
+		if (cert_verify(ctx, sess->cert, 0) != 0) {
 			/*
 			 * We can still accept a bootstrap if the cert is not
 			 * valid.
 			 */
 			if (umdr_dcv(&msg) ==
 			    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN) {
-				if (!agent_is_authority()) {
-					xlog(LOG_ERR, NULL,
-					    "%s: we are not an authority and "
-					    "client had an invalid certificate",
-					    __func__);
-					mdrd_beresp_error(id, fd,
-					    MDRD_BERESP_FNONE,
-					    MDR_ERR_BEFAIL,
-					    "we are not an authority");
-					continue;
-				}
-				if (authority_bootstrap_dialin(id, fd, &msg, &e)
-				    == MDR_FAIL) {
-					// TODO: return error to client
+				if (authority_bootstrap_dialin(sess, &msg, &e)
+				    == MDR_FAIL)
 					xlog(LOG_ERR, &e, "%s", __func__);
-				}
-				// TODO: successful response?
 				continue;
 			}
 
-			xlog(LOG_NOTICE, NULL, "%s: cert_verify failed for "
-			    "client on fd %d", __func__, fd);
-			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-			    MDR_ERR_CERTFAIL, "no certificate provided");
-			cl_session_free(csess);
+			xlog(LOG_NOTICE, NULL, "%s: no certificate provided, "
+			    "or verification failed", __func__);
+			mdrd_beresp_error(sess, MDRD_BERESP_FCLOSE,
+			    MDR_ERR_CERTFAIL, "no certificate provided, "
+			    "or verification failed");
 			continue;
 		}
 
@@ -475,23 +274,15 @@ mdrd_backend()
 		 */
 		switch (umdr_dcv(&msg)) {
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN:
-			if (authority_bootstrap_dialin(id, fd, &msg, &e) == MDR_FAIL)
+			if (authority_bootstrap_dialin(sess, &msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
-			/* We don't send a response on dialin */
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP:
-			if (!cert_has_role(csess->cert, ROLE_BOOTSTRAP,
-			    xerrz(&e))) {
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_DENIED,
-				    ROLE_BOOTSTRAP " role required");
-				continue;
-			}
-			if (authority_bootstrap_setup(id, fd, &msg, &e) == MDR_FAIL)
+			if (authority_bootstrap_setup(sess, &msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_REQ:
-			if (authority_bootstrap_req(id, fd, &msg, &e) == MDR_FAIL)
+			if (authority_bootstrap_req(sess, &msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
@@ -500,9 +291,9 @@ mdrd_backend()
 			 * For these messages we only need to forward to
 			 * the agent, if they come from an authority.
 			 */
-			if (!cert_has_role(csess->cert, ROLE_AUTHORITY,
+			if (!cert_has_role(sess->cert, ROLE_AUTHORITY,
 			    xerrz(&e))) {
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
+				mdrd_beresp_error(sess, MDRD_BERESP_FNONE,
 				    MDR_ERR_DENIED,
 				    ROLE_AUTHORITY " role required");
 				continue;
@@ -512,15 +303,12 @@ mdrd_backend()
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		default:
-			mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
+			mdrd_beresp_error(sess, MDRD_BERESP_FNONE,
 			    MDR_ERR_NOTSUPP, "not supported");
 		}
 	}
 	X509_STORE_CTX_free(ctx);
 	return 0;
-fail:
-	X509_STORE_CTX_free(ctx);
-	return 1;
 }
 
 void
@@ -620,7 +408,7 @@ main(int argc, char **argv)
 			ERR_print_errors_fp(stderr);
 			exit(1);
 		}
-		status = cert_verify(ctx, crt, agent_cert_store(), 0);
+		status = cert_verify(ctx, crt, 0);
 		X509_STORE_CTX_free(ctx);
 	} else if (strcmp(command, "sign") == 0) {
 		if (opt >= argc)

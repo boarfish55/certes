@@ -1,8 +1,31 @@
+#include <sys/tree.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include "mdr.h"
 #include "mdrd.h"
+
+static int
+session_cmp(struct mdrd_besession *s1, struct mdrd_besession *s2)
+{
+	return (s1->id < s2->id) ? -1 : s1->id > s2->id;
+}
+
+SPLAY_HEAD(session_tree, mdrd_besession) sessions = SPLAY_INITIALIZER(&sessions);
+SPLAY_PROTOTYPE(session_tree, mdrd_besession, entries, session_cmp);
+SPLAY_GENERATE(session_tree, mdrd_besession, entries, session_cmp);
+
+static void
+session_free(struct mdrd_besession *s)
+{
+	if (s == NULL)
+		return;
+
+	SPLAY_REMOVE(session_tree, &sessions, s);
+	if (s->cert != NULL)
+		X509_free(s->cert);
+	free(s);
+}
 
 /*
  * We don't call the umdr/pmdr_init() functions here,
@@ -106,8 +129,8 @@ mdrd_unpack_besesserr(struct umdr *m, uint64_t *id)
 }
 
 int
-mdrd_beresp_error(uint64_t id, int fd, uint32_t beresp_flags, uint32_t errcode,
-    const char *errdesc)
+mdrd_beresp_error(struct mdrd_besession *sess, uint32_t beresp_flags,
+    uint32_t errcode, const char *errdesc)
 {
 	struct pmdr     pm;
 	char            pbuf[mdr_hdr_size(MDR_FNONE) + 4 + 8 + strlen(errdesc)];
@@ -121,11 +144,11 @@ mdrd_beresp_error(uint64_t id, int fd, uint32_t beresp_flags, uint32_t errcode,
 	if (pmdr_pack(&pm, mdr_msg_error, pv, 2) == MDR_FAIL)
 		return -1;
 
-	return mdrd_beresp(id, fd, beresp_flags, &pm);
+	return mdrd_beresp(sess, beresp_flags, &pm);
 }
 
 int
-mdrd_beresp_ok(uint64_t id, int fd, uint32_t beresp_flags)
+mdrd_beresp_ok(struct mdrd_besession *sess, uint32_t beresp_flags)
 {
 	struct pmdr pm;
 	char        pbuf[mdr_hdr_size(MDR_FNONE)];
@@ -133,11 +156,12 @@ mdrd_beresp_ok(uint64_t id, int fd, uint32_t beresp_flags)
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	if (pmdr_pack(&pm, mdr_msg_ok, NULL, 0) == MDR_FAIL)
 		return -1;
-	return mdrd_beresp(id, fd, beresp_flags, &pm);
+	return mdrd_beresp(sess, beresp_flags, &pm);
 }
 
 int
-mdrd_beresp(uint64_t id, int fd, uint32_t beresp_flags, const struct pmdr *msg)
+mdrd_beresp(struct mdrd_besession *sess, uint32_t beresp_flags,
+    const struct pmdr *msg)
 {
 	struct pmdr     pm;
 	struct pmdr_vec pv[4];
@@ -145,9 +169,9 @@ mdrd_beresp(uint64_t id, int fd, uint32_t beresp_flags, const struct pmdr *msg)
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	pv[0].type = MDR_U64;
-	pv[0].v.u64 = id;
+	pv[0].v.u64 = sess->id;
 	pv[1].type = MDR_I32;
-	pv[1].v.i32 = fd;
+	pv[1].v.i32 = sess->fd;
 	pv[2].type = MDR_U32;
 	pv[2].v.u32 = beresp_flags;
 	pv[3].type = MDR_M;
@@ -156,11 +180,145 @@ mdrd_beresp(uint64_t id, int fd, uint32_t beresp_flags, const struct pmdr *msg)
 		return -1;
 	if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) < pmdr_size(&pm))
 		return -1;
+	if (beresp_flags & MDRD_BERESP_FCLOSE)
+		session_free(sess);
 	return 0;
 }
 
 ptrdiff_t
-mdrd_recv(void *buf, size_t sz)
+mdrd_recv(struct umdr *msg, void *buf, size_t sz, size_t cert_sz,
+    uint64_t domain, uint32_t features, struct mdrd_besession **session)
 {
-	return mdr_buf_from_fd(0, buf, sz);
+	int                    r;
+	ptrdiff_t              c;
+	struct pmdr            pm;
+	char                   pbuf[64];
+	struct pmdr_vec        pv[2];
+	char                   errmsg[64];
+	uint64_t               id;
+	int                    fd;
+	struct mdrd_besession *sess = NULL, needle, tmpsess;
+	struct umdr            um;
+	char                   ubuf[14 + sizeof(struct sockaddr_in6)
+	    + sz + cert_sz];
+	struct sockaddr_in6    peer;
+	socklen_t              slen = sizeof(peer);
+	X509                  *peer_cert;
+
+again:
+	if ((c = mdr_buf_from_fd(0, ubuf, sizeof(ubuf))) == MDR_FAIL)
+		return MDR_FAIL;
+
+	if (umdr_init(&um, ubuf, c, MDR_FNONE) == MDR_FAIL) {
+		snprintf(errmsg, sizeof(errmsg), "failed on umdr_init (%d)",
+		    errno);
+		pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+		pv[0].type = MDR_U32;
+		pv[0].v.u32 = MDR_ERR_BEFAIL;
+		pv[1].type = MDR_S;
+		pv[1].v.s = errmsg;
+		if (pmdr_pack(&pm, mdr_msg_error, pv, 2) == MDR_FAIL)
+			return MDR_FAIL;
+		if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) < pmdr_size(&pm))
+			return MDR_FAIL;
+	}
+
+	if (!umdr_dcv_match(&um, MDR_DOMAIN_MDRD, MDR_MASK_D)) {
+		pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+		pv[0].type = MDR_U32;
+		pv[0].v.u32 = MDR_ERR_NOTSUPP;
+		pv[1].type = MDR_S;
+		pv[1].v.s = "message is not MDR_DOMAIN_MDRD";
+		if (pmdr_pack(&pm, mdr_msg_error, pv, 2) == MDR_FAIL)
+			return MDR_FAIL;
+		if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) < pmdr_size(&pm))
+			return MDR_FAIL;
+		goto again;
+	}
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_MDRD_BECLOSE:
+		r = mdrd_unpack_beclose(&um, &id);
+		break;
+	case MDR_DCV_MDRD_BESESSERR:
+		r = mdrd_unpack_besesserr(&um, &id);
+		break;
+	case MDR_DCV_MDRD_BEREQ:
+		umdr_init0(msg, buf, sz, features);
+		r = mdrd_unpack_bereq(&um, &id, &fd,
+		    (struct sockaddr *)&peer, &slen, msg, &peer_cert);
+		break;
+	default:
+		pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+		pv[0].type = MDR_U32;
+		pv[0].v.u32 = MDR_ERR_NOTSUPP;
+		pv[1].type = MDR_S;
+		pv[1].v.s = "expected MDR_DCV_MDRD_BEREQ";
+		if (pmdr_pack(&pm, mdr_msg_error, pv, 2) == MDR_FAIL)
+			return MDR_FAIL;
+		if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) < pmdr_size(&pm))
+			return MDR_FAIL;
+		goto again;
+	}
+
+	if (r == MDR_FAIL) {
+		pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+		pv[0].type = MDR_U32;
+		pv[0].v.u32 = MDR_ERR_BADMSG;
+		pv[1].type = MDR_S;
+		pv[1].v.s = "unsupported message, or bad format";
+		if (pmdr_pack(&pm, mdr_msg_error, pv, 2) == MDR_FAIL)
+			return MDR_FAIL;
+		if (write(1, pmdr_buf(&pm), pmdr_size(&pm)) < pmdr_size(&pm))
+			return MDR_FAIL;
+		goto again;
+	}
+
+	needle.id = id;
+	sess = SPLAY_FIND(session_tree, &sessions, &needle);
+
+	if (umdr_dcv(&um) == MDR_DCV_MDRD_BECLOSE ||
+	    umdr_dcv(&um) == MDR_DCV_MDRD_BESESSERR) {
+		if (sess != NULL)
+			session_free(sess);
+		/*
+		 * No response is expected on BECLOSE/BESESSERR.
+		 */
+		goto again;
+	}
+
+	if (sess == NULL) {
+		sess = malloc(sizeof(struct mdrd_besession));
+		if (sess == NULL) {
+			/*
+			 * We only use the session for id/fd in beresp,
+			 * so just use static storage for that purpose.
+			 */
+			bzero(&tmpsess, sizeof(tmpsess));
+			tmpsess.id = id;
+			tmpsess.fd = fd;
+			mdrd_beresp_error(&tmpsess, MDRD_BERESP_FNONE,
+			    MDR_ERR_BEFAIL, "mdrd session creation failed");
+			goto again;
+		}
+		sess->id = id;
+		sess->fd = fd;
+		sess->is_new = 1;
+		memcpy(&sess->peer, &peer, sizeof(sess->peer));
+		sess->peer_len = slen;
+		sess->cert = peer_cert;
+		SPLAY_INSERT(session_tree, &sessions, sess);
+	} else {
+		sess->is_new = 0;
+	}
+
+	if (domain != 0 && !umdr_dcv_match(msg, domain, MDR_MASK_D)) {
+		mdrd_beresp_error(sess, MDRD_BERESP_FNONE,
+		    MDR_ERR_NOTSUPP, "unsupported message domain");
+		goto again;
+	}
+
+	if (session != NULL)
+		*session = sess;
+	return c;
 }
