@@ -16,6 +16,7 @@ enum xerr_space {
 
 enum {
 	XLOG_SUCCESS = 0,
+	XLOG_FAIL,              /* Non-specific failure */
 	XLOG_EOF,               /* EOF on a pipe/socket */
 	XLOG_INVAL,             /* An invalid value was obtained */
 	XLOG_NOENT,             /* Entity not found */
@@ -25,6 +26,7 @@ enum {
 	XLOG_RANGE,             /* Value exceeds allowed range */
 	XLOG_SHORTIO,           /* Short read/write */
 	XLOG_BADMSG,            /* Bad message format */
+	XLOG_NOTSUPP,           /* Unsupported message */
 	XLOG_TIMEOUT,           /* Operation timed out */
 	XLOG_WOULDBLOCK,        /* Operation would block but
 				   is set non-blocking */

@@ -8,6 +8,7 @@
 #include "authority.h"
 #include "agent.h"
 #include "cert.h"
+#include "mdrd.h"
 #include "util.h"
 
 extern struct certalator_flatconf certalator_conf;
@@ -17,8 +18,8 @@ extern struct certalator_flatconf certalator_conf;
  * to be used when an agent connects with a DIALIN call.
  * This will populate and save a bootstrap_entry in the certdb.
  */
-int
-authority_bootstrap_setup(const char *cn, const char **sans,
+static int
+authority_make_bootstrap(const char *cn, const char **sans,
     size_t sans_sz, const char **roles, size_t roles_sz, uint32_t cert_expiry,
     uint32_t timeout, uint32_t flags, struct xerr *e)
 {
@@ -67,7 +68,7 @@ authority_bootstrap_setup(const char *cn, const char **sans,
 }
 
 int
-authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
+authority_bootstrap_setup(uint64_t id, int fd, struct umdr *m, struct xerr *e)
 {
 	const char       *subject;
 	const char      **roles = NULL;
@@ -77,8 +78,18 @@ authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
 	uint32_t          cert_expiry, timeout, flags;
 	struct umdr_vec   uv[6];
 
-	if (umdr_unpack(m, msg_bootstrap_setup, uv, UMDRVECLEN(uv)) == MDR_FAIL)
-		return -1;
+	if (!agent_is_authority()) {
+		mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE, MDR_ERR_NOTSUPP,
+		    "we are not an authority");
+		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		    "we are not an authority");
+	}
+
+	if (umdr_unpack(m, msg_bootstrap_setup, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
+		goto fail;
+	}
 
 	subject = uv[0].v.s.bytes;
 	sans_sz = umdr_vec_alen(&uv[1].v.as);
@@ -87,26 +98,44 @@ authority_bootstrap_setup_msg(struct umdr *m, struct xerr *e)
 	timeout = uv[4].v.u32;
 	flags = uv[5].v.u32;
 
-	if ((sans = malloc(sizeof(char *) * (sans_sz + 1))) == NULL)
+	if ((sans = malloc(sizeof(char *) * (sans_sz + 1))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
-	if ((roles = malloc(sizeof(char *) * (roles_sz + 1))) == NULL)
+	}
+	if ((roles = malloc(sizeof(char *) * (roles_sz + 1))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
+	}
 
-	if (umdr_vec_as(&uv[1].v.as, sans, sans_sz + 1) == MDR_FAIL)
+	if (umdr_vec_as(&uv[1].v.as, sans, sans_sz + 1) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
 		goto fail;
-	if (umdr_vec_as(&uv[2].v.as, roles, roles_sz + 1) == MDR_FAIL)
+	}
+	if (umdr_vec_as(&uv[2].v.as, roles, roles_sz + 1) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
 		goto fail;
+	}
 
-	if (authority_bootstrap_setup(subject, sans, sans_sz, roles,
-	    roles_sz, cert_expiry, timeout, flags, e) == -1)
+	if (authority_make_bootstrap(subject, sans, sans_sz, roles,
+	    roles_sz, cert_expiry, timeout, flags, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
 		goto fail;
+	}
 
 	free(sans);
 	free(roles);
+
+	if (mdrd_beresp_ok(id, fd, MDRD_BERESP_FNONE) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "mdrd_beresp_ok");
+		return -1;
+	}
+
 	return 0;
 fail:
 	free(sans);
 	free(roles);
+	mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE, MDR_ERR_BEFAIL,
+	    "backend failure");
 	return -1;
 }
 
@@ -116,7 +145,7 @@ fail:
  * for bootstrap should receive it if it's really who it claims to
  * be and send it back to us.
  */
-int
+static int
 authority_challenge(struct bootstrap_entry *be, const char *op_id,
     const uint8_t *challenge, struct xerr *e)
 {
@@ -212,12 +241,17 @@ authority_challenge(struct bootstrap_entry *be, const char *op_id,
  * a certificate.
  */
 int
-authority_bootstrap_dialin(struct umdr *msg, struct xerr *e)
+authority_bootstrap_dialin(uint64_t id, int fd, struct umdr *msg,
+    struct xerr *e)
 {
 	struct bootstrap_entry be;
 	struct umdr_vec        uv[2];
 	struct timespec        now;
 	uint8_t                challenge[32];
+
+	if (!agent_is_authority())
+		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		    "we are not an authority");
 
 	if (umdr_unpack(msg, msg_bootstrap_dialin, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -251,9 +285,16 @@ authority_bootstrap_dialin(struct umdr *msg, struct xerr *e)
 }
 
 int
-authority_bootstrap_req(struct umdr *msg, struct xerr *e)
+authority_bootstrap_req(uint64_t id, int fd, struct umdr *msg, struct xerr *e)
 {
 	struct umdr_vec uv[3];
+
+	if (!agent_is_authority()) {
+		mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE, MDR_ERR_NOTSUPP,
+		    "we are not an authority");
+		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		    "we are not an authority");
+	}
 
 	if (umdr_unpack(msg, msg_bootstrap_req, uv, UMDRVECLEN(uv)) == MDR_FAIL)
                 return XERRF(e, XLOG_ERRNO, errno,

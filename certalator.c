@@ -203,6 +203,7 @@ usage()
 struct cl_session
 {
 	uint64_t                 id;
+	int                      fd;
 	X509                    *cert;
 	SPLAY_ENTRY(cl_session)  entries;
 };
@@ -259,7 +260,7 @@ mdrd_backend()
 		return 1;
 	}
 
-	/* Coordinator might already be running, don't die if that's the case */
+	/* Agent might already be running, don't die if that's the case */
 	if (agent_start(xerrz(&e)) == -1 &&
 	    !xerr_is(&e, XLOG_ERRNO, EWOULDBLOCK)) {
 		xlog(LOG_ERR, &e, __func__);
@@ -277,19 +278,18 @@ mdrd_backend()
 		return 1;
 	}
 
-	// TODO: we'll end up polling here between stdin and the agent's
-	// unix socket in case we get a control message of some sort.
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	while ((r = mdr_buf_from_fd(0, ubuf, sizeof(ubuf))) > 0) {
+	while ((r = mdrd_recv(ubuf, sizeof(ubuf))) > 0) {
 		if (r == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
-			    "%s: mdr_read_from_fd", __func__);
+			    "%s: mdrd_recv", __func__);
 			goto fail;
 		}
 
 		if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
 			xlog_strerror(LOG_ERR, errno,
 			    "%s: umdr_init", __func__);
+			// TODO: replace
 			pv[0].type = MDR_U32;
 			pv[0].v.u32 = MDR_ERR_BEFAIL;
 			pv[1].type = MDR_S;
@@ -393,6 +393,7 @@ mdrd_backend()
 				continue;
 			}
 			csess->id = id;
+			csess->fd = fd;
 			csess->cert = peer_cert;
 			SPLAY_INSERT(cl_session_tree, &cl_sessions, csess);
 		}
@@ -425,7 +426,7 @@ mdrd_backend()
 				continue;
 			}
 
-			if (authority_bootstrap_dialin(&msg, &e) == MDR_FAIL)
+			if (authority_bootstrap_dialin(id, fd, &msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
 				// TODO: return error to client
 			continue;
@@ -452,7 +453,7 @@ mdrd_backend()
 					    "we are not an authority");
 					continue;
 				}
-				if (authority_bootstrap_dialin(&msg, &e)
+				if (authority_bootstrap_dialin(id, fd, &msg, &e)
 				    == MDR_FAIL) {
 					// TODO: return error to client
 					xlog(LOG_ERR, &e, "%s", __func__);
@@ -474,21 +475,9 @@ mdrd_backend()
 		 */
 		switch (umdr_dcv(&msg)) {
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN:
-			if (!agent_is_authority()) {
-				xlog(LOG_ERR, NULL, "%s: we are not an "
-				    "authority", __func__);
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL, "we are not an authority");
-				continue;
-			}
-			if (authority_bootstrap_dialin(&msg, &e) == MDR_FAIL) {
-				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL,
-				    (e.sp == XLOG_APP)
-				    ? e.msg
-				    : "we are not an authority");
-			}
+			if (authority_bootstrap_dialin(id, fd, &msg, &e) == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			/* We don't send a response on dialin */
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP:
 			if (!cert_has_role(csess->cert, ROLE_BOOTSTRAP,
@@ -498,42 +487,12 @@ mdrd_backend()
 				    ROLE_BOOTSTRAP " role required");
 				continue;
 			}
-
-			if (authority_bootstrap_setup_msg(&msg, &e) ==
-			    MDR_FAIL) {
-				xlog(LOG_ERR, &e, "%s: bootstrap", __func__);
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL,
-				    "authority_bootstrap_setup_msg failed");
-				continue;
-			}
-
-			if (mdrd_beresp_ok(id, fd,
-			    MDRD_BERESP_FNONE) == MDR_FAIL) {
-				xlog_strerror(LOG_ERR, errno,
-				    "%s: mdrd_beresp_ok", __func__);
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL, "mdrd_beresp_ok");
-				continue;
-			}
+			if (authority_bootstrap_setup(id, fd, &msg, &e) == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_REQ:
-			if (!agent_is_authority()) {
-				xlog(LOG_ERR, NULL, "%s: we are not an "
-				    "authority", __func__);
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL, "we are not an authority");
-				continue;
-			}
-			if (authority_bootstrap_req(&msg, &e) == MDR_FAIL) {
+			if (authority_bootstrap_req(id, fd, &msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
-				// TODO: there's a req_failed message for this
-				mdrd_beresp_error(id, fd, MDRD_BERESP_FNONE,
-				    MDR_ERR_BEFAIL,
-				    (e.sp == XLOG_APP)
-				    ? e.msg
-				    : "we are not an authority");
-			}
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_SEND_CERT:
