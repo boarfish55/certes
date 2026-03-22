@@ -230,11 +230,6 @@ mdrd_backend()
 		return 1;
 	}
 
-	if (agent_init(xerrz(&e)) == -1) {
-		xlog(LOG_ERR, &e, __func__);
-		return 1;
-	}
-
 	if ((ctx = X509_STORE_CTX_new()) == NULL) {
 		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
@@ -274,11 +269,13 @@ mdrd_backend()
 		 */
 		switch (umdr_dcv(&msg)) {
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN:
-			if (authority_bootstrap_dialin(sess, &msg, &e) == MDR_FAIL)
+			if (authority_bootstrap_dialin(sess, &msg, &e)
+			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP:
-			if (authority_bootstrap_setup(sess, &msg, &e) == MDR_FAIL)
+			if (authority_bootstrap_setup(sess, &msg, &e)
+			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_REQ:

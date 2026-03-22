@@ -1282,32 +1282,33 @@ agent_start(struct xerr *e)
 	struct sockaddr_un saddr;
 
 	if ((lock_fd = open(certalator_conf.lock_file,
-	    O_CREAT|O_WRONLY|O_CLOEXEC, 0644)) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "open: %s",
+	    O_CREAT|O_WRONLY|O_CLOEXEC, 0644)) == -1)
+		return XERRF(e, XLOG_ERRNO, errno, "open: %s",
 		    certalator_conf.lock_file);
-		return -1;
-	}
 
 	if (flock(lock_fd, LOCK_EX|LOCK_NB) == -1) {
-		if (errno == EWOULDBLOCK) {
-			XERRF(e, XLOG_ERRNO, errno,
+		if (errno == EWOULDBLOCK)
+			return XERRF(e, XLOG_ERRNO, errno,
 			    "lock file %s is already locked; "
 			    "is another instance running?",
 			    certalator_conf.lock_file);
-		} else {
-			XERRF(e, XLOG_ERRNO, errno, "flock");
-		}
+		else
+			return XERRF(e, XLOG_ERRNO, errno, "flock");
 		return -1;
 	}
 
 	if ((pid = fork()) == -1) {
 		close(lock_fd);
-		XERRF(e, XLOG_ERRNO, errno, "fork");
-		return -1;
+		return XERRF(e, XLOG_ERRNO, errno, "fork");
 	} else if (pid != 0) {
 		close(lock_fd);
+		if (agent_init(xerrz(e)) == -1)
+			return XERR_PREPENDFN(e);
 		return 0;
 	}
+
+	if (agent_init(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
 
 	chdir("/");
 
