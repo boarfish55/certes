@@ -1,8 +1,10 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-#include <err.h>
-#include <signal.h>
+#include <sys/socket.h>
 #include <sys/tree.h>
+#include <err.h>
+#include <netdb.h>
+#include <signal.h>
 #include <unistd.h>
 #include "agent.h"
 #include "authority.h"
@@ -200,17 +202,60 @@ usage()
 	    "authority\n");
 }
 
+static void
+free_certalator_session(void *data)
+{
+	struct certalator_session *cs = (struct certalator_session *)data;
+
+	if (cs->challenge != NULL)
+		free(cs->challenge);
+	if (cs->bootstrap_key != NULL)
+		free(cs->bootstrap_key);
+	if (cs->req != NULL)
+		X509_REQ_free(cs->req);
+}
+
+static char client_name_buf[1024];
+
+char *
+certalator_client_name(struct mdrd_besession *s, char *dst, size_t sz,
+    struct xerr *e)
+{
+	struct certalator_session *cs = (struct certalator_session *)s->data;
+	char                      *buf = dst;
+	int                        r;
+
+	if (buf == NULL) {
+		buf = client_name_buf;
+		sz = sizeof(client_name_buf);
+	}
+	// TODO: also report about the cert CN, and maybe verified status
+	// That is, s->cert
+	if ((r = getnameinfo((struct sockaddr *)&s->peer, s->peer_len, buf, sz,
+            NULL, 0, NI_NUMERICHOST)) != 0)
+		XERRF(e, XLOG_EAI, r, "getnameinfo");
+
+	if (cs->verified && s->cert != NULL)
+		strlcat(buf, " (verified)", sz);
+	else if (!cs->verified && s->cert != NULL)
+		strlcat(buf, " (unverified)", sz);
+	else
+		strlcat(buf, " (unverified - no certificate)", sz);
+	return buf;
+}
+
 int
 mdrd_backend()
 {
-	struct pmdr             pm;
-	char                    pbuf[32768];
-	struct umdr             msg;
-	char                    msgbuf[16384];
-	X509_STORE_CTX         *ctx;
-	struct sigaction        act;
-	struct xerr             e;
-	struct mdrd_besession  *sess;
+	struct pmdr                pm;
+	char                       pbuf[32768];
+	struct umdr                msg;
+	char                       msgbuf[16384];
+	X509_STORE_CTX            *ctx;
+	struct sigaction           act;
+	struct xerr                e;
+	struct mdrd_besession     *sess;
+	struct certalator_session *cs;
 
 	xlog_init(CERTALATOR_PROGNAME, NULL, NULL, 1);
 
@@ -243,24 +288,37 @@ mdrd_backend()
 		/*
 		 * Verify the client's cert
 		 */
-		if (cert_verify(ctx, sess->cert, 0) != 0) {
-			/*
-			 * We can still accept a bootstrap if the cert is not
-			 * valid.
-			 */
-			if (umdr_dcv(&msg) ==
-			    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN) {
-				if (authority_bootstrap_dialin(sess, &msg, &e)
-				    == MDR_FAIL)
-					xlog(LOG_ERR, &e, "%s", __func__);
+		if (sess->is_new) {
+			cs = malloc(sizeof(struct certalator_session));
+			if (cs == NULL) {
+				xlog_strerror(LOG_ERR, errno,
+				    "%s: malloc", __func__);
+				mdrd_beout_error(sess, MDRD_BEOUT_FCLOSE,
+				    MDR_ERR_BEFAIL, "backend failed");
 				continue;
 			}
+			bzero(cs, sizeof(struct certalator_session));
+			mdrd_besession_set_data(sess, cs,
+			    free_certalator_session);
 
-			xlog(LOG_NOTICE, NULL, "%s: no certificate provided, "
-			    "or verification failed", __func__);
-			mdrd_beresp_error(sess, MDRD_BERESP_FCLOSE,
-			    MDR_ERR_CERTFAIL, "no certificate provided, "
-			    "or verification failed");
+			if (cert_verify(ctx, sess->cert, 0) == 0)
+				cs->verified = 1;
+		} else
+			cs = (struct certalator_session *)sess->data;
+
+		/*
+		 * The only message we can accept with an invalid cert
+		 * is a bootstrap dialin or bootstrap req request.
+		 */
+		if (!cs->verified &&
+		    umdr_dcv(&msg) != MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN &&
+		    umdr_dcv(&msg) != MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER) {
+			xlog(LOG_NOTICE, NULL, "%s: no certificate "
+			    "provided, or verification failed",
+			    __func__);
+			mdrd_beout_error(sess, MDRD_BEOUT_FCLOSE,
+			    MDR_ERR_CERTFAIL, "no certificate provided,"
+			    " or verification failed");
 			continue;
 		}
 
@@ -278,29 +336,31 @@ mdrd_backend()
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
-		case MDR_DCV_CERTALATOR_BOOTSTRAP_REQ:
-			if (authority_bootstrap_req(sess, &msg, &e) == MDR_FAIL)
+		case MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER:
+			if (authority_bootstrap_answer(sess, &msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
-		case MDR_DCV_CERTALATOR_BOOTSTRAP_SEND_CERT:
 			/*
 			 * For these messages we only need to forward to
 			 * the agent, if they come from an authority.
 			 */
 			if (!cert_has_role(sess->cert, ROLE_AUTHORITY,
 			    xerrz(&e))) {
-				mdrd_beresp_error(sess, MDRD_BERESP_FNONE,
+				mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
 				    MDR_ERR_DENIED,
 				    ROLE_AUTHORITY " role required");
 				continue;
 			}
+			/* Fallthrough */
+		case MDR_DCV_CERTALATOR_ERROR:
+		case MDR_DCV_MDR_ERROR:
 			if (agent_send(umdr_buf(&msg), umdr_size(&msg),
 			    &e) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		default:
-			mdrd_beresp_error(sess, MDRD_BERESP_FNONE,
+			mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
 			    MDR_ERR_NOTSUPP, "not supported");
 		}
 	}

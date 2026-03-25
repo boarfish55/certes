@@ -3,6 +3,7 @@
 
 #include <limits.h>
 #include "mdr_certalator.h"
+#include "xlog.h"
 
 #define MAX_HEX_SERIAL_LENGTH 32
 #define MAX_ACTIVE_CHALLENGES 32
@@ -16,7 +17,7 @@
 #define CERTALATOR_BOOTSTRAP_KEY_LENGTH     48
 #define CERTALATOR_MAX_MSG_SIZE             16384
 
-#define CERTALATOR_CHALLENGE_LENGTH         64
+#define CERTALATOR_CHALLENGE_LENGTH         32
 #define CERTALATOR_AUTHOP_ID_LENGTH         64 /* 3x 64-bit uints to string, so ~50 */
 
 
@@ -61,5 +62,17 @@ struct certalator_flatconf {
 	char     min_serial[MAX_HEX_SERIAL_LENGTH + 3];
 	char     max_serial[MAX_HEX_SERIAL_LENGTH + 3];
 };
+
+struct certalator_session {
+	int       verified;
+
+	/* Used for dialin/req request */
+	uint8_t  *challenge;
+	uint8_t  *bootstrap_key;
+	X509_REQ *req;
+};
+
+char *certalator_client_name(struct mdrd_besession *, char *, size_t,
+          struct xerr *);
 
 #endif

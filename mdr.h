@@ -367,6 +367,7 @@ void                   mdr_registry_clear();
  * MDR_DCV_MDR_ERROR responses.
  */
 #define MDR_DOMAIN_MDR             MDR_DCV(0x00000000, 0, 0)
+#define MDR_DCV_MDR_NULL           MDR_DCV(0x00000000, 0x0000, 0x0000)
 #define MDR_DCV_MDR_PING           MDR_DCV(0x00000000, 0x0001, 0x0000)
 #define MDR_DCV_MDR_PONG           MDR_DCV(0x00000000, 0x0001, 0x0001)
 #define MDR_DCV_MDR_OK             MDR_DCV(0x00000000, 0x0002, 0x0000)
@@ -397,14 +398,16 @@ extern const struct mdr_spec *mdr_msg_test;
 
 /* Messages exchanged between mdrd and its backend */
 #define MDR_DOMAIN_MDRD          MDR_DCV(0x00000001, 0, 0)
-#define MDR_DCV_MDRD_BEREQ       MDR_DCV(0x00000001, 0x0001, 0x0000)
-#define MDR_DCV_MDRD_BERESP      MDR_DCV(0x00000001, 0x0002, 0x0000)
+#define MDR_DCV_MDRD_BEIN        MDR_DCV(0x00000001, 0x0001, 0x0000)
+#define MDR_DCV_MDRD_BEOUT       MDR_DCV(0x00000001, 0x0002, 0x0000)
+#define MDR_DCV_MDRD_BEOUT_EMPTY MDR_DCV(0x00000001, 0x0002, 0x0001)
 #define MDR_DCV_MDRD_BECLOSE     MDR_DCV(0x00000001, 0x0003, 0x0000)
 #define MDR_DCV_MDRD_BESESSERR   MDR_DCV(0x00000001, 0x0004, 0x0000)
                                  /* Backend tried to send a response but
                                     mdrd could not find an active session */
-extern const struct mdr_spec *mdr_msg_mdrd_bereq;
-extern const struct mdr_spec *mdr_msg_mdrd_beresp;
+extern const struct mdr_spec *mdr_msg_mdrd_bein;
+extern const struct mdr_spec *mdr_msg_mdrd_beout;
+extern const struct mdr_spec *mdr_msg_mdrd_beout_empty;
 extern const struct mdr_spec *mdr_msg_mdrd_beclose;
 extern const struct mdr_spec *mdr_msg_mdrd_besesserr;
 

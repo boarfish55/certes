@@ -1,6 +1,29 @@
 #include <err.h>
 #include "mdr_certalator.h"
 
+struct mdr_def msgdef_error = {
+	MDR_DCV_CERTALATOR_ERROR,
+	"certalator.error",
+	{
+		MDR_S,   /* Operation identifier */
+		MDR_U32, /* Error code */
+		MDR_S,   /* Message */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_error;
+
+/* Generic OK message */
+struct mdr_def msgdef_ok = {
+	MDR_DCV_CERTALATOR_OK,
+	"certalator.ok",
+	{
+		MDR_S,   /* Operation identifier */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_ok;
+
 struct mdr_def msgdef_bootstrap_setup = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP,
 	"certalator.bootstrap_setup",
@@ -22,6 +45,7 @@ struct mdr_def msgdef_bootstrap_dialin = {
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_B,   /* Bootstrap key */
+		MDR_B,   /* X509_REQ */
 		MDR_LAST
 	}
 };
@@ -38,28 +62,16 @@ struct mdr_def msgdef_bootstrap_dialback = {
 };
 const struct mdr_spec *msg_bootstrap_dialback;
 
-struct mdr_def msgdef_bootstrap_req = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_REQ,
+struct mdr_def msgdef_bootstrap_answer = {
+	MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER,
 	"certalator.bootstrap_req",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_B,   /* Challenge answer */
-		MDR_B,   /* X509_REQ */
 		MDR_LAST
 	}
 };
-const struct mdr_spec *msg_bootstrap_req;
-
-struct mdr_def msgdef_bootstrap_req_failed = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_FAILED,
-	"certalator.bootstrap_req_failed",
-	{
-		MDR_S,   /* Operation identifier */
-		MDR_S,   /* Message */
-		MDR_LAST
-	}
-};
-const struct mdr_spec *msg_bootstrap_req_failed;
+const struct mdr_spec *msg_bootstrap_answer;
 
 struct mdr_def msgdef_bootstrap_send_cert = {
 	MDR_DCV_CERTALATOR_BOOTSTRAP_SEND_CERT,
@@ -72,8 +84,42 @@ struct mdr_def msgdef_bootstrap_send_cert = {
 };
 const struct mdr_spec *msg_bootstrap_send_cert;
 
-/* Built-ins */
-const struct mdr_spec *msg_pack_beresp;
+int
+beout_ok(struct mdrd_besession *sess, const char *op_id, uint32_t beout_flags)
+{
+	struct pmdr     pm;
+	char            pbuf[1024];
+	struct pmdr_vec pv[3];
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = op_id;
+	if (pmdr_pack(&pm, msg_ok, pv, 2) == MDR_FAIL)
+		abort();
+
+	return mdrd_beout(sess, beout_flags, &pm);
+}
+
+int
+beout_error(struct mdrd_besession *sess, const char *op_id,
+    uint32_t beout_flags, uint32_t errcode, const char *errdesc)
+{
+	struct pmdr     pm;
+	char            pbuf[1024];
+	struct pmdr_vec pv[3];
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = op_id;
+	pv[1].type = MDR_U32;
+	pv[1].v.u32 = errcode;
+	pv[2].type = MDR_S;
+	pv[2].v.s = errdesc;
+	if (pmdr_pack(&pm, msg_error, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		abort();
+
+	return mdrd_beout(sess, beout_flags, &pm);
+}
 
 void
 load_mdr_defs()
@@ -83,12 +129,12 @@ load_mdr_defs()
 	 */
 	if (mdr_register_builtin_specs() == MDR_FAIL)
 		err(1, "mdr_register_builtin_specs");
-	if ((msg_pack_beresp = mdr_registry_get(MDR_DCV_MDRD_BERESP)) == NULL)
-		err(1, "mdr_registry_get");
 
 	/*
 	 * Agent/Authority messages.
 	 */
+	if ((msg_error = mdr_register_spec(&msgdef_error)) == NULL)
+		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_setup =
 	    mdr_register_spec(&msgdef_bootstrap_setup)) == NULL)
 		errx(1, "mdr_register_spec");
@@ -98,11 +144,8 @@ load_mdr_defs()
 	if ((msg_bootstrap_dialback =
 	    mdr_register_spec(&msgdef_bootstrap_dialback)) == NULL)
 		errx(1, "mdr_register_spec");
-	if ((msg_bootstrap_req =
-	    mdr_register_spec(&msgdef_bootstrap_req)) == NULL)
-		errx(1, "mdr_register_spec");
-	if ((msg_bootstrap_req_failed =
-	    mdr_register_spec(&msgdef_bootstrap_req_failed)) == NULL)
+	if ((msg_bootstrap_answer =
+	    mdr_register_spec(&msgdef_bootstrap_answer)) == NULL)
 		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_send_cert =
 	    mdr_register_spec(&msgdef_bootstrap_send_cert)) == NULL)

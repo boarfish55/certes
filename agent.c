@@ -32,18 +32,19 @@ static uint64_t     next_authop_id = 1;
 
 static struct timespec last_authop_purge = {0, 0};
 static int             agent_fd = -1;
+static int             bootstrap_in_progress = 0;
 
 extern struct certalator_flatconf certalator_conf;
 
 enum authop_type {
-	AUTHOP_BOOTSTRAP = 1,
-	AUTHOP_BOOTSTRAP_SETUP
+	AUTHOP_BOOTSTRAP_SETUP = 1,
+	AUTHOP_BOOTSTRAP
 };
 
 enum authop_step {
 	AUTHOP_INIT = 0,
 
-	AUTHOP_BOOTSTRAP_REQ_SENT
+	AUTHOP_BOOTSTRAP_ANSWER_SENT
 };
 
 struct authop {
@@ -59,7 +60,7 @@ struct authop {
 static int
 authop_cmp(struct authop *a1, struct authop *a2)
 {
-	return memcmp(a1->id, a2->id, sizeof(a1->id));
+	return strcmp(a1->id, a2->id);
 }
 
 SPLAY_HEAD(authop_tree, authop) authops = SPLAY_INITIALIZER(&authops);
@@ -98,6 +99,7 @@ client_free(struct client *c)
 	free(c);
 	client_tree_sz--;
 }
+
 static int            agent_bootstrap(struct xerr *);
 static int            agent_bootstrap_dialback(struct umdr *, struct xerr *);
 static void           purge_authops();
@@ -110,19 +112,16 @@ static int            authop_send(struct authop *, const void *, size_t,
                           struct xerr *);
 static int            authop_recv(struct authop *, char *, size_t,
                           struct xerr *);
-static int            agent_new_req(const X509_NAME *, const char *,
-                          unsigned char **, size_t *, struct xerr *);
 static int            load_crl(const char *, struct xerr *);
 static void           bootstrap_setup_usage();
-static int            agent_bootstrap_send_cert(struct umdr *, struct xerr *);
-static int            agent_bootstrap_req_failed(struct umdr *, struct xerr *);
+static int            agent_error(struct umdr *, struct xerr *);
 
 
 static void
 purge_authops()
 {
 	struct timespec  now;
-	struct authop   *op;
+	struct authop   *op, *next;
 
 	clock_gettime(CLOCK_REALTIME, &now);
 
@@ -130,7 +129,8 @@ purge_authops()
 	if (now.tv_sec - last_authop_purge.tv_sec <= 60)
 		return;
 
-	SPLAY_FOREACH(op, authop_tree, &authops) {
+	for (op = SPLAY_MIN(authop_tree, &authops); op != NULL; op = next) {
+		next = SPLAY_NEXT(authop_tree, &authops, op);
 		if (now.tv_sec - op->created_at.tv_sec > 60)
 			authop_free(op);
 	}
@@ -212,11 +212,6 @@ agent_run(int lsock, struct xerr *e)
 			nfds++;
 		}
 
-		if (agent_tasks(xerrz(e)) == -1) {
-			XERR_PREPENDFN(e);
-			goto fail;
-		}
-
 		if ((ready = poll(fds, nfds, 1000)) == -1) {
 			XERRF(e, XLOG_ERRNO, errno, "poll");
 			goto fail;
@@ -228,6 +223,10 @@ agent_run(int lsock, struct xerr *e)
 				    "we will too", __func__);
 				return 0;
 			}
+
+			/* Run background tasks when we're idle */
+			if (agent_tasks(xerrz(e)) == -1)
+				xlog(LOG_ERR, e, "agent_tasks");
 			continue;
 		}
 
@@ -363,18 +362,12 @@ agent_run(int lsock, struct xerr *e)
 				continue;
 
 			switch (umdr_dcv(&um)) {
+			case MDR_DCV_MDR_ERROR:
+				if (agent_error(&um, xerrz(e)) == MDR_FAIL)
+					xlog(LOG_ERR, e, "%s", __func__);
+				break;
 			case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
 				if (agent_bootstrap_dialback(&um, xerrz(e))
-				    == MDR_FAIL)
-					xlog(LOG_ERR, e, "%s", __func__);
-				break;
-			case MDR_DCV_CERTALATOR_BOOTSTRAP_SEND_CERT:
-				if (agent_bootstrap_send_cert(&um, xerrz(e))
-				    == MDR_FAIL)
-					xlog(LOG_ERR, e, "%s", __func__);
-				break;
-			case MDR_DCV_CERTALATOR_BOOTSTRAP_REQ_FAILED:
-				if (agent_bootstrap_req_failed(&um, xerrz(e))
 				    == MDR_FAIL)
 					xlog(LOG_ERR, e, "%s", __func__);
 				break;
@@ -384,7 +377,6 @@ agent_run(int lsock, struct xerr *e)
 			}
 		}
 	}
-
 	free(fds);
 	return 0;
 fail:
@@ -404,6 +396,7 @@ authop_new(enum authop_type type, struct xerr *e)
 	struct timeval  timeout;
 	SSL            *ssl = NULL;
 	struct authop  *op;
+	int             authority, caproxy;
 
 	if ((op = malloc(sizeof(struct authop))) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
@@ -466,6 +459,24 @@ authop_new(enum authop_type type, struct xerr *e)
 		goto fail;
 	}
 
+	authority = cert_has_role(SSL_get0_peer_certificate(ssl),
+	    ROLE_AUTHORITY, xerrz(e));
+	if (authority == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	caproxy = cert_has_role(SSL_get0_peer_certificate(ssl),
+	    ROLE_CAPROXY, xerrz(e));
+	if (caproxy == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	if (!authority && !caproxy) {
+		XERRF(e, XLOG_APP, XLOG_ACCES,
+		    "peer is neither a caproxy or valid authority");
+		goto fail;
+	}
+
 	op->type = type;
 	clock_gettime(CLOCK_REALTIME, &op->created_at);
 	if (snprintf(op->id, sizeof(op->id), "%lu-%lu.%lu",
@@ -490,10 +501,9 @@ static void
 authop_free(struct authop *op)
 {
 	SPLAY_REMOVE(authop_tree, &authops, op);
-	BIO_ssl_shutdown(op->bio);
-	if (!BIO_free(op->bio))
-		xlog(LOG_ERR, NULL, "BIO_free: %s",
-		    ERR_error_string(ERR_get_error(), NULL));
+	if (op->type == AUTHOP_BOOTSTRAP)
+		bootstrap_in_progress = 0;
+	BIO_free_all(op->bio);
 	free(op);
 }
 
@@ -515,93 +525,6 @@ authop_recv(struct authop *op, char *buf, size_t buf_sz, struct xerr *e)
 	if ((r = mdr_buf_from_BIO(op->bio, buf, buf_sz)) < 1)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
 	return r;
-}
-
-static int
-agent_new_req(const X509_NAME *subject, const char *ip6,
-    unsigned char **req_buf, size_t *req_len, struct xerr *e)
-{
-	/* Inspired by OpenBSD's acme-client/keyproc.c:77 */
-	X509_REQ                 *req;
-	X509_EXTENSION           *ex;
-	char                     *sans = NULL;
-	STACK_OF(X509_EXTENSION) *exts;
-
-	if ((req = X509_REQ_new()) == NULL)
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_new");
-
-	if (!X509_REQ_set_version(req, 2)) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_set_version");
-		goto fail;
-	}
-
-	if (!X509_REQ_set_pubkey(req, key)) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_set_pubkey");
-		goto fail;
-	}
-
-	if (!X509_REQ_set_subject_name(req, subject)) {
-		XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "X509_req_set_subject_name");
-		goto fail;
-	}
-
-	if ((exts = sk_X509_EXTENSION_new_null()) == NULL) {
-		XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "sk_X509_EXTENSION_new_null");
-		goto fail;
-	}
-
-	if (asprintf(&sans, "IP:%s", ip6) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "asprintf");
-		goto fail;
-	}
-
-        if (!(ex = X509V3_EXT_conf_nid(NULL, NULL,
-	    NID_subject_alt_name, sans))) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "X509V3_EXT_conf_nid");
-		goto fail;
-	}
-	sk_X509_EXTENSION_push(exts, ex);
-	if (!X509_REQ_add_extensions(req, exts)) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_add_extensions");
-		goto fail;
-        }
-	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
-
-	if (!X509_REQ_sign(req, key, EVP_sha256())) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
-		goto fail;
-        }
-
-	/*
-	 * Serialise to DER
-	 */
-	if ((*req_len = i2d_X509_REQ(req, NULL)) < 0) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509_REQ");
-		goto fail;
-	}
-	if ((*req_buf = malloc(*req_len)) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
-		goto fail;
-	}
-	i2d_X509_REQ(req, req_buf);
-
-	/*
-	 * We don't need to fully populate the REQ. We should add a SANS for
-	 * our IP address so the dialback works. The authority will take care
-	 * of adding all configured SANs to the cert during signing.
-	 */
-
-	// TODO: leak? double-free?
-	X509_REQ_free(req);
-	free(sans);
-	return 0;
-fail:
-	X509_REQ_free(req);
-	if (sans != NULL)
-		free(sans);
-	return -1;
 }
 
 static int
@@ -627,17 +550,53 @@ load_crl(const char *crl_path, struct xerr *e)
 }
 
 /*
+ * Process errors from the authority
+ */
+static int
+agent_error(struct umdr *msg, struct xerr *e)
+{
+	struct authop   *op;
+	struct authop    needle;
+	struct umdr_vec  uv[2];
+
+	if (umdr_unpack(msg, msg_error, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+		return XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
+
+	strlcpy(needle.id, uv[0].v.s.bytes, sizeof(needle.id));
+	op = SPLAY_FIND(authop_tree, &authops, &needle);
+	if (op == NULL)
+		return XERRF(e, XLOG_APP, XLOG_NOENT,
+		    "no such authop found: %s", needle.id);
+
+	xlog(LOG_ERR, NULL, "%s: %s (op type/step %d/%d)",
+	    __func__, uv[1].v.s.bytes, op->type, op->step);
+
+	authop_free(op);
+	return 0;
+}
+
+/*
  * Contact the authority to send our bootstrap key in order to obtain
  * a challenge so we can send our REQ.
  */
 static int
 agent_bootstrap(struct xerr *e)
 {
-	struct pmdr      pm;
-	struct pmdr_vec  pv[2];
-	char             pbuf[CERTALATOR_MAX_MSG_SIZE];
-	uint8_t          bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
-	struct authop   *op;
+	struct pmdr          pm;
+	struct pmdr_vec      pv[3];
+	char                 pbuf[CERTALATOR_MAX_MSG_SIZE];
+	uint8_t              bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
+	struct authop       *op;
+	unsigned char       *req_buf = NULL;
+	size_t               req_len;
+	int                  sockfd;
+	struct sockaddr_in6  addr;
+	socklen_t            slen = sizeof(addr);
+	char                 ip6[INET6_ADDRSTRLEN];
+
+	if (bootstrap_in_progress)
+		return 0;
+	bootstrap_in_progress = 1;
 
 	if (strlen(certalator_conf.bootstrap_key) !=
 	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64)
@@ -648,8 +607,33 @@ agent_bootstrap(struct xerr *e)
 	    certalator_conf.bootstrap_key) < sizeof(bootstrap_key))
 		return XERRF(e, XLOG_ERRNO, errno, "%s: b64dec", __func__);
 
-	if ((op = authop_new(AUTHOP_BOOTSTRAP, xerrz(e))) == NULL)
+	if ((op = authop_new(AUTHOP_BOOTSTRAP, xerrz(e))) == NULL) {
+		bootstrap_in_progress = 0;
 		return XERR_PREPENDFN(e);
+	}
+
+	if (BIO_get_fd(op->bio, &sockfd) <= 0) {
+		authop_free(op);
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_get_fd");
+	}
+	if (getsockname(sockfd, (struct sockaddr *)&addr, &slen) == -1) {
+		authop_free(op);
+		return XERRF(e, XLOG_ERRNO, errno, "getsockname");
+	}
+	if (slen > sizeof(addr)) {
+		authop_free(op);
+		return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "sock name does not fit in sockaddr");
+	}
+	if (inet_ntop(addr.sin6_family, &addr, ip6, slen) == NULL) {
+		authop_free(op);
+		return XERRF(e, XLOG_ERRNO, errno, "inet_ntop");
+	}
+	if (cert_new_selfreq(key, X509_get_subject_name(cert), ip6, &req_buf,
+	    &req_len, xerrz(e)) == -1) {
+		authop_free(op);
+		return XERR_PREPENDFN(e);
+	}
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	pv[0].type = MDR_S;
@@ -657,6 +641,9 @@ agent_bootstrap(struct xerr *e)
 	pv[1].type = MDR_B;
 	pv[1].v.b.bytes = bootstrap_key;
 	pv[1].v.b.sz = sizeof(bootstrap_key);
+	pv[2].type = MDR_B; /* REQ bytes */
+	pv[2].v.b.bytes = req_buf;
+	pv[2].v.b.sz = req_len;
 	if (pmdr_pack(&pm,  msg_bootstrap_dialin, pv,
 	    PMDRVECLEN(pv)) == MDR_FAIL) {
 		authop_free(op);
@@ -681,18 +668,17 @@ agent_bootstrap(struct xerr *e)
 static int
 agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 {
-	struct umdr_vec      uv[2];
-	struct pmdr          pm;
-	char                 pbuf[CERTALATOR_MAX_MSG_SIZE];
-	struct pmdr_vec      pv[3];
-	struct authop       *op;
-	struct authop        needle;
-	unsigned char       *req_buf = NULL;
-	size_t               req_len;
-	int                  sockfd;
-	struct sockaddr_in6  addr;
-	socklen_t            slen = sizeof(addr);
-	char                 ip6[INET6_ADDRSTRLEN];
+	struct umdr_vec  uv[2];
+	struct pmdr      pm;
+	char             pbuf[CERTALATOR_MAX_MSG_SIZE];
+	struct pmdr_vec  pv[2];
+	struct authop   *op;
+	struct authop    needle;
+	struct umdr      um;
+	char             ubuf[CERTALATOR_MAX_MSG_SIZE];
+	int              r;
+	X509            *crt;
+	FILE            *f;
 
 	if (umdr_unpack(msg, msg_bootstrap_dialback, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -713,32 +699,6 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 	    __func__, op->id);
 
 	/*
-	 * We received the challenge, send our REQ.
-	 */
-	if (BIO_get_fd(op->bio, &sockfd) <= 0) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_get_fd");
-		goto fail;
-	}
-	if (getsockname(sockfd, (struct sockaddr *)&addr, &slen) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "getsockname");
-		goto fail;
-	}
-	if (slen > sizeof(addr)) {
-		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
-		    "sock name does not fit in sockaddr");
-		goto fail;
-	}
-	if (inet_ntop(addr.sin6_family, &addr, ip6, slen) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "inet_ntop");
-		goto fail;
-	}
-	if (agent_new_req(X509_get_subject_name(cert), ip6, &req_buf, &req_len,
-	    xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		goto fail;
-	}
-
-	/*
 	 * Send the REQ+challenge to the authority.
 	 */
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
@@ -747,12 +707,9 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 	pv[1].type = MDR_B; /* Challenge */
 	pv[1].v.b.bytes = uv[1].v.b.bytes;
 	pv[1].v.b.sz = uv[1].v.b.sz;
-	pv[2].type = MDR_B; /* REQ bytes */
-	pv[2].v.b.bytes = req_buf;
-	pv[2].v.b.sz = req_len;
-	if (pmdr_pack(&pm, msg_bootstrap_req, pv, PMDRVECLEN(pv)) == MDR_FAIL) {
+	if (pmdr_pack(&pm, msg_bootstrap_answer, pv, PMDRVECLEN(pv)) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno,
-		    "mdr_pack/msg_bootstrap_req");
+		    "mdr_pack/msg_bootstrap_answer");
 		goto fail;
 	}
 	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(e)) == -1) {
@@ -760,79 +717,32 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 		goto fail;
 	}
 
-	op->step = AUTHOP_BOOTSTRAP_REQ_SENT;
-	free(req_buf);
-	return 0;
-fail:
-	if (req_buf != NULL)
-		free(req_buf);
-	authop_free(op);
-	return -1;
-}
+	op->step = AUTHOP_BOOTSTRAP_ANSWER_SENT;
 
-static int
-agent_bootstrap_req_failed(struct umdr *msg, struct xerr *e)
-{
-	struct authop   *op;
-	struct authop    needle;
-	struct umdr_vec  uv[2];
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(e))) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
 
-	if (umdr_unpack(msg, msg_bootstrap_req_failed, uv,
-	    UMDRVECLEN(uv)) == MDR_FAIL)
-		return XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
-
-	strlcpy(needle.id, uv[0].v.s.bytes, sizeof(needle.id));
-	op = SPLAY_FIND(authop_tree, &authops, &needle);
-	if (op == NULL)
-		return XERRF(e, XLOG_APP, XLOG_NOENT,
-		    "no such authop found: %s", needle.id);
-
-	if (op->type != AUTHOP_BOOTSTRAP)
-		return XERRF(e, XLOG_APP, XLOG_INVAL,
-		    "authop %s is not a bootstrap request", op->id);
-	if (op->step != AUTHOP_BOOTSTRAP_REQ_SENT)
-		return XERRF(e, XLOG_APP, XLOG_INVAL,
-		    "authop %s bootstrap is in the wrong state",
-		    op->id, op->type);
-
-	xlog(LOG_ERR, NULL, "%s: %s", __func__, uv[1].v.s.bytes);
-
-	authop_free(op);
-	return 0;
-}
-
-/*
- * We get a send cert message back from the authority.
- */
-static int
-agent_bootstrap_send_cert(struct umdr *msg, struct xerr *e)
-{
-	struct authop   *op;
-	struct authop    needle;
-	struct umdr_vec  uv[4];
-	X509            *crt;
-	FILE            *f;
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_init");
+		goto fail;
+	}
 
 	/*
 	 * Finally, we get the cert back.
 	 */
-	if (umdr_unpack(msg, msg_bootstrap_send_cert, uv,
-	    UMDRVECLEN(uv)) == MDR_FAIL)
-		return XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
+	if (umdr_unpack(&um, msg_bootstrap_send_cert, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
+		goto fail;
+	}
 
-	strlcpy(needle.id, uv[0].v.s.bytes, sizeof(needle.id));
-	op = SPLAY_FIND(authop_tree, &authops, &needle);
-	if (op == NULL)
-		return XERRF(e, XLOG_APP, XLOG_NOENT,
-		    "no such authop found: %s", needle.id);
-
-	if (op->type != AUTHOP_BOOTSTRAP)
-		return XERRF(e, XLOG_APP, XLOG_INVAL,
-		    "authop %s is not a bootstrap request", op->id);
-	if (op->step != AUTHOP_BOOTSTRAP_REQ_SENT)
-		return XERRF(e, XLOG_APP, XLOG_INVAL,
-		    "authop %s bootstrap is in the wrong state",
-		    op->id, op->type);
+	if (uv[0].v.s.bytes == NULL || strcmp(op->id, uv[0].v.s.bytes) != 0) {
+		XERRF(e, XLOG_APP, XLOG_INVAL,
+		    "expected authop %s, got %s", op->id, uv[0].v.s.bytes);
+		goto fail;
+	}
 
 	crt = d2i_X509(NULL, (const unsigned char **)&uv[1].v.b.bytes,
 	    uv[1].v.b.sz);
@@ -849,6 +759,8 @@ agent_bootstrap_send_cert(struct umdr *msg, struct xerr *e)
 		goto fail;
 	}
 	fclose(f);
+
+	xlog(LOG_INFO, NULL, "%s: new cert written", __func__);
 
 	cert = crt;
 	if (SSL_CTX_use_certificate(ssl_ctx, cert) != 1) {
@@ -895,7 +807,7 @@ agent_bootstrap_setup_cli(int argc, char **argv)
 	struct pmdr_vec   pv[6];
 	char              pbuf[1024];
 	struct umdr       um;
-	struct umdr_vec   uv[1];
+	struct umdr_vec   uv[2];
 	char              ubuf[1024];
 	struct xerr       e;
 	struct authop    *op;
@@ -967,11 +879,6 @@ agent_bootstrap_setup_cli(int argc, char **argv)
 		}
 	}
 
-	if (cn == NULL || *cn == '\0') {
-		bootstrap_setup_usage();
-		exit(1);
-	}
-
 	if (agent_init(xerrz(&e)) == -1) {
 		xerr_print(&e);
 		exit(1);
@@ -1022,7 +929,8 @@ agent_bootstrap_setup_cli(int argc, char **argv)
 		if (umdr_unpack(&um, mdr_msg_error, uv,
 		    UMDRVECLEN(uv)) == MDR_FAIL)
 			err(1, "umdr_unpack");
-		errx(1, "bootstrap setup failed: %s", uv[0].v.s.bytes);
+		errx(1, "bootstrap setup failed: %s (%u)",
+		    uv[1].v.s.bytes, uv[0].v.u32);
 	default:
 		errx(1, "bad response from authority");
 	}
@@ -1287,14 +1195,15 @@ agent_start(struct xerr *e)
 		    certalator_conf.lock_file);
 
 	if (flock(lock_fd, LOCK_EX|LOCK_NB) == -1) {
-		if (errno == EWOULDBLOCK)
+		if (errno == EWOULDBLOCK) {
+			close(lock_fd);
 			return XERRF(e, XLOG_ERRNO, errno,
 			    "lock file %s is already locked; "
 			    "is another instance running?",
 			    certalator_conf.lock_file);
-		else
-			return XERRF(e, XLOG_ERRNO, errno, "flock");
-		return -1;
+		}
+		close(lock_fd);
+		return XERRF(e, XLOG_ERRNO, errno, "flock");
 	}
 
 	if ((pid = fork()) == -1) {
@@ -1304,6 +1213,8 @@ agent_start(struct xerr *e)
 		close(lock_fd);
 		if (agent_init(xerrz(e)) == -1)
 			return XERR_PREPENDFN(e);
+		xlog(LOG_NOTICE, NULL, "%s: finished initialization; we are "
+		    "%san authority", __func__, (is_authority) ? "" : "not ");
 		return 0;
 	}
 
@@ -1335,7 +1246,7 @@ agent_start(struct xerr *e)
 
 	setproctitle("agent");
 
-	xlog(LOG_NOTICE, NULL, "%s: running with pid %u", __func__, getpid());
+	xlog(LOG_NOTICE, NULL, "%s: initialized", __func__);
 
 	snprintf(pid_line, sizeof(pid_line), "%d\n", getpid());
 	if (write(lock_fd, pid_line, strlen(pid_line)) == -1) {

@@ -149,6 +149,58 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 	return found;
 }
 
+X509_NAME *
+cert_subject_from_str(const char *subject, struct xerr *e)
+{
+	char       subject2[CERTALATOR_MAX_SUBJET_LENGTH];
+	char      *token, *field, *value, *t;
+	char      *save1, *save2;
+	X509_NAME *name;
+
+	if (strlcpy(subject2, subject, sizeof(subject2)) >= sizeof(subject2)) {
+		XERRF(e, XLOG_APP, XLOG_NAMETOOLONG, "subject is too long");
+		return NULL;
+	}
+
+	if ((name = X509_NAME_new()) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_NAME_new");
+		return NULL;
+	}
+
+	for (t = subject2; ; t = NULL) {
+		token = strtok_r(t, "/", &save1);
+		if (token == NULL)
+			break;
+
+		if (strcmp(token, "") == 0)
+			continue;
+
+		field = strtok_r(token, "=", &save2);
+		if (field == NULL) {
+			XERRF(e, XLOG_APP, XLOG_INVAL, "malformed subject");
+			goto fail;
+		}
+
+		value = strtok_r(NULL, "=", &save2);
+		if (value == NULL) {
+			XERRF(e, XLOG_APP, XLOG_INVAL, "malformed subject");
+			goto fail;
+		}
+
+		if (!X509_NAME_add_entry_by_txt(name, field,
+		    MBSTRING_ASC, (unsigned char *)value, -1, -1, 0)) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_NAME_add_entry_by_txt: %s=%s",
+			    field, value);
+			goto fail;
+		}
+	}
+	return name;
+fail:
+	X509_NAME_free(name);
+	return NULL;
+}
+
 int
 cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
 {
@@ -187,11 +239,11 @@ cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
 		    ERR_error_string(ERR_get_error(), NULL));
 		return -1;
 	}
-
 	if ((r = X509_verify_cert(ctx)) <= 0) {
 		X509_STORE_CTX_cleanup(ctx);
 		xlog(LOG_ERR, NULL, "X509_verify_cert: %s",
-		    ERR_error_string(ERR_get_error(), NULL));
+		    X509_verify_cert_error_string(
+		    X509_STORE_CTX_get_error(ctx)));
 		return -1;
 	}
 	X509_STORE_CTX_cleanup(ctx);
@@ -393,6 +445,133 @@ cert_is_selfsigned(X509 *crt)
 		return 1;
 
 	return 0;
+}
+
+X509 *
+cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
+{
+	X509           *newcrt;
+	BIGNUM         *serial;
+	X509_EXTENSION *ex;
+	X509V3_CTX      ctx;
+	X509_NAME      *name;
+	char           *sans;
+	time_t          in_tm;
+
+	// TODO: verify first?
+
+	X509V3_set_ctx(&ctx, agent_cert(), NULL, req, NULL, 0);
+
+	if ((newcrt = X509_new()) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_new");
+		return NULL;
+	}
+	if (!X509_set_version(newcrt, 2)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_version");
+		return NULL;
+	}
+
+	serial = cert_new_serial(xerrz(e));
+	if (serial == NULL)
+		return NULL;
+
+	if (BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(newcrt)) == NULL) {
+		BN_free(serial);
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_to_ASN1_INTEGER");
+		return NULL;
+	}
+	BN_free(serial);
+
+	if (!X509_set_issuer_name(newcrt,
+	    X509_get_subject_name(agent_cert()))) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_issuer_name");
+		return NULL;
+	}
+
+	if (be->flags & CERTDB_BOOTSTRAP_FLAG_SETCN) {
+		name = cert_subject_from_str(be->subject, xerrz(e));
+		if (name == NULL) {
+			XERR_PREPENDFN(e);
+			return NULL;
+		}
+		if (!X509_set_subject_name(newcrt, name)) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_set_subject_name");
+			X509_NAME_free(name);
+			return NULL;
+		}
+	} else {
+		if (!X509_set_subject_name(newcrt,
+		    X509_REQ_get_subject_name(req))) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_set_subject_name");
+			return NULL;
+		}
+	}
+
+	if (!X509_set_pubkey(newcrt, X509_REQ_get0_pubkey(req))) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_pubkey");
+		return NULL;
+	}
+
+	in_tm = be->not_before_sec;
+	X509_time_adj(X509_get_notBefore(newcrt), 0, &in_tm);
+	in_tm = be->not_after_sec;
+	X509_time_adj(X509_get_notAfter(newcrt), 0, &in_tm);
+
+	if ((strlist_join(be->sans, be->sans_sz, &sans)) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
+		return NULL;
+	}
+	if (!cert_add_ext(&ctx, newcrt, NID_subject_alt_name, sans)) {
+		free(sans);
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_subject_alt_name");
+		return NULL;
+	}
+
+	if (!cert_add_ext(&ctx, newcrt, NID_basic_constraints,
+	    "critical,CA:false")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_basic_constraints");
+		return NULL;
+	}
+	if (!cert_add_ext(&ctx, newcrt, NID_key_usage,
+	    "critical,nonRepudiation,digitalSignature")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_key_usage");
+		return NULL;
+	}
+	if (!cert_add_ext(&ctx, newcrt, NID_ext_key_usage,
+	    "serverAuth,clientAuth")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_ext_key_usage");
+		return NULL;
+	}
+	if (!cert_add_ext(&ctx, newcrt, NID_subject_key_identifier, "hash")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_subject_key_identifier");
+		return NULL;
+	}
+	if (!cert_add_ext(&ctx, newcrt, NID_authority_key_identifier,
+	    "keyid,issuer")) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_authority_key_identifier");
+		return NULL;
+	}
+
+	ex = cert_encode_certalator_roles((const char **)be->roles);
+	if (!X509_add_ext(newcrt, ex, -1)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
+		return NULL;
+	}
+
+	if (!X509_sign(newcrt, agent_key(), NULL)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
+		return NULL;
+	}
+
+	return newcrt;
 }
 
 X509 *
@@ -662,6 +841,85 @@ cert_selfsign(EVP_PKEY *pkey, struct xerr *e)
 fail:
 	X509_free(newcrt);
 	return NULL;
+}
+
+int
+cert_new_selfreq(EVP_PKEY *key, const X509_NAME *subject, const char *ip6,
+    unsigned char **req_buf, size_t *req_len, struct xerr *e)
+{
+	/* Inspired by OpenBSD's acme-client/keyproc.c:77 */
+	X509_REQ                 *req;
+	X509_EXTENSION           *ex;
+	char                     *sans = NULL;
+	STACK_OF(X509_EXTENSION) *exts;
+
+	if ((req = X509_REQ_new()) == NULL)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_new");
+
+	if (!X509_REQ_set_pubkey(req, key)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_set_pubkey");
+		goto fail;
+	}
+
+	if (!X509_REQ_set_subject_name(req, subject)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "X509_req_set_subject_name");
+		goto fail;
+	}
+
+	if ((exts = sk_X509_EXTENSION_new_null()) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "sk_X509_EXTENSION_new_null");
+		goto fail;
+	}
+
+	if (asprintf(&sans, "IP:%s", ip6) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "asprintf");
+		goto fail;
+	}
+
+        if (!(ex = X509V3_EXT_conf_nid(NULL, NULL,
+	    NID_subject_alt_name, sans))) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509V3_EXT_conf_nid");
+		goto fail;
+	}
+	sk_X509_EXTENSION_push(exts, ex);
+	if (!X509_REQ_add_extensions(req, exts)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_add_extensions");
+		goto fail;
+        }
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+
+	if (!X509_REQ_sign(req, key, NULL)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_reqsign");
+		goto fail;
+        }
+
+	/*
+	 * Serialise to DER
+	 */
+	*req_len = i2d_X509_REQ(req, req_buf);
+	if (*req_len < 0) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509_REQ");
+		goto fail;
+	}
+
+
+	/*
+	 * We don't need to fully populate the REQ. We should add a SANS for
+	 * our IP address so the dialback works. The authority will take care
+	 * of adding all configured SANs to the cert during signing.
+	 */
+
+	// TODO: leak? double-free?
+	X509_REQ_free(req);
+	free(sans);
+	return 0;
+fail:
+	X509_REQ_free(req);
+	if (sans != NULL)
+		free(sans);
+	return -1;
 }
 
 /*

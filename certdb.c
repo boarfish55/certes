@@ -143,6 +143,7 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const uint8_t *bootstrap_key,
 	char        *roles = NULL;
 	int          roles_len;
 	int          subject_len;
+	const void  *b;
 
 	if ((r = sqlite3_bind_blob(qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.i_bootstrap_key, bootstrap_key,
@@ -187,9 +188,12 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const uint8_t *bootstrap_key,
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
 	}
-	strlcpy(dst->subject,
-	    sqlite3_column_blob(qry_bootstrap_get.stmt,
-	    qry_bootstrap_get.o_subject), subject_len);
+	b = sqlite3_column_blob(qry_bootstrap_get.stmt,
+	    qry_bootstrap_get.o_subject);
+	if (b != NULL)
+		strlcpy(dst->subject, b, subject_len);
+	else
+		dst->subject[0] = '\0';
 
 	sans_len = sqlite3_column_bytes(
 	    qry_bootstrap_get.stmt,
@@ -200,14 +204,17 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const uint8_t *bootstrap_key,
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
-		memcpy(sans,
-		    sqlite3_column_blob(qry_bootstrap_get.stmt,
-		    qry_bootstrap_get.o_sans), sans_len);
+		b = sqlite3_column_blob(qry_bootstrap_get.stmt,
+		    qry_bootstrap_get.o_sans);
+		if (b == NULL) {
+			free(dst->subject);
+			XERRF(e, XLOG_ERRNO, errno, "malloc");
+			goto fail;
+		}
+		memcpy(sans, b, sans_len);
 		if ((dst->sans_sz = strlist_split(&dst->sans,
 		    sans, sans_len)) == -1) {
 			free(dst->subject);
-			free(sans);
-			free(roles);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
@@ -219,19 +226,23 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const uint8_t *bootstrap_key,
 	if (roles_len > 0) {
 		if ((roles = malloc(roles_len)) == NULL) {
 			free(dst->subject);
-			free(sans);
+			free(dst->sans);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
-		memcpy(roles,
-		    sqlite3_column_blob(qry_bootstrap_get.stmt,
-		    qry_bootstrap_get.o_roles), roles_len);
+		b = sqlite3_column_blob(qry_bootstrap_get.stmt,
+		    qry_bootstrap_get.o_roles);
+		if (b == NULL) {
+			free(dst->subject);
+			free(dst->sans);
+			XERRF(e, XLOG_ERRNO, errno, "malloc");
+			goto fail;
+		}
+		memcpy(roles, b, roles_len);
 		if ((dst->roles_sz = strlist_split(&dst->roles,
 		    roles, roles_len)) == -1) {
-			free(dst->sans);
 			free(dst->subject);
-			free(sans);
-			free(roles);
+			free(dst->sans);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
@@ -266,6 +277,9 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 	char        *roles = NULL;
 	int          roles_len;
 	int          subject_len;
+	const void  *b;
+
+	dst->subject = NULL;
 
 	if ((r = sqlite3_bind_blob(qry_cert_get.stmt,
 	    qry_cert_put.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
@@ -300,35 +314,65 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
 	}
-	strlcpy(dst->subject,
-	    sqlite3_column_blob(qry_cert_get.stmt,
-	    qry_cert_get.o_subject), subject_len);
+	b = sqlite3_column_blob(qry_cert_get.stmt,
+	    qry_cert_get.o_subject);
+	if (b != NULL)
+		strlcpy(dst->subject, b, subject_len);
+	else
+		dst->subject[0] = '\0';
 
 	sans_len = sqlite3_column_bytes(
 	    qry_cert_get.stmt,
 	    qry_cert_get.o_sans);
-	if ((sans = malloc(sans_len)) == NULL) {
-		free(dst->subject);
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
-		goto fail;
+	if (sans_len > 0) {
+		if ((sans = malloc(sans_len)) == NULL) {
+			free(dst->subject);
+			XERRF(e, XLOG_ERRNO, errno, "malloc");
+			goto fail;
+		}
+		b = sqlite3_column_blob(qry_cert_get.stmt,
+		    qry_cert_get.o_sans);
+		if (b == NULL) {
+			free(dst->subject);
+			XERRF(e, XLOG_ERRNO, errno, "sans is null");
+			goto fail;
+		}
+		memcpy(sans, b, sans_len);
+		if ((dst->sans_sz = strlist_split(&dst->sans,
+		    sans, sans_len)) == -1) {
+			free(dst->subject);
+			XERRF(e, XLOG_ERRNO, errno, "malloc");
+			goto fail;
+		}
 	}
-	memcpy(sans,
-	    sqlite3_column_blob(qry_cert_get.stmt,
-	    qry_cert_get.o_subject), sans_len);
 
 	roles_len = sqlite3_column_bytes(
 	    qry_cert_get.stmt,
 	    qry_cert_get.o_roles);
-	if ((roles = malloc(roles_len)) == NULL) {
-		free(dst->subject);
-		free(sans);
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
-		goto fail;
+	if (roles_len > 0) {
+		if ((roles = malloc(roles_len)) == NULL) {
+			free(dst->subject);
+			free(dst->sans);
+			XERRF(e, XLOG_ERRNO, errno, "malloc");
+			goto fail;
+		}
+		b = sqlite3_column_blob(qry_cert_get.stmt,
+		    qry_cert_get.o_roles);
+		if (b == NULL) {
+			free(dst->subject);
+			free(dst->sans);
+			XERRF(e, XLOG_ERRNO, errno, "sans is null");
+			goto fail;
+		}
+		memcpy(roles, b, roles_len);
+		if ((dst->roles_sz = strlist_split(&dst->roles,
+		    roles, roles_len)) == -1) {
+			free(dst->subject);
+			free(dst->sans);
+			XERRF(e, XLOG_ERRNO, errno, "malloc");
+			goto fail;
+		}
 	}
-	memcpy(roles,
-	    sqlite3_column_blob(qry_cert_get.stmt,
-	    qry_cert_get.o_subject), roles_len);
-
 
 	dst->not_before_sec = (uint64_t)sqlite3_column_int64(
 	    qry_cert_get.stmt,
@@ -339,25 +383,6 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 	dst->flags = (uint32_t)sqlite3_column_int(
 	    qry_cert_get.stmt,
 	    qry_cert_get.o_flags);
-
-	if ((dst->sans_sz = strlist_split(&dst->sans,
-	    sans, sans_len)) == -1) {
-		free(dst->subject);
-		free(sans);
-		free(roles);
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
-		goto fail;
-	}
-
-	if ((dst->roles_sz = strlist_split(&dst->roles,
-	    roles, roles_len)) == -1) {
-		free(dst->sans);
-		free(dst->subject);
-		free(sans);
-		free(roles);
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
-		goto fail;
-	}
 
 	free(sans);
 	free(roles);
