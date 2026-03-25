@@ -147,7 +147,7 @@ agent_connect(struct xerr *e)
 	int                try;
 
 	if ((fd = socket(AF_LOCAL, SOCK_STREAM, 0)) == -1)
-		return XERRF(e, XLOG_ERRNO, errno, "%s: socket", __func__);
+		return XERRF(e, XLOG_ERRNO, errno, "socket");
 
 	for (try = 0; try < 5 && agent_fd == -1; try++) {
 		bzero(&saddr, sizeof(saddr));
@@ -180,7 +180,7 @@ agent_tasks(struct xerr *e)
 {
 	purge_authops();
 	if (cert_is_selfsigned(cert)) {
-		if (agent_bootstrap(e) == -1)
+		if (agent_bootstrap(xerrz(e)) == -1)
 			return XERR_PREPENDFN(e);
 	}
 
@@ -231,7 +231,7 @@ agent_run(int lsock, struct xerr *e)
 
 			/* Run background tasks when we're idle */
 			if (agent_tasks(xerrz(e)) == -1)
-				xlog(LOG_ERR, e, "agent_tasks");
+				xlog(LOG_ERR, e, "%s", __func__);
 			continue;
 		}
 
@@ -615,7 +615,7 @@ agent_bootstrap(struct xerr *e)
 
 	if (b64dec(bootstrap_key, sizeof(bootstrap_key),
 	    certalator_conf.bootstrap_key) < sizeof(bootstrap_key))
-		return XERRF(e, XLOG_ERRNO, errno, "%s: b64dec", __func__);
+		return XERRF(e, XLOG_ERRNO, errno, "b64dec");
 
 	if ((op = authop_new(AUTHOP_BOOTSTRAP, xerrz(e))) == NULL) {
 		bootstrap_in_progress = 0;

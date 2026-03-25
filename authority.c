@@ -244,15 +244,6 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 		goto befail;
 	}
 
-	if (BIO_do_handshake(bio) <= 0) {
-		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
-		    "dialback failed SSL handshake");
-		BIO_free(bio);
-		SSL_CTX_free(ctx);
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "BIO_do_handshake");
-	}
-
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	pv[0].type = MDR_S;
 	pv[0].v.s = op_id;
