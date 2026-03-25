@@ -78,7 +78,8 @@ struct mdr_def msgdef_bootstrap_send_cert = {
 	"certalator.bootstrap_send_cert",
 	{
 		MDR_S,   /* Operation identifier */
-		MDR_B,   /* X509 */
+		MDR_B,   /* X509 cert (DER) */
+		MDR_B,   /* X509 intermediate certs (DER, with size) */
 		MDR_LAST
 	}
 };
@@ -89,12 +90,12 @@ beout_ok(struct mdrd_besession *sess, const char *op_id, uint32_t beout_flags)
 {
 	struct pmdr     pm;
 	char            pbuf[1024];
-	struct pmdr_vec pv[3];
+	struct pmdr_vec pv[1];
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	pv[0].type = MDR_S;
 	pv[0].v.s = op_id;
-	if (pmdr_pack(&pm, msg_ok, pv, 2) == MDR_FAIL)
+	if (pmdr_pack(&pm, msg_ok, pv, PMDRVECLEN(pv)) == MDR_FAIL)
 		abort();
 
 	return mdrd_beout(sess, beout_flags, &pm);
@@ -133,6 +134,8 @@ load_mdr_defs()
 	/*
 	 * Agent/Authority messages.
 	 */
+	if ((msg_ok = mdr_register_spec(&msgdef_ok)) == NULL)
+		errx(1, "mdr_register_spec");
 	if ((msg_error = mdr_register_spec(&msgdef_error)) == NULL)
 		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_setup =

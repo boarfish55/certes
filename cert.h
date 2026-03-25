@@ -22,6 +22,6 @@ int             cert_is_selfsigned(X509 *crt);
 X509           *cert_sign_req(X509_REQ *, const struct bootstrap_entry *,
                     struct xerr *);
 int             cert_new_selfreq(EVP_PKEY *, const X509_NAME *, const char *,
-                    unsigned char **, size_t *, struct xerr *);
+                    unsigned char **, int *, struct xerr *);
 
 #endif

@@ -227,18 +227,13 @@ cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
 		return -1;
 	}
 
-	// TODO: do a challenge on the client and its cert name. The peer
-	// IP on the connection should match one of the subjectAltNames, or
-	// the commonName of the cert. If there's no match, deny.
-	if (challenge) {
-	}
-
 	if (!X509_STORE_CTX_init(ctx, agent_cert_store(), crt, NULL)) {
 		X509_STORE_CTX_cleanup(ctx);
 		xlog(LOG_ERR, NULL, "X509_STORE_CTX_new: %s",
 		    ERR_error_string(ERR_get_error(), NULL));
 		return -1;
 	}
+
 	if ((r = X509_verify_cert(ctx)) <= 0) {
 		X509_STORE_CTX_cleanup(ctx);
 		xlog(LOG_ERR, NULL, "X509_verify_cert: %s",
@@ -246,43 +241,8 @@ cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
 		    X509_STORE_CTX_get_error(ctx)));
 		return -1;
 	}
+
 	X509_STORE_CTX_cleanup(ctx);
-
-	// TODO: remove, no need during verify
-	//roles_idx = X509_get_ext_by_NID(crt, NID_certalator_roles, -1);
-	//if (roles_idx == -1)
-	//	xlog(LOG_ERR, NULL,
-	//	    "%s: certalatorRoles extension not found", __func__);
-
-	//if ((ex = X509_get_ext(crt, roles_idx)) == NULL) {
-	//	xlog(LOG_ERR, NULL, "X509_get_ext: %s",
-	//	    ERR_error_string(ERR_get_error(), NULL));
-	//	return -1;
-	//}
-
-	//roles = malloc(CERTALATOR_MAX_ROLES *
-	//    (sizeof(char *) + CERTALATOR_MAX_ROLE_LENGTH));
-	//if (roles == NULL) {
-	//	xlog_strerror(LOG_ERR, errno, "%s: malloc", __func__);
-	//	return -1;
-	//}
-
-	//bzero(roles, CERTALATOR_MAX_ROLES *
-	//    (sizeof(char *) + CERTALATOR_MAX_ROLE_LENGTH));
-	//for (i = 0; i < CERTALATOR_MAX_ROLES; i++)
-	//	roles[i] = (char *)roles +
-	//	    (CERTALATOR_MAX_ROLES * sizeof(char *)) +
-	//	    (i * CERTALATOR_MAX_ROLE_LENGTH);
-
-	//n = decode_certalator_roles(ex, roles, CERTALATOR_MAX_ROLES);
-	//if (n == -1) {
-	//	free(roles);
-	//	return -1;
-	//}
-
-	//for (i = 0; i < n; i++)
-	//	xlog(LOG_INFO, NULL, "role: %s\n", roles[i]);
-	//free(roles);
 	return 0;
 }
 
@@ -298,6 +258,9 @@ cert_new_serial(struct xerr *e)
 	int      l;
 	char     buf[MAX_HEX_SERIAL_LENGTH + 1];
 	char     tmpfile[PATH_MAX];
+
+	// TODO: use our certdb instead, initialize to the minimum
+	// if nonexistent
 
 	if (!BN_hex2bn(&min_bn, certalator_conf.min_serial)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
@@ -458,8 +421,6 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 	char           *sans;
 	time_t          in_tm;
 
-	// TODO: verify first?
-
 	X509V3_set_ctx(&ctx, agent_cert(), NULL, req, NULL, 0);
 
 	if ((newcrt = X509_new()) == NULL) {
@@ -584,7 +545,7 @@ cert_sign(X509 *crt, X509 *issuer, EVP_PKEY *key, const char **roles)
 	int             san_idx;
 	struct xerr     e;
 
-	// TODO: verify first?
+	// TODO: remove?
 
 	X509V3_set_ctx(&ctx, issuer, crt, NULL, NULL, 0);
 
@@ -845,7 +806,7 @@ fail:
 
 int
 cert_new_selfreq(EVP_PKEY *key, const X509_NAME *subject, const char *ip6,
-    unsigned char **req_buf, size_t *req_len, struct xerr *e)
+    unsigned char **req_buf, int *req_len, struct xerr *e)
 {
 	/* Inspired by OpenBSD's acme-client/keyproc.c:77 */
 	X509_REQ                 *req;
@@ -904,14 +865,12 @@ cert_new_selfreq(EVP_PKEY *key, const X509_NAME *subject, const char *ip6,
 		goto fail;
 	}
 
-
 	/*
 	 * We don't need to fully populate the REQ. We should add a SANS for
 	 * our IP address so the dialback works. The authority will take care
 	 * of adding all configured SANs to the cert during signing.
 	 */
 
-	// TODO: leak? double-free?
 	X509_REQ_free(req);
 	free(sans);
 	return 0;

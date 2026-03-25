@@ -277,6 +277,7 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 		XERRF(e, XLOG_APP, XLOG_SHORTIO, "BIO_write");
 	}
 
+	BIO_flush(bio);
 	BIO_free_all(bio);
 	SSL_CTX_free(ctx);
 	return status;
@@ -390,7 +391,66 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 	if (authority_challenge(sess, op_id, challenge_host, e) == -1)
 		return XERR_PREPENDFN(e);
 
+	beout_ok(sess, op_id, MDRD_BEOUT_FNONE);
 	return 0;
+}
+
+static int
+pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
+    struct xerr *e)
+{
+	STACK_OF(X509) *chain = NULL;
+	X509           *c;
+	int             i, status = 0;
+	size_t          sz;
+	uint8_t        *p, *der;
+
+	*der_chain = NULL;
+	*chain_sz = 0;
+
+	chain = X509_build_chain(crt, NULL, agent_cert_store(), 0, NULL, NULL);
+	if (chain == NULL)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_build_chain");
+
+	/*
+	 * We start at index 1 because we already send the cert itself.
+	 * We only want intermediates.
+	 */
+	for (i = 1; i < sk_X509_num(chain); i++) {
+		c = sk_X509_value(chain, i);
+		sz = i2d_X509(c, NULL);
+		if (sz < 0) {
+			status = XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "i2d_X509");
+			goto end;
+		}
+		*chain_sz += sz + sizeof(uint32_t);
+	}
+
+	if ((*der_chain = malloc(*chain_sz)) == NULL) {
+		status = XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto end;
+	}
+	p = *der_chain;
+
+	for (i = 1; i < sk_X509_num(chain); i++) {
+		c = sk_X509_value(chain, i);
+		sz = i2d_X509(c, &der);
+		if (sz < 0) {
+			free(*der_chain);
+			status = XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "i2d_X509");
+			goto end;
+		}
+		*((uint32_t *)p) = htobe32(sz);
+		p += sizeof(uint32_t);
+		memcpy(p, der, sz);
+		p += sz;
+		free(der);
+	}
+end:
+	sk_X509_pop_free(chain, X509_free);
+	return status;
 }
 
 int
@@ -402,11 +462,13 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	struct certalator_session *cs = (struct certalator_session *)sess->data;
 	X509                      *crt = NULL;
 	unsigned char             *crt_buf = NULL;
-	size_t                     crt_len;
+	int                        crt_len;
 	struct pmdr                pm;
 	char                       pbuf[certalator_conf.max_cert_size];
-	struct pmdr_vec            pv[2];
+	struct pmdr_vec            pv[3];
 	const char                *op_id;
+	uint8_t                   *der_chain = NULL;
+	size_t                     der_sz;
 
 	if (umdr_unpack(msg, msg_bootstrap_answer, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -458,12 +520,22 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
                 goto fail;
 	}
 
+	if (pack_intermediates(crt, &der_chain, &der_sz, xerrz(e)) == -1) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERR_PREPENDFN(e);
+                goto fail;
+	}
+
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	pv[0].type = MDR_S; /* Op ID */
 	pv[0].v.s = uv[0].v.s.bytes;
 	pv[1].type = MDR_B; /* cert */
 	pv[1].v.b.bytes = crt_buf;
 	pv[1].v.b.sz = crt_len;
+	pv[2].type = MDR_B; /* intermediates */
+	pv[2].v.b.bytes = der_chain;
+	pv[2].v.b.sz = der_sz;
 	if (pmdr_pack(&pm, msg_bootstrap_send_cert, pv,
 	    PMDRVECLEN(pv)) == MDR_FAIL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
@@ -480,10 +552,17 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 
 	xlog(LOG_NOTICE, NULL, "%s: op_id %s completed", __func__, op_id);
 
+	// TODO: clear bootstrap entry, create cert entry
+	// We need to keep the actual cert somewhere so we can revoke if
+	// needed.
+
+	free(der_chain);
 	X509_free(crt);
 	free(crt_buf);
 	return 0;
 fail:
+	if (der_chain != NULL)
+		free(crt);
 	if (crt != NULL)
 		X509_free(crt);
 	if (crt_buf != NULL)
