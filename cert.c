@@ -236,8 +236,8 @@ cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
 
 	if ((r = X509_verify_cert(ctx)) <= 0) {
 		X509_STORE_CTX_cleanup(ctx);
-		xlog(LOG_ERR, NULL, "X509_verify_cert: %s",
-		    X509_verify_cert_error_string(
+		xlog((r == 0) ? LOG_WARNING : LOG_ERR, NULL,
+		    "X509_verify_cert: %s", X509_verify_cert_error_string(
 		    X509_STORE_CTX_get_error(ctx)));
 		return -1;
 	}

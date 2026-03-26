@@ -200,6 +200,7 @@ agent_run(int lsock, struct xerr *e)
 	struct client *c, needle;
 	ssize_t        r;
 	struct umdr    um;
+	uint64_t       um_sz;
 	void          *tmp;
 
 	if ((fds = malloc(sizeof(struct pollfd) * fds_sz)) == NULL)
@@ -380,6 +381,11 @@ agent_run(int lsock, struct xerr *e)
 				xlog(LOG_ERR, NULL, "%s: unknown message %lu",
 				    __func__, umdr_dcv(&um));
 			}
+
+			um_sz = umdr_size(&um);
+			memmove(c->in_buf, c->in_buf + um_sz,
+			    c->in_buf_used - um_sz);
+			c->in_buf_used -= um_sz;
 		}
 	}
 	free(fds);
