@@ -31,6 +31,7 @@ static SSL_CTX     *ssl_ctx = NULL;
 static uint64_t     next_authop_id = 1;
 
 static struct timespec last_authop_purge = {0, 0};
+static struct timespec last_certdb_purge = {0, 0};
 static int             agent_fd = -1;
 static int             bootstrap_in_progress = 0;
 
@@ -104,7 +105,7 @@ static int            agent_bootstrap(struct xerr *);
 static int            agent_bootstrap_dialback(struct umdr *, struct xerr *);
 static void           purge_authops();
 static int            agent_connect(struct xerr *);
-static int            agent_tasks(struct xerr *);
+static void           agent_tasks();
 static int            agent_run(int, struct xerr *);
 static struct authop *authop_new(enum authop_type, struct xerr *);
 static void           authop_free(struct authop *);
@@ -123,7 +124,7 @@ purge_authops()
 	struct timespec  now;
 	struct authop   *op, *next;
 
-	clock_gettime(CLOCK_REALTIME, &now);
+	clock_gettime(CLOCK_MONOTONIC, &now);
 
 	/* We only purge every minute */
 	if (now.tv_sec - last_authop_purge.tv_sec <= 60)
@@ -135,7 +136,7 @@ purge_authops()
 			authop_free(op);
 	}
 
-	clock_gettime(CLOCK_REALTIME, &last_authop_purge);
+	clock_gettime(CLOCK_MONOTONIC, &last_authop_purge);
 }
 
 static int
@@ -175,20 +176,32 @@ agent_connect(struct xerr *e)
 	return 0;
 }
 
-static int
-agent_tasks(struct xerr *e)
+static void
+agent_tasks()
 {
+	struct timespec now;
+	struct xerr     e;
+
 	purge_authops();
+
 	if (cert_is_selfsigned(cert)) {
-		if (agent_bootstrap(xerrz(e)) == -1)
-			return XERR_PREPENDFN(e);
+		if (agent_bootstrap(xerrz(&e)) == -1)
+			xlog(LOG_ERR, &e, "%s", __func__);
 	}
 
-	// TODO: need a CRL refresh task
-	// TODO: task to purge expired bootstrap entries
-	// TODO: task to purge expired certs
-
-	return 0;
+	if (is_authority) {
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (now.tv_sec > last_certdb_purge.tv_sec + 300) {
+			memcpy(&last_certdb_purge, &now, sizeof(now));
+			if (certdb_clean_expired_certs(xerrz(&e)) == -1)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			if (certdb_clean_expired_bootstraps(xerrz(&e)) == -1)
+				xlog(LOG_ERR, &e, "%s", __func__);
+		}
+		// TODO: need a CRL regen task
+	} else {
+		// TODO: need a CRL refresh task
+	}
 }
 
 static int
@@ -231,8 +244,7 @@ agent_run(int lsock, struct xerr *e)
 			}
 
 			/* Run background tasks when we're idle */
-			if (agent_tasks(xerrz(e)) == -1)
-				xlog(LOG_ERR, e, "%s", __func__);
+			agent_tasks(xerrz(e));
 			continue;
 		}
 
@@ -489,7 +501,7 @@ authop_new(enum authop_type type, struct xerr *e)
 	}
 
 	op->type = type;
-	clock_gettime(CLOCK_REALTIME, &op->created_at);
+	clock_gettime(CLOCK_MONOTONIC, &op->created_at);
 	if (snprintf(op->id, sizeof(op->id), "%lu-%lu.%lu",
 	    next_authop_id, op->created_at.tv_sec, op->created_at.tv_nsec)
 	    >= sizeof(op->id)) {

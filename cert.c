@@ -259,9 +259,6 @@ cert_new_serial(struct xerr *e)
 	char     buf[MAX_HEX_SERIAL_LENGTH + 1];
 	char     tmpfile[PATH_MAX];
 
-	// TODO: use our certdb instead, initialize to the minimum
-	// if nonexistent
-
 	if (!BN_hex2bn(&min_bn, certalator_conf.min_serial)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
 		return NULL;
@@ -983,4 +980,42 @@ cert_subject_cn(const char *subject, char *cn, size_t cn_sz, struct xerr *e)
 	}
 
 	return XERRF(e, XLOG_APP, XLOG_NOENT, "no CN in subject");
+}
+
+char *
+cert_serial_to_hex(X509 *crt, struct xerr *e)
+{
+	BIGNUM *serial_bn;
+	char   *serial_hex;
+
+	if ((serial_bn = ASN1_INTEGER_to_BN(X509_get_serialNumber(crt),
+	    NULL)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "ASN1_INTEGER_to_BN");
+		return NULL;
+	}
+	if ((serial_hex = BN_bn2hex(serial_bn)) == NULL) {
+		BN_free(serial_bn);
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_bn2hex");
+		return NULL;
+	}
+	BN_free(serial_bn);
+	return serial_hex;
+}
+
+char *
+cert_subject_oneline(X509 *crt, struct xerr *e)
+{
+	X509_NAME *name;
+	char      *subject;
+
+	if ((name = X509_get_subject_name(crt)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_get_subject_name");
+		return NULL;
+	}
+
+	if ((subject = X509_NAME_oneline(name, NULL, 0)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_NAME_oneline");
+		return NULL;
+	}
+	return subject;
 }

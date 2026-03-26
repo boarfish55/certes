@@ -35,14 +35,14 @@ const char *qry_create_bootstrap_table = "create table if not exists bootstrap("
                 "primary key(bootstrap_key))";
 
 const char *qry_create_certs_table = "create table if not exists certs("
-                "serial blob not null, "
+                "serial text not null, "
 		"subject text not null, "
 		"sans blob, "
 		"roles blob, "
-		// TODO "gz_der blob, "
 		"not_before_sec int not null, "
 		"not_after_sec int not null, "
 		"flags int not null, "
+		"der blob not null, "
                 "primary key(serial))";
 
 const char *qry_create_certs_index = "create index if not exists "
@@ -66,6 +66,21 @@ struct {
             "values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         1, 2, 3, 4, 5, 6, 7, 8
 };
+
+struct {
+        sqlite3_stmt *stmt;
+        char         *sql;
+        int           i_bootstrap_key;
+} qry_bootstrap_del = {
+        NULL,
+        "delete from bootstrap where bootstrap_key = ?1",
+        1
+};
+
+const char *qry_bootstrap_del_expired =
+    "delete from bootstrap where valid_until_sec < unixepoch()";
+const char *qry_cert_del_expired =
+    "delete from certs where not_after_sec < unixepoch()";
 
 struct {
         sqlite3_stmt *stmt;
@@ -95,12 +110,13 @@ struct {
         int           i_not_before_sec;
         int           i_not_after_sec;
         int           i_flags;
+	int           i_der;
 } qry_cert_put = {
         NULL,
         "insert or replace into certs(serial, subject, "
-	    "sans, roles, not_before_sec, not_after_sec, flags) "
-            "values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        1, 2, 3, 4, 5, 6, 7
+	    "sans, roles, not_before_sec, not_after_sec, flags, der) "
+            "values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        1, 2, 3, 4, 5, 6, 7, 8
 };
 
 struct {
@@ -113,11 +129,12 @@ struct {
         int           o_not_before_sec;
         int           o_not_after_sec;
         int           o_flags;
+        int           o_der;
 } qry_cert_get = {
         NULL,
-        "select subject, sans, roles, not_before_sec, not_after_sec, flags "
-            "from certs where serial = ?1",
-        1, 0, 1, 2, 3, 4, 5
+        "select subject, sans, roles, not_before_sec, not_after_sec, flags, "
+            "der from certs where serial = ?1",
+        1, 0, 1, 2, 3, 4, 5, 6
 };
 
 static int
@@ -133,18 +150,37 @@ certdb_qry_cleanup(sqlite3_stmt *stmt, struct xerr *e)
 	return 0;
 }
 
-int
-certdb_get_bootstrap(struct bootstrap_entry *dst, const uint8_t *bootstrap_key,
-    size_t bootstrap_key_sz, struct xerr *e)
+void
+certdb_bootstrap_free(struct bootstrap_entry *be)
 {
-	int          r;
-	struct xerr  e2;
-	char        *sans = NULL;
-	int          sans_len;
-	char        *roles = NULL;
-	int          roles_len;
-	int          subject_len;
-	const void  *b;
+	if (be->subject != NULL)
+		free(be->subject);
+	if (be->sans != NULL)
+		free(be->sans);
+	if (be->roles != NULL)
+		free(be->roles);
+	free(be);
+}
+
+struct bootstrap_entry *
+certdb_get_bootstrap(const uint8_t *bootstrap_key, size_t bootstrap_key_sz,
+    struct xerr *e)
+{
+	struct bootstrap_entry *be;
+	int                     r;
+	struct xerr             e2;
+	char                   *sans = NULL;
+	int                     sans_len;
+	char                   *roles = NULL;
+	int                     roles_len;
+	int                     subject_len;
+	const void             *b;
+
+	if ((be = malloc(sizeof(struct bootstrap_entry))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		return NULL;
+	}
+	bzero(be, sizeof(struct bootstrap_entry));
 
 	if ((r = sqlite3_bind_blob(qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.i_bootstrap_key, bootstrap_key,
@@ -154,7 +190,6 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const uint8_t *bootstrap_key,
 		goto fail;
 	}
 
-	bzero(dst, sizeof(struct bootstrap_entry));
 	switch ((r = sqlite3_step(qry_bootstrap_get.stmt))) {
 	case SQLITE_ROW:
                 break;
@@ -174,48 +209,48 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const uint8_t *bootstrap_key,
                 goto fail;
         }
 
-	dst->flags = (uint32_t)sqlite3_column_int(
+	be->flags = (uint32_t)sqlite3_column_int(
 	    qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.o_flags);
 
-	dst->valid_until_sec = (uint64_t)sqlite3_column_int64(
+	be->valid_until_sec = (uint64_t)sqlite3_column_int64(
 	    qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.o_valid_until_sec);
 
 	subject_len = sqlite3_column_bytes(
 	    qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.o_subject) + 1;
-	if ((dst->subject = malloc(subject_len)) == NULL) {
+	if ((be->subject = malloc(subject_len)) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
 	}
 	b = sqlite3_column_blob(qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.o_subject);
 	if (b != NULL)
-		strlcpy(dst->subject, b, subject_len);
+		strlcpy(be->subject, b, subject_len);
 	else
-		dst->subject[0] = '\0';
+		be->subject[0] = '\0';
 
 	sans_len = sqlite3_column_bytes(
 	    qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.o_sans);
 	if (sans_len > 0) {
 		if ((sans = malloc(sans_len)) == NULL) {
-			free(dst->subject);
+			free(be->subject);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
 		b = sqlite3_column_blob(qry_bootstrap_get.stmt,
 		    qry_bootstrap_get.o_sans);
 		if (b == NULL) {
-			free(dst->subject);
+			free(be->subject);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
 		memcpy(sans, b, sans_len);
-		if ((dst->sans_sz = strlist_split(&dst->sans,
+		if ((be->sans_sz = strlist_split(&be->sans,
 		    sans, sans_len)) == -1) {
-			free(dst->subject);
+			free(be->subject);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
@@ -226,46 +261,96 @@ certdb_get_bootstrap(struct bootstrap_entry *dst, const uint8_t *bootstrap_key,
 	    qry_bootstrap_get.o_roles);
 	if (roles_len > 0) {
 		if ((roles = malloc(roles_len)) == NULL) {
-			free(dst->subject);
-			free(dst->sans);
+			free(be->subject);
+			free(be->sans);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
 		b = sqlite3_column_blob(qry_bootstrap_get.stmt,
 		    qry_bootstrap_get.o_roles);
 		if (b == NULL) {
-			free(dst->subject);
-			free(dst->sans);
+			free(be->subject);
+			free(be->sans);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
 		memcpy(roles, b, roles_len);
-		if ((dst->roles_sz = strlist_split(&dst->roles,
+		if ((be->roles_sz = strlist_split(&be->roles,
 		    roles, roles_len)) == -1) {
-			free(dst->subject);
-			free(dst->sans);
+			free(be->subject);
+			free(be->sans);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
 	}
 
-	dst->not_before_sec = (uint64_t)sqlite3_column_int64(
+	be->not_before_sec = (uint64_t)sqlite3_column_int64(
 	    qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.o_not_before_sec);
-	dst->not_after_sec = (uint64_t)sqlite3_column_int64(
+	be->not_after_sec = (uint64_t)sqlite3_column_int64(
 	    qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.o_not_after_sec);
 
 	free(sans);
 	free(roles);
 
-	return certdb_qry_cleanup(qry_bootstrap_get.stmt, e);
+	if (certdb_qry_cleanup(qry_bootstrap_get.stmt, e) == -1) {
+		XERR_PREPENDFN(e);
+		certdb_bootstrap_free(be);
+		return NULL;
+	}
+
+	return be;
 fail:
 	free(sans);
 	free(roles);
+	free(be);
 	if (certdb_qry_cleanup(qry_bootstrap_get.stmt, xerrz(&e2)) == -1)
 		xlog(LOG_ERR, &e2, "%s", __func__);
+	return NULL;
+}
+
+int
+certdb_del_bootstrap(const struct bootstrap_entry *be, struct xerr *e)
+{
+	int         r;
+	struct xerr e2;
+
+	if ((r = sqlite3_bind_blob(qry_bootstrap_del.stmt,
+	    qry_bootstrap_del.i_bootstrap_key, be->bootstrap_key,
+	    sizeof(be->bootstrap_key), SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	switch (sqlite3_step(qry_bootstrap_del.stmt)) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+	return certdb_qry_cleanup(qry_bootstrap_del.stmt, e);
+fail:
+	if (certdb_qry_cleanup(qry_bootstrap_del.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
 	return -1;
+}
+
+int
+certdb_clean_expired_bootstraps(struct xerr *e)
+{
+	int r;
+	if ((r = sqlite3_exec(db, qry_bootstrap_del_expired, NULL, NULL, NULL)))
+		return XERRF(e, XLOG_DB, r, "sqlite3_exec: %s",
+		    sqlite3_errmsg(db));
+	return 0;
 }
 
 int
@@ -282,7 +367,7 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 
 	dst->subject = NULL;
 
-	if ((r = sqlite3_bind_blob(qry_cert_get.stmt,
+	if ((r = sqlite3_bind_text(qry_cert_get.stmt,
 	    qry_cert_put.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
 		    sqlite3_errmsg(db));
@@ -321,6 +406,17 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 		strlcpy(dst->subject, b, subject_len);
 	else
 		dst->subject[0] = '\0';
+
+	dst->der_sz = sqlite3_column_bytes(
+	    qry_cert_get.stmt,
+	    qry_cert_get.o_der);
+	if ((dst->der = malloc(dst->der_sz)) == NULL) {
+		free(dst->subject);
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+	memcpy(dst->der, sqlite3_column_blob(qry_cert_get.stmt,
+	    qry_cert_get.o_der), dst->der_sz);
 
 	sans_len = sqlite3_column_bytes(
 	    qry_cert_get.stmt,
@@ -494,10 +590,10 @@ certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 	char        *roles = NULL;
 	int          roles_sz;
 
-	if ((r = sqlite3_bind_blob(qry_cert_put.stmt,
+	if ((r = sqlite3_bind_text(qry_cert_put.stmt,
 	    qry_cert_put.i_serial, entry->serial,
-	    sizeof(entry->serial), SQLITE_STATIC))) {
-		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+	    strlen(entry->serial), SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
 		    sqlite3_errmsg(db));
 		goto fail;
 	}
@@ -506,6 +602,13 @@ certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 	    qry_cert_put.i_subject, entry->subject,
 	    strlen(entry->subject), SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	if ((r = sqlite3_bind_blob(qry_cert_put.stmt,
+	    qry_cert_put.i_der, entry->der, entry->der_sz, SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
 		    sqlite3_errmsg(db));
 		goto fail;
 	}
@@ -576,6 +679,16 @@ fail:
 }
 
 int
+certdb_clean_expired_certs(struct xerr *e)
+{
+	int r;
+	if ((r = sqlite3_exec(db, qry_cert_del_expired, NULL, NULL, NULL)))
+		return XERRF(e, XLOG_DB, r, "sqlite3_exec: %s",
+		    sqlite3_errmsg(db));
+	return 0;
+}
+
+int
 certdb_init(const char *path, struct xerr *e)
 {
 	int r;
@@ -618,6 +731,12 @@ certdb_init(const char *path, struct xerr *e)
 		    "qry_bootstrap_get: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
+	if ((r = sqlite3_prepare_v2(db, qry_bootstrap_del.sql, -1,
+	    &qry_bootstrap_del.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_bootstrap_del: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
 
 	if ((r = sqlite3_prepare_v2(db, qry_cert_put.sql, -1,
 	    &qry_cert_put.stmt, NULL))) {
@@ -648,6 +767,10 @@ certdb_shutdown()
 	if (sqlite3_finalize(qry_bootstrap_get.stmt))
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_bootstrap_get: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_bootstrap_del.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_bootstrap_del: %s",
 		    __func__, sqlite3_errmsg(db));
 
 	if (sqlite3_finalize(qry_cert_put.stmt))

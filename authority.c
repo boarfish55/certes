@@ -291,7 +291,7 @@ int
 authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
     struct xerr *e)
 {
-	struct bootstrap_entry     be;
+	struct bootstrap_entry    *be = NULL;
 	struct umdr_vec            uv[3];
 	struct timespec            now;
 	struct certalator_session *cs = (struct certalator_session *)sess->data;
@@ -323,7 +323,8 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 		    "bootstrap key received from client has incorrect length");
 	}
 
-	if (certdb_get_bootstrap(&be, uv[1].v.b.bytes, uv[1].v.b.sz, e) == -1) {
+	if ((be = certdb_get_bootstrap(uv[1].v.b.bytes, uv[1].v.b.sz, e))
+	    == NULL) {
 		/*
 		 * We never report an error if the bootstrap key is not
 		 * found to mitigate enumeration attacks.
@@ -337,40 +338,49 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 	if (cs->req == NULL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "failed to decode REQ");
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "d2i_X509_REQ");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "d2i_X509_REQ");
+		goto fail;
 	}
 
-	if (be.flags & CERTDB_BOOTSTRAP_FLAG_SETCN) {
-		if (cert_subject_cn(be.subject, challenge_host,
-		    sizeof(challenge_host), e) == -1)
-			return XERR_PREPENDFN(e);
+	if (be->flags & CERTDB_BOOTSTRAP_FLAG_SETCN) {
+		if (cert_subject_cn(be->subject, challenge_host,
+		    sizeof(challenge_host), e) == -1) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
 	} else {
 		subject = X509_REQ_get_subject_name(cs->req);
-		if (subject == NULL)
-			return XERRF(e, XLOG_SSL, ERR_get_error(),
+		if (subject == NULL) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "X509_REQ_get_subject_name");
+			goto fail;
+		}
 		if (X509_NAME_get_text_by_NID(subject, NID_commonName,
-		    challenge_host, sizeof(challenge_host)) == -1)
-			return XERRF(e, XLOG_SSL, ERR_get_error(),
+		    challenge_host, sizeof(challenge_host)) == -1) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "X509_NAME_get_text_by_NID");
+			goto fail;
+		}
 	}
 
 	/*
 	 * Make sure the key has not expired.
 	 */
 	clock_gettime(CLOCK_REALTIME, &now);
-	if (now.tv_sec > be.valid_until_sec) {
+	if (now.tv_sec > be->valid_until_sec) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "bootstrap key is expired");
-		return XERRF(e, XLOG_APP, XLOG_TIMEOUT,
+		XERRF(e, XLOG_APP, XLOG_TIMEOUT,
 		    "bootstrap key is expired");
+		goto fail;
 	}
 
 	if ((cs->bootstrap_key = malloc(CERTALATOR_BOOTSTRAP_KEY_LENGTH))
 	    == NULL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
-		return XERRF(e, XLOG_ERRNO, errno, "malloc");
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
 	}
 	memcpy(cs->bootstrap_key, uv[1].v.b.bytes,
 	    CERTALATOR_BOOTSTRAP_KEY_LENGTH);
@@ -379,11 +389,16 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 	 * Then we challenge the client by connecting to its CommonName
 	 * as per our DB.
 	 */
-	if (authority_challenge(sess, op_id, challenge_host, e) == -1)
-		return XERR_PREPENDFN(e);
-
+	if (authority_challenge(sess, op_id, challenge_host, e) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	certdb_bootstrap_free(be);
 	beout_ok(sess, op_id, MDRD_BEOUT_FNONE);
 	return 0;
+fail:
+	certdb_bootstrap_free(be);
+	return -1;
 }
 
 static int
@@ -448,7 +463,8 @@ int
 authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
     struct xerr *e)
 {
-	struct bootstrap_entry     be;
+	struct bootstrap_entry    *be = NULL;
+	struct cert_entry          ce;
 	struct umdr_vec            uv[2];
 	struct certalator_session *cs = (struct certalator_session *)sess->data;
 	X509                      *crt = NULL;
@@ -460,6 +476,7 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	const char                *op_id;
 	uint8_t                   *der_chain = NULL;
 	size_t                     der_sz;
+	struct tm                  tm;
 
 	if (umdr_unpack(msg, msg_bootstrap_answer, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -486,8 +503,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 		    "client failed challenge");
 	}
 
-	if (certdb_get_bootstrap(&be, cs->bootstrap_key,
-	    CERTALATOR_BOOTSTRAP_KEY_LENGTH, e) == -1) {
+	if ((be = certdb_get_bootstrap(cs->bootstrap_key,
+	    CERTALATOR_BOOTSTRAP_KEY_LENGTH, e)) == NULL) {
 		/*
 		 * We always reply OK to mitigate enumeration attacks.
 		 */
@@ -495,7 +512,7 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 		return XERR_PREPENDFN(e);
 	}
 
-	crt = cert_sign_req(cs->req, &be, xerrz(e));
+	crt = cert_sign_req(cs->req, be, xerrz(e));
 	if (crt == NULL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
@@ -536,22 +553,61 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 		goto fail;
 	}
 
+	bzero(&ce, sizeof(ce));
+	if ((ce.serial = cert_serial_to_hex(crt, xerrz(e))) == NULL) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	if ((ce.subject = cert_subject_oneline(crt, xerrz(e))) == NULL) {
+		free(ce.serial);
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+
+	ce.sans = be->sans;
+	ce.sans_sz = be->sans_sz;
+	ce.roles = be->roles;
+	ce.roles_sz = be->roles_sz;
+	ASN1_TIME_to_tm(X509_get_notBefore(crt), &tm);
+	ce.not_before_sec = timegm(&tm);
+	ASN1_TIME_to_tm(X509_get_notAfter(crt), &tm);
+	ce.not_after_sec = timegm(&tm);
+	ce.flags = CERTDB_FLAG_NONE;
+	ce.der = crt_buf;
+	ce.der_sz = crt_len;
+	if (certdb_put_cert(&ce, xerrz(e)) == -1) {
+		free(ce.serial);
+		free(ce.subject);
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	free(ce.serial);
+	free(ce.subject);
+
 	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
 		goto fail;
 	}
 
+	if (certdb_del_bootstrap(be, xerrz(e)) == -1)
+		xlog(LOG_ERR, e, "%s", __func__);
+
 	xlog(LOG_NOTICE, NULL, "%s: op_id %s completed", __func__, op_id);
 
-	// TODO: clear bootstrap entry, create cert entry
-	// We need to keep the actual cert somewhere so we can revoke if
-	// needed.
-
 	free(der_chain);
-	X509_free(crt);
 	free(crt_buf);
+	X509_free(crt);
+	certdb_bootstrap_free(be);
 	return 0;
 fail:
+	certdb_bootstrap_free(be);
 	if (der_chain != NULL)
 		free(crt);
 	if (crt != NULL)
