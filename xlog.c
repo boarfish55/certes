@@ -234,51 +234,51 @@ xlog(int priority, const struct xerr *e, const char *fmt, ...)
 	if (e->sp == XLOG_ERRNO && e->code != 0) {
 		strerror_r(e->code, errmsg, sizeof(errmsg));
 		if (fmt) {
-			syslog(priority, "[sp=%d, code=%ld]: %s: %s: %s",
+			syslog(priority, "[sp=%d, code=%lld]: %s: %s: %s",
 			    e->sp, e->code, msg, e->msg, errmsg);
-			xlog_fprintf("[sp=%d, code=%ld]: %s: %s: %s",
+			xlog_fprintf("[sp=%d, code=%lld]: %s: %s: %s",
 			    e->sp, e->code, msg, e->msg, errmsg);
 		} else {
-			syslog(priority, "[sp=%d, code=%ld]: %s: %s",
+			syslog(priority, "[sp=%d, code=%lld]: %s: %s",
 			    e->sp, e->code, e->msg, errmsg);
-			xlog_fprintf("[sp=%d, code=%ld]: %s: %s",
+			xlog_fprintf("[sp=%d, code=%lld]: %s: %s",
 			    e->sp, e->code, e->msg, errmsg);
 		}
 	} else if (e->sp == XLOG_EAI && e->code != 0) {
 		if (fmt) {
-			syslog(priority, "[sp=%d, code=%ld]: %s: %s: %s",
+			syslog(priority, "[sp=%d, code=%lld]: %s: %s: %s",
 			    e->sp, e->code, msg, e->msg, gai_strerror(e->code));
-			xlog_fprintf("[sp=%d, code=%ld]: %s: %s: %s",
+			xlog_fprintf("[sp=%d, code=%lld]: %s: %s: %s",
 			    e->sp, e->code, msg, e->msg, gai_strerror(e->code));
 		} else {
-			syslog(priority, "[sp=%d, code=%ld]: %s: %s",
+			syslog(priority, "[sp=%d, code=%lld]: %s: %s",
 			    e->sp, e->code, e->msg, gai_strerror(e->code));
-			xlog_fprintf("[sp=%d, code=%ld]: %s: %s",
+			xlog_fprintf("[sp=%d, code=%lld]: %s: %s",
 			    e->sp, e->code, e->msg, gai_strerror(e->code));
 		}
 	} else if (e->sp == XLOG_SSL && e->code != 0) {
 		ERR_error_string_n(e->code, errmsg, sizeof(errmsg));
 		if (fmt) {
-			syslog(priority, "[sp=%d, code=%ld]: %s: %s: %s",
+			syslog(priority, "[sp=%d, code=%lld]: %s: %s: %s",
 			    e->sp, e->code, msg, e->msg, errmsg);
-			xlog_fprintf("[sp=%d, code=%ld]: %s: %s: %s",
+			xlog_fprintf("[sp=%d, code=%lld]: %s: %s: %s",
 			    e->sp, e->code, msg, e->msg, errmsg);
 		} else {
-			syslog(priority, "[sp=%d, code=%ld]: %s: %s",
+			syslog(priority, "[sp=%d, code=%lld]: %s: %s",
 			    e->sp, e->code, e->msg, errmsg);
-			xlog_fprintf("[sp=%d, code=%ld]: %s: %s",
+			xlog_fprintf("[sp=%d, code=%lld]: %s: %s",
 			    e->sp, e->code, e->msg, errmsg);
 		}
 	} else {
 		if (fmt) {
-			syslog(priority, "[sp=%d, code=%ld]: %s: %s",
+			syslog(priority, "[sp=%d, code=%lld]: %s: %s",
 			    e->sp, e->code, msg, e->msg);
-			xlog_fprintf("[sp=%d, code=%ld]: %s: %s",
+			xlog_fprintf("[sp=%d, code=%lld]: %s: %s",
 			    e->sp, e->code, msg, e->msg);
 		} else {
 			syslog(priority, "[sp=%d, code=%lu]: %s",
 			    e->sp, e->code, e->msg);
-			xlog_fprintf("[sp=%d, code=%ld]: %s",
+			xlog_fprintf("[sp=%d, code=%lld]: %s",
 			    e->sp, e->code, e->msg);
 		}
 	}
@@ -315,17 +315,17 @@ xerr_print(const struct xerr *e)
 
 	if (e->sp == XLOG_ERRNO && e->code != 0) {
 		strerror_r(e->code, errmsg, sizeof(errmsg));
-		warnx("[sp=%d, code=%ld]: %s: %s",
+		warnx("[sp=%d, code=%lld]: %s: %s",
 		    e->sp, e->code, e->msg, errmsg);
 	} else if (e->sp == XLOG_EAI && e->code != 0) {
-		warnx("[sp=%d, code=%ld]: %s: %s",
+		warnx("[sp=%d, code=%lld]: %s: %s",
 		    e->sp, e->code, e->msg, gai_strerror(e->code));
 	} else if (e->sp == XLOG_SSL && e->code != 0) {
 		ERR_error_string_n(e->code, errmsg, sizeof(errmsg));
-		warnx("[sp=%d, code=%ld]: %s: %s",
+		warnx("[sp=%d, code=%lld]: %s: %s",
 		    e->sp, e->code, e->msg, errmsg);
 	} else
-		warnx("[sp=%d, code=%ld]: %s", e->sp, e->code, e->msg);
+		warnx("[sp=%d, code=%lld]: %s", e->sp, e->code, e->msg);
 }
 
 int
