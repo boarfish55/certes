@@ -46,13 +46,15 @@ void certdb_shutdown();
 struct bootstrap_entry *certdb_get_bootstrap(const uint8_t *, size_t,
                             struct xerr *);
 void                    certdb_bootstrap_free(struct bootstrap_entry *);
+int                     certdb_put_bootstrap(const struct bootstrap_entry *,
+                            struct xerr *);
+int                     certdb_del_bootstrap(const struct bootstrap_entry *,
+                            struct xerr *);
+int                     certdb_clean_expired_bootstraps(struct xerr *);
 
-int  certdb_put_bootstrap(const struct bootstrap_entry *, struct xerr *);
-int  certdb_del_bootstrap(const struct bootstrap_entry *, struct xerr *);
-int  certdb_clean_expired_bootstraps(struct xerr *);
-
-int  certdb_put_cert(const struct cert_entry *, struct xerr *);
-int  certdb_get_cert(struct cert_entry *, const char *, struct xerr *);
-int  certdb_clean_expired_certs(struct xerr *);
+struct cert_entry *certdb_get_cert(const char *, struct xerr *);
+void               certdb_cert_free(struct cert_entry *);
+int                certdb_put_cert(const struct cert_entry *, struct xerr *);
+int                certdb_clean_expired_certs(struct xerr *);
 
 #endif

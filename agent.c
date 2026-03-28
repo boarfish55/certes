@@ -32,26 +32,21 @@ static uint64_t     next_authop_id = 1;
 
 static struct timespec last_authop_purge = {0, 0};
 static struct timespec last_certdb_purge = {0, 0};
+static struct timespec last_cert_check = {0, 0};
 static int             agent_fd = -1;
-static int             bootstrap_in_progress = 0;
+static int             cert_fetch_in_progress = 0;
 
 extern struct certalator_flatconf certalator_conf;
 
 enum authop_type {
 	AUTHOP_BOOTSTRAP_SETUP = 1,
-	AUTHOP_BOOTSTRAP
-};
-
-enum authop_step {
-	AUTHOP_INIT = 0,
-
-	AUTHOP_BOOTSTRAP_ANSWER_SENT
+	AUTHOP_BOOTSTRAP,
+	AUTHOP_CERT_RENEW
 };
 
 struct authop {
 	char              id[CERTALATOR_AUTHOP_ID_LENGTH];
 	enum authop_type  type;
-	enum authop_step  step;
 	BIO              *bio;
 	struct timespec   created_at;
 
@@ -102,7 +97,10 @@ client_free(struct client *c)
 }
 
 static int            agent_bootstrap(struct xerr *);
+static int            agent_cert_renew_inquiry(struct xerr *);
 static int            agent_bootstrap_dialback(struct umdr *, struct xerr *);
+static int            agent_cert_renew_dialback(struct umdr *, struct xerr *);
+static int            agent_recv_cert(struct authop *, struct xerr *);
 static void           purge_authops();
 static int            agent_connect(struct xerr *);
 static void           agent_tasks();
@@ -182,15 +180,15 @@ agent_tasks()
 	struct timespec now;
 	struct xerr     e;
 
+	/*
+	 * Tasks must be quick, unless it's one of bootstrap or cert
+	 * renewal.
+	 */
 	purge_authops();
 
-	if (cert_is_selfsigned(cert)) {
-		if (agent_bootstrap(xerrz(&e)) == -1)
-			xlog(LOG_ERR, &e, "%s", __func__);
-	}
+	clock_gettime(CLOCK_MONOTONIC, &now);
 
 	if (is_authority) {
-		clock_gettime(CLOCK_MONOTONIC, &now);
 		if (now.tv_sec > last_certdb_purge.tv_sec + 300) {
 			memcpy(&last_certdb_purge, &now, sizeof(now));
 			if (certdb_clean_expired_certs(xerrz(&e)) == -1)
@@ -198,10 +196,29 @@ agent_tasks()
 			if (certdb_clean_expired_bootstraps(xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
 		}
+
 		// TODO: need a CRL regen task
-	} else {
-		// TODO: need a CRL refresh task
+
+		return;
 	}
+
+	/*
+	 * Non-authority tasks only from this point on.
+	 */
+	//if (now.tv_sec < last_cert_check.tv_sec + 600)
+	if (now.tv_sec < last_cert_check.tv_sec + 30)
+		return;
+	memcpy(&last_cert_check, &now, sizeof(now));
+
+	if (cert_is_selfsigned(cert)) {
+		if (agent_bootstrap(xerrz(&e)) == -1)
+			xlog(LOG_ERR, &e, "%s", __func__);
+	} else {
+		if (agent_cert_renew_inquiry(xerrz(&e)) == -1)
+			xlog(LOG_ERR, &e, "%s", __func__);
+	}
+
+	// TODO: need a CRL refresh task
 }
 
 static int
@@ -389,6 +406,11 @@ agent_run(int lsock, struct xerr *e)
 				    == MDR_FAIL)
 					xlog(LOG_ERR, e, "%s", __func__);
 				break;
+			case MDR_DCV_CERTALATOR_CERT_RENEW_DIALBACK:
+				if (agent_cert_renew_dialback(&um, xerrz(e))
+				    == MDR_FAIL)
+					xlog(LOG_ERR, e, "%s", __func__);
+				break;
 			default:
 				xlog(LOG_ERR, NULL, "%s: unknown message %lu",
 				    __func__, umdr_dcv(&um));
@@ -524,8 +546,8 @@ static void
 authop_free(struct authop *op)
 {
 	SPLAY_REMOVE(authop_tree, &authops, op);
-	if (op->type == AUTHOP_BOOTSTRAP)
-		bootstrap_in_progress = 0;
+	if (op->type == AUTHOP_BOOTSTRAP || op->type == AUTHOP_CERT_RENEW)
+		cert_fetch_in_progress = 0;
 	BIO_flush(op->bio);
 	BIO_free_all(op->bio);
 	free(op);
@@ -545,9 +567,14 @@ authop_send(struct authop *op, const void *buf, size_t sz, struct xerr *e)
 static int
 authop_recv(struct authop *op, char *buf, size_t buf_sz, struct xerr *e)
 {
-	int r;
-	if ((r = mdr_buf_from_BIO(op->bio, buf, buf_sz)) < 1)
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_read");
+	int  r, ecode;
+
+	errno = 0;
+	if ((r = mdr_buf_from_BIO(op->bio, buf, buf_sz)) < 1) {
+		ecode = ERR_get_error();
+		return XERRF(e, XLOG_SSL,
+		    (ecode == 0) ? errno : ecode, "BIO_read");
+	}
 	return r;
 }
 
@@ -592,8 +619,8 @@ agent_error(struct umdr *msg, struct xerr *e)
 		return XERRF(e, XLOG_APP, XLOG_NOENT,
 		    "no such authop found: %s", needle.id);
 
-	xlog(LOG_ERR, NULL, "%s: %s (op type/step %d/%d)",
-	    __func__, uv[1].v.s.bytes, op->type, op->step);
+	xlog(LOG_ERR, NULL, "%s: %s (op type %d)",
+	    __func__, uv[1].v.s.bytes, op->type);
 
 	authop_free(op);
 	return 0;
@@ -622,9 +649,9 @@ agent_bootstrap(struct xerr *e)
 	struct umdr_vec      uv[3];
 	int                  r;
 
-	if (bootstrap_in_progress)
+	if (cert_fetch_in_progress)
 		return 0;
-	bootstrap_in_progress = 1;
+	cert_fetch_in_progress = 1;
 
 	if (strlen(certalator_conf.bootstrap_key) !=
 	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64)
@@ -636,7 +663,7 @@ agent_bootstrap(struct xerr *e)
 		return XERRF(e, XLOG_ERRNO, errno, "b64dec");
 
 	if ((op = authop_new(AUTHOP_BOOTSTRAP, xerrz(e))) == NULL) {
-		bootstrap_in_progress = 0;
+		cert_fetch_in_progress = 0;
 		return XERR_PREPENDFN(e);
 	}
 
@@ -718,6 +745,80 @@ fail:
 	return -1;
 }
 
+static int
+agent_cert_renew_inquiry(struct xerr *e)
+{
+	struct pmdr          pm;
+	struct pmdr_vec      pv[1];
+	char                 pbuf[CERTALATOR_MAX_MSG_SIZE];
+	struct authop       *op;
+	struct umdr          um;
+	char                 ubuf[256];
+	struct umdr_vec      uv[3];
+	int                  r;
+
+	if (cert_fetch_in_progress)
+		return 0;
+	cert_fetch_in_progress = 1;
+
+	if ((op = authop_new(AUTHOP_CERT_RENEW, xerrz(e))) == NULL) {
+		cert_fetch_in_progress = 0;
+		return XERR_PREPENDFN(e);
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = op->id;
+	if (pmdr_pack(&pm,  msg_cert_renewal_inquiry, pv,
+	    PMDRVECLEN(pv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno,
+		    "pmdr_pack/msg_cert_renewal_inquiry");
+		goto fail;
+	}
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(e))) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_CERTALATOR_OK:
+		/*
+		 * No renewal required, cancel the op.
+		 */
+		authop_free(op);
+		break;
+	case MDR_DCV_CERTALATOR_CERT_RENEWAL_REQUIRED:
+		break;
+	case MDR_DCV_CERTALATOR_ERROR:
+		if (umdr_unpack(&um, msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
+		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
+		    op->id, uv[2].v.s.bytes, uv[1].v.u32);
+		goto fail;
+	default:
+		XERRF(e, XLOG_APP, XLOG_BADMSG, "bad response from authority");
+		goto fail;
+	}
+
+	return 0;
+fail:
+	authop_free(op);
+	return -1;
+}
+
 /*
  * Process a dialback from the authority
  */
@@ -730,15 +831,6 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 	struct pmdr_vec  pv[2];
 	struct authop   *op;
 	struct authop    needle;
-	struct umdr      um;
-	char             ubuf[CERTALATOR_MAX_MSG_SIZE];
-	int              r;
-	X509            *crt, *icrt;
-	FILE            *f;
-	const uint8_t   *der_chain, *dp;
-	uint64_t         der_chain_sz;
-	uint32_t         der_sz;
-	char             tmpfile[PATH_MAX];
 
 	if (umdr_unpack(msg, msg_bootstrap_dialback, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -777,7 +869,31 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 		goto fail;
 	}
 
-	op->step = AUTHOP_BOOTSTRAP_ANSWER_SENT;
+	if (agent_recv_cert(op, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	authop_free(op);
+	return 0;
+fail:
+	authop_free(op);
+	return -1;
+}
+
+static int
+agent_recv_cert(struct authop *op, struct xerr *e)
+{
+	struct umdr      um;
+	char             ubuf[CERTALATOR_MAX_MSG_SIZE];
+	struct umdr_vec  uv[3];
+	int              r;
+	X509            *crt = NULL, *icrt;
+	FILE            *f = NULL;
+	const uint8_t   *der_chain, *dp;
+	uint64_t         der_chain_sz;
+	uint32_t         der_sz;
+	char             tmpfile[PATH_MAX];
 
 	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(e))) == -1) {
 		XERR_PREPENDFN(e);
@@ -789,11 +905,28 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 		goto fail;
 	}
 
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_CERTALATOR_SEND_CERT:
+		break;
+	case MDR_DCV_CERTALATOR_ERROR:
+		if (umdr_unpack(&um, msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
+		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
+		    op->id, uv[2].v.s.bytes, uv[1].v.u32);
+		goto fail;
+	default:
+		XERRF(e, XLOG_APP, XLOG_BADMSG, "bad response from authority");
+		goto fail;
+	}
+
 	/*
 	 * Finally, we get the cert back.
 	 */
-	if (umdr_unpack(&um, msg_bootstrap_send_cert, uv,
-	    UMDRVECLEN(uv)) == MDR_FAIL) {
+
+	if (umdr_unpack(&um, msg_send_cert, uv, UMDRVECLEN(uv)) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
 		goto fail;
 	}
@@ -820,7 +953,11 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 		goto fail;
 	}
 
-	f = fopen(tmpfile, "w");
+	if ((f = fopen(tmpfile, "w")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", tmpfile);
+		goto fail;
+	}
+
 	if (PEM_write_X509(f, crt) == 0) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
 		goto fail;
@@ -848,8 +985,10 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 	}
 
 	fclose(f);
+	f = NULL;
 
 	if (rename(tmpfile, certalator_conf.cert_file) == -1) {
+		unlink(tmpfile);
 		XERRF(e, XLOG_ERRNO, errno, "rename");
 		goto fail;
 	}
@@ -857,8 +996,76 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 	xlog(LOG_INFO, NULL, "%s: new cert written", __func__);
 
 	cert = crt;
-	if (SSL_CTX_use_certificate(ssl_ctx, cert) != 1) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_CTX_use_certificate");
+	if (SSL_CTX_use_certificate_chain_file(ssl_ctx,
+	    certalator_conf.cert_file) != 1) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "SSL_CTX_use_certificate_chain_file");
+		goto fail;
+	}
+
+	return 0;
+fail:
+	if (crt != NULL)
+		X509_free(crt);
+	if (f != NULL) {
+		fclose(f);
+		unlink(tmpfile);
+	}
+	return -1;
+}
+
+/*
+ * Process a dialback from the authority
+ */
+static int
+agent_cert_renew_dialback(struct umdr *msg, struct xerr *e)
+{
+	struct umdr_vec  uv[3];
+	struct pmdr      pm;
+	char             pbuf[CERTALATOR_MAX_MSG_SIZE];
+	struct pmdr_vec  pv[2];
+	struct authop   *op;
+	struct authop    needle;
+
+	if (umdr_unpack(msg, msg_cert_renew_dialback, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL)
+		return XERRF(e, XLOG_ERRNO, errno, "umdr_unpack/dialback");
+
+	strlcpy(needle.id, uv[0].v.s.bytes, sizeof(needle.id));
+	op = SPLAY_FIND(authop_tree, &authops, &needle);
+	if (op == NULL)
+		return XERRF(e, XLOG_APP, XLOG_NOENT,
+		    "no such authop found: %s", needle.id);
+
+	if (op->type != AUTHOP_CERT_RENEW)
+		return XERRF(e, XLOG_APP, XLOG_INVAL,
+		    "authop %s is not a bootstrap request", op->id);
+
+	xlog(LOG_INFO, NULL, "%s: authop id %s received",
+	    __func__, op->id);
+
+	/*
+	 * Send the challenge to the authority.
+	 */
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S; /* Operation ID */
+	pv[0].v.s = op->id;
+	pv[1].type = MDR_B; /* Challenge */
+	pv[1].v.b.bytes = uv[1].v.b.bytes;
+	pv[1].v.b.sz = uv[1].v.b.sz;
+	if (pmdr_pack(&pm, msg_cert_renew_answer, pv,
+	    PMDRVECLEN(pv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno,
+		    "mdr_pack/msg_cert_renew_answer");
+		goto fail;
+	}
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	if (agent_recv_cert(op, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
 		goto fail;
 	}
 
@@ -1167,8 +1374,10 @@ agent_load_keys(struct xerr *e)
 		goto fail;
 	}
 
-	if (SSL_CTX_use_certificate(ssl_ctx, cert) != 1) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_CTX_use_certificate");
+	if (SSL_CTX_use_certificate_chain_file(ssl_ctx,
+	    certalator_conf.cert_file) != 1) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "SSL_CTX_use_certificate_chain_file");
 		goto fail;
 	}
 

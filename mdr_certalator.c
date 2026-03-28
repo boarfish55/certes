@@ -73,8 +73,8 @@ struct mdr_def msgdef_bootstrap_answer = {
 };
 const struct mdr_spec *msg_bootstrap_answer;
 
-struct mdr_def msgdef_bootstrap_send_cert = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_SEND_CERT,
+struct mdr_def msgdef_send_cert = {
+	MDR_DCV_CERTALATOR_SEND_CERT,
 	"certalator.bootstrap_send_cert",
 	{
 		MDR_S,   /* Operation identifier */
@@ -83,7 +83,49 @@ struct mdr_def msgdef_bootstrap_send_cert = {
 		MDR_LAST
 	}
 };
-const struct mdr_spec *msg_bootstrap_send_cert;
+const struct mdr_spec *msg_send_cert;
+
+struct mdr_def msgdef_cert_renewal_inquiry = {
+	MDR_DCV_CERTALATOR_CERT_RENEWAL_INQUIRY,
+	"certalator.cert_renewal_inquiry",
+	{
+		MDR_S,   /* Operation identifier */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_renewal_inquiry;
+
+struct mdr_def msgdef_cert_renewal_required = {
+	MDR_DCV_CERTALATOR_CERT_RENEWAL_REQUIRED,
+	"certalator.cert_renewal_required",
+	{
+		MDR_S,   /* Operation identifier */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_renewal_required;
+
+struct mdr_def msgdef_cert_renew_dialback = {
+	MDR_DCV_CERTALATOR_CERT_RENEW_DIALBACK,
+	"certalator.cert_renew_dialback",
+	{
+		MDR_S,   /* Operation identifier */
+		MDR_B,   /* Challenge answer */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_renew_dialback;
+
+struct mdr_def msgdef_cert_renew_answer = {
+	MDR_DCV_CERTALATOR_CERT_RENEW_ANSWER,
+	"certalator.cert_renew_answer",
+	{
+		MDR_S,   /* Operation identifier */
+		MDR_B,   /* Challenge answer */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_renew_answer;
 
 int
 beout_ok(struct mdrd_besession *sess, const char *op_id, uint32_t beout_flags)
@@ -150,7 +192,19 @@ load_mdr_defs()
 	if ((msg_bootstrap_answer =
 	    mdr_register_spec(&msgdef_bootstrap_answer)) == NULL)
 		errx(1, "mdr_register_spec");
-	if ((msg_bootstrap_send_cert =
-	    mdr_register_spec(&msgdef_bootstrap_send_cert)) == NULL)
+	if ((msg_send_cert =
+	    mdr_register_spec(&msgdef_send_cert)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_renewal_inquiry =
+	    mdr_register_spec(&msgdef_cert_renewal_inquiry)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_renewal_required =
+	    mdr_register_spec(&msgdef_cert_renewal_required)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_renew_dialback =
+	    mdr_register_spec(&msgdef_cert_renew_dialback)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_renew_answer =
+	    mdr_register_spec(&msgdef_cert_renew_answer)) == NULL)
 		errx(1, "mdr_register_spec");
 }

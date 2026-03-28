@@ -353,19 +353,35 @@ certdb_clean_expired_bootstraps(struct xerr *e)
 	return 0;
 }
 
-int
-certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
+void
+certdb_cert_free(struct cert_entry *ce)
 {
-	int          r;
-	struct xerr  e2;
-	char        *sans = NULL;
-	int          sans_len;
-	char        *roles = NULL;
-	int          roles_len;
-	int          subject_len;
-	const void  *b;
+	if (ce == NULL)
+		return;
+	if (ce->serial != NULL)
+		free(ce->serial);
+	if (ce->subject != NULL)
+		free(ce->subject);
+	if (ce->sans != NULL)
+		free(ce->sans);
+	if (ce->roles != NULL)
+		free(ce->roles);
+	if (ce->der != NULL)
+		free(ce->der);
+}
 
-	dst->subject = NULL;
+struct cert_entry *
+certdb_get_cert(const char *serial, struct xerr *e)
+{
+	int                r;
+	struct xerr        e2;
+	char              *sans = NULL;
+	int                sans_len;
+	char              *roles = NULL;
+	int                roles_len;
+	int                subject_len;
+	const void        *b;
+	struct cert_entry *dst = NULL;
 
 	if ((r = sqlite3_bind_text(qry_cert_get.stmt,
 	    qry_cert_put.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
@@ -374,7 +390,6 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 		goto fail;
 	}
 
-	bzero(dst, sizeof(struct cert_entry));
 	switch ((r = sqlite3_step(qry_cert_get.stmt))) {
 	case SQLITE_ROW:
 		break;
@@ -392,6 +407,16 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
                     sqlite3_errmsg(db), r);
                 goto fail;
         }
+
+	if ((dst = malloc(sizeof(struct cert_entry))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+	bzero(dst, sizeof(struct cert_entry));
+	if ((dst->serial = strdup(serial)) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "strdup");
+		goto fail;
+	}
 
 	subject_len = sqlite3_column_bytes(
 	    qry_cert_get.stmt,
@@ -411,7 +436,6 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 	    qry_cert_get.stmt,
 	    qry_cert_get.o_der);
 	if ((dst->der = malloc(dst->der_sz)) == NULL) {
-		free(dst->subject);
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
 	}
@@ -423,21 +447,18 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 	    qry_cert_get.o_sans);
 	if (sans_len > 0) {
 		if ((sans = malloc(sans_len)) == NULL) {
-			free(dst->subject);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
 		b = sqlite3_column_blob(qry_cert_get.stmt,
 		    qry_cert_get.o_sans);
 		if (b == NULL) {
-			free(dst->subject);
 			XERRF(e, XLOG_ERRNO, errno, "sans is null");
 			goto fail;
 		}
 		memcpy(sans, b, sans_len);
 		if ((dst->sans_sz = strlist_split(&dst->sans,
 		    sans, sans_len)) == -1) {
-			free(dst->subject);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
@@ -448,24 +469,18 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 	    qry_cert_get.o_roles);
 	if (roles_len > 0) {
 		if ((roles = malloc(roles_len)) == NULL) {
-			free(dst->subject);
-			free(dst->sans);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
 		b = sqlite3_column_blob(qry_cert_get.stmt,
 		    qry_cert_get.o_roles);
 		if (b == NULL) {
-			free(dst->subject);
-			free(dst->sans);
 			XERRF(e, XLOG_ERRNO, errno, "sans is null");
 			goto fail;
 		}
 		memcpy(roles, b, roles_len);
 		if ((dst->roles_sz = strlist_split(&dst->roles,
 		    roles, roles_len)) == -1) {
-			free(dst->subject);
-			free(dst->sans);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
@@ -483,13 +498,16 @@ certdb_get_cert(struct cert_entry *dst, const char *serial, struct xerr *e)
 
 	free(sans);
 	free(roles);
-	return certdb_qry_cleanup(qry_cert_get.stmt, e);
+	if (certdb_qry_cleanup(qry_cert_get.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return dst;
 fail:
+	certdb_cert_free(dst);
 	free(sans);
 	free(roles);
 	if (certdb_qry_cleanup(qry_cert_get.stmt, xerrz(&e2)) == -1)
 		xlog(LOG_ERR, &e2, "%s", __func__);
-	return -1;
+	return NULL;
 }
 
 int

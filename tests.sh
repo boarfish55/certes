@@ -108,11 +108,12 @@ done
 echo "* Authority running with pid `cat $basedir/authority1/mdrd.pid`"
 
 #
-# Agent setup
+# Agent setup; make the cert expiry short to force a refresh, for testing
 #
 
 ./certalator -config $basedir/authority1/certalator.conf \
-	bootstrap-setup -role agent -san DNS:certalator.example.com
+	bootstrap-setup -role agent -san DNS:certalator.example.com \
+	-cert_expiry 86400
 echo "* Bootstrap setup done"
 
 bootstrap_key=$(sqlite3 $basedir/authority1/certdb.sqlite \

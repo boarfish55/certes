@@ -50,9 +50,22 @@ extern const struct mdr_spec *msg_bootstrap_dialback;
 #define MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER \
     MDR_DCV(0x00000002, 0x0006, 0x0000)
 extern const struct mdr_spec *msg_bootstrap_answer;
-#define MDR_DCV_CERTALATOR_BOOTSTRAP_SEND_CERT \
+#define MDR_DCV_CERTALATOR_SEND_CERT \
     MDR_DCV(0x00000002, 0x0007, 0x0000)
-extern const struct mdr_spec *msg_bootstrap_send_cert;
+extern const struct mdr_spec *msg_send_cert;
+
+#define MDR_DCV_CERTALATOR_CERT_RENEWAL_INQUIRY \
+    MDR_DCV(0x00000002, 0x0008, 0x0000)
+extern const struct mdr_spec *msg_cert_renewal_inquiry;
+#define MDR_DCV_CERTALATOR_CERT_RENEWAL_REQUIRED \
+    MDR_DCV(0x00000002, 0x0009, 0x0000)
+extern const struct mdr_spec *msg_cert_renewal_required;
+#define MDR_DCV_CERTALATOR_CERT_RENEW_DIALBACK \
+    MDR_DCV(0x00000002, 0x000A, 0x0000)
+extern const struct mdr_spec *msg_cert_renew_dialback;
+#define MDR_DCV_CERTALATOR_CERT_RENEW_ANSWER \
+    MDR_DCV(0x00000002, 0x000B, 0x0000)
+extern const struct mdr_spec *msg_cert_renew_answer;
 
 /* Built-ins */
 extern const struct mdr_spec *msg_pack_beout;

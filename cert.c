@@ -149,6 +149,44 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 	return found;
 }
 
+int
+cert_has_san(X509 *crt, const char *san, struct xerr *e)
+{
+	STACK_OF(GENERAL_NAME) *sans = NULL;
+	GENERAL_NAME           *gname;
+	char                    name[512];
+	int                     i, found = 0;
+
+	sans = (STACK_OF(GENERAL_NAME) *)X509_get_ext_d2i(crt,
+	    NID_subject_alt_name, NULL, NULL);
+	if (sans == NULL)
+		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		    "%s: subjectAltName extension not found", __func__);
+
+	for (i = 0; i < sk_GENERAL_NAME_num(sans) && !found; i++) {
+		gname = sk_GENERAL_NAME_value(sans, i);
+		switch (gname->type) {
+		case GEN_DNS:
+			snprintf(name, sizeof(name), "DNS:%s",
+			    ASN1_STRING_get0_data(gname->d.dNSName));
+			break;
+		case GEN_IPADD:
+			snprintf(name, sizeof(name), "IP:%s",
+			    ASN1_STRING_get0_data(gname->d.iPAddress));
+			break;
+		default:
+			GENERAL_NAMES_free(sans);
+			return XERRF(e, XLOG_APP, XLOG_FAIL,
+			    "%s: unknown subjectAltName type", __func__);
+		}
+		if (strcmp(san, name) == 0)
+			found = 1;
+	}
+
+	GENERAL_NAMES_free(sans);
+	return found;
+}
+
 X509_NAME *
 cert_subject_from_str(const char *subject, struct xerr *e)
 {
@@ -415,7 +453,7 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 	X509_EXTENSION *ex;
 	X509V3_CTX      ctx;
 	X509_NAME      *name;
-	char           *sans;
+	char           *sans = NULL;
 	time_t          in_tm;
 
 	X509V3_set_ctx(&ctx, agent_cert(), NULL, req, NULL, 0);
@@ -482,166 +520,166 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 		return NULL;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_subject_alt_name, sans)) {
-		free(sans);
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_subject_alt_name");
-		return NULL;
+		goto fail;
 	}
 
 	if (!cert_add_ext(&ctx, newcrt, NID_basic_constraints,
 	    "critical,CA:false")) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_basic_constraints");
-		return NULL;
+		goto fail;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_key_usage,
 	    "critical,nonRepudiation,digitalSignature")) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_key_usage");
-		return NULL;
+		goto fail;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_ext_key_usage,
 	    "serverAuth,clientAuth")) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_ext_key_usage");
-		return NULL;
+		goto fail;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_subject_key_identifier, "hash")) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_subject_key_identifier");
-		return NULL;
+		goto fail;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_authority_key_identifier,
 	    "keyid,issuer")) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_authority_key_identifier");
-		return NULL;
+		goto fail;
 	}
 
 	ex = cert_encode_certalator_roles((const char **)be->roles);
 	if (!X509_add_ext(newcrt, ex, -1)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
-		return NULL;
+		goto fail;
 	}
 
 	if (!X509_sign(newcrt, agent_key(), NULL)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
-		return NULL;
+		goto fail;
 	}
 
+	free(sans);
 	return newcrt;
+fail:
+	free(sans);
+	return NULL;
 }
 
 X509 *
-cert_sign(X509 *crt, X509 *issuer, EVP_PKEY *key, const char **roles)
+cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
+    struct xerr *e)
 {
 	X509           *newcrt;
 	BIGNUM         *serial;
 	X509_EXTENSION *ex;
 	X509V3_CTX      ctx;
-	int             san_idx;
-	struct xerr     e;
-
-	// TODO: remove?
+	char           *sans;
 
 	X509V3_set_ctx(&ctx, issuer, crt, NULL, NULL, 0);
 
 	if ((newcrt = X509_new()) == NULL) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_new");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_new");
 		return NULL;
 	}
 	if (!X509_set_version(newcrt, 2)) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_set_version");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_version");
 		return NULL;
 	}
 
-	serial = cert_new_serial(xerrz(&e));
+	serial = cert_new_serial(xerrz(e));
 	if (serial == NULL)
 		return NULL;
 
 	if (BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(newcrt)) == NULL) {
 		BN_free(serial);
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "BN_to_ASN1_INTEGER");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_to_ASN1_INTEGER");
 		return NULL;
 	}
 	BN_free(serial);
 
 	if (!X509_set_issuer_name(newcrt, X509_get_subject_name(issuer))) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_set_issuer_name");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_issuer_name");
 		return NULL;
 	}
 
 	if (!X509_set_subject_name(newcrt, X509_get_subject_name(crt))) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_set_subject_name");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_subject_name");
 		return NULL;
 	}
 
 	if (!X509_set_pubkey(newcrt, X509_get0_pubkey(crt))) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_set_pubkey");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_pubkey");
 		return NULL;
 	}
 
 	X509_gmtime_adj(X509_get_notBefore(newcrt), 0);
-	X509_gmtime_adj(X509_get_notAfter(newcrt), 86400);
+	X509_gmtime_adj(X509_get_notAfter(newcrt),
+	    certalator_conf.cert_renew_lifetime_seconds);
 
-	san_idx = X509_get_ext_by_NID(crt, NID_subject_alt_name, -1);
-	if (san_idx == -1) {
-		XERRF(&e, XLOG_APP, XLOG_NOENT,
-		    "subjectAltName extension not found");
+	if ((strlist_join(ce->sans, ce->sans_sz, &sans)) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		return NULL;
 	}
-	if ((ex = X509_get_ext(crt, san_idx)) == NULL) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_get_ext");
-		return NULL;
-	}
-	if (!X509_add_ext(newcrt, ex, -1)) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_add_ext");
-		return NULL;
+	if (!cert_add_ext(&ctx, newcrt, NID_subject_alt_name, sans)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_subject_alt_name");
+		goto fail;
 	}
 
 	if (!cert_add_ext(&ctx, newcrt, NID_basic_constraints,
 	    "critical,CA:false")) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(),
-		    "add_ext / NID_basic_constraints");
-		return NULL;
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_basic_constraints");
+		goto fail;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_key_usage,
 	    "critical,nonRepudiation,digitalSignature")) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "add_ext / NID_key_usage");
-		return NULL;
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_key_usage");
+		goto fail;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_ext_key_usage,
 	    "serverAuth,clientAuth")) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(),
-		    "add_ext / NID_ext_key_usage");
-		return NULL;
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_ext_key_usage");
+		goto fail;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_subject_key_identifier, "hash")) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(),
-		    "add_ext / NID_subject_key_identifier");
-		return NULL;
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_subject_key_identifier");
+		goto fail;
 	}
 	if (!cert_add_ext(&ctx, newcrt, NID_authority_key_identifier,
 	    "keyid,issuer")) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(),
-		    "add_ext / NID_authority_key_identifier");
-		return NULL;
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "cert_add_ext/NID_authority_key_identifier");
+		goto fail;
 	}
 
-	// TODO: need to add the subjectAltNames
-
-	ex = cert_encode_certalator_roles(roles);
+	ex = cert_encode_certalator_roles((const char **)ce->roles);
 	if (!X509_add_ext(newcrt, ex, -1)) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
-		return NULL;
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
+		goto fail;
 	}
 
-	if (!X509_sign(newcrt, key, NULL)) {
-		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_sign");
-		return NULL;
+	if (!X509_sign(newcrt, agent_key(), NULL)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
+		goto fail;
 	}
 
+	free(sans);
 	return newcrt;
+fail:
+	free(sans);
+	return NULL;
 }
 
 static int
@@ -856,6 +894,7 @@ cert_new_selfreq(EVP_PKEY *key, const X509_NAME *subject, const char *ip6,
 	/*
 	 * Serialise to DER
 	 */
+	*req_buf = NULL;
 	*req_len = i2d_X509_REQ(req, req_buf);
 	if (*req_len < 0) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509_REQ");
@@ -1018,4 +1057,72 @@ cert_subject_oneline(X509 *crt, struct xerr *e)
 		return NULL;
 	}
 	return subject;
+}
+
+int
+cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
+{
+	int                  roles_idx;
+	int                  san_idx;
+	int                  i;
+	X509_EXTENSION      *ex;
+	ASN1_OCTET_STRING   *asn1str;
+	STACK_OF(ASN1_TYPE) *seq;
+	const unsigned char *p;
+	time_t               expiry;
+	struct tm            tm;
+	struct timespec      now;
+
+	roles_idx = X509_get_ext_by_NID(crt, NID_certalator_roles, -1);
+	if (roles_idx == -1)
+		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		    "%s: certalatorRoles extension not found", __func__);
+	san_idx = X509_get_ext_by_NID(crt, NID_subject_alt_name, -1);
+	if (san_idx == -1)
+		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		    "%s: subjectAltName extension not found", __func__);
+
+	if ((ex = X509_get_ext(crt, roles_idx)) == NULL)
+		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		    "%s: certalatorRoles extension not found", __func__);
+	asn1str = X509_EXTENSION_get_data(ex);
+	p = asn1str->data;
+	/*
+	 * If the number of roles is not equal, or if one of the
+	 * roles is not found in the cert, we must renew.
+	 */
+	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
+	    (const unsigned char **)&p, asn1str->length);
+	if (sk_ASN1_TYPE_num(seq) != ce->roles_sz)
+		return 1;
+	for (i = 0; ce->roles[i] != NULL; i++)
+		if (!cert_has_role(crt, ce->roles[i], xerrz(e)))
+			return 1;
+
+	if ((ex = X509_get_ext(crt, san_idx)) == NULL)
+		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		    "%s: subjectAltName extension not found", __func__);
+	asn1str = X509_EXTENSION_get_data(ex);
+	p = asn1str->data;
+	/*
+	 * If the number of roles is not equal, or if one of the
+	 * roles is not found in the cert, we must renew.
+	 */
+	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
+	    (const unsigned char **)&p, asn1str->length);
+	if (sk_ASN1_TYPE_num(seq) != ce->sans_sz)
+		return 1;
+	for (i = 0; ce->sans[i] != NULL; i++)
+		if (!cert_has_san(crt, ce->sans[i], xerrz(e)))
+			return 1;
+
+	ASN1_TIME_to_tm(X509_get_notAfter(crt), &tm);
+	expiry = timegm(&tm);
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	if (expiry < now.tv_sec || expiry - now.tv_sec <
+	    certalator_conf.cert_min_lifetime_seconds)
+		return 1;
+
+	return 0;
 }

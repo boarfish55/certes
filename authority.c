@@ -159,7 +159,7 @@ fail:
  */
 static int
 authority_challenge(struct mdrd_besession *sess, const char *op_id,
-    const char *challenge_host, struct xerr *e)
+    uint64_t dcv, const char *challenge_host, struct xerr *e)
 {
 	char                       port[6];
 	int                        fd;
@@ -250,12 +250,15 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	pv[1].type = MDR_B;
 	pv[1].v.b.bytes = cs->challenge;
 	pv[1].v.b.sz = sizeof(cs->challenge);
-	if (pmdr_pack(&pm, msg_bootstrap_dialback, pv,
-	    PMDRVECLEN(pv)) == MDR_FAIL) {
+	if (pmdr_pack(&pm,
+	    (dcv == MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK)
+	    ? msg_bootstrap_dialback
+	    : msg_cert_renew_dialback,
+	    pv, PMDRVECLEN(pv)) == MDR_FAIL) {
 		status = -1;
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
-		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/msg_bootstrap_dialback");
+		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/dialback");
 	} else if ((r = BIO_write(bio, pmdr_buf(&pm), pmdr_size(&pm))) == -1) {
 		status = -1;
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
@@ -389,7 +392,8 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 	 * Then we challenge the client by connecting to its CommonName
 	 * as per our DB.
 	 */
-	if (authority_challenge(sess, op_id, challenge_host, e) == -1) {
+	if (authority_challenge(sess, op_id,
+	    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK, challenge_host, e) == -1) {
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
@@ -409,7 +413,7 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 	X509           *c;
 	int             i, status = 0;
 	size_t          sz;
-	uint8_t        *p, *der;
+	uint8_t        *p, *der = NULL;
 
 	*der_chain = NULL;
 	*chain_sz = 0;
@@ -417,6 +421,11 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 	chain = X509_build_chain(crt, NULL, agent_cert_store(), 0, NULL, NULL);
 	if (chain == NULL)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_build_chain");
+
+	if (sk_X509_num(chain) < 2) {
+		XERRF(e, XLOG_APP, XLOG_FAIL, "not intermediate cert?");
+		goto end;
+	}
 
 	/*
 	 * We start at index 1 because we already send the cert itself.
@@ -459,6 +468,52 @@ end:
 	return status;
 }
 
+static int
+authority_send_cert(struct mdrd_besession *sess, const char *op_id,
+    X509 *crt, const uint8_t *crt_buf, int crt_len, struct xerr *e)
+{
+	uint8_t         *der_chain = NULL;
+	size_t           der_sz;
+	struct pmdr      pm;
+	char             pbuf[certalator_conf.max_cert_size];
+	struct pmdr_vec  pv[3];
+
+	if (pack_intermediates(crt, &der_chain, &der_sz, xerrz(e)) == -1) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERR_PREPENDFN(e);
+                goto fail;
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S; /* Op ID */
+	pv[0].v.s = op_id;
+	pv[1].type = MDR_B; /* cert */
+	pv[1].v.b.bytes = crt_buf;
+	pv[1].v.b.sz = crt_len;
+	pv[2].type = MDR_B; /* intermediates */
+	pv[2].v.b.bytes = der_chain;
+	pv[2].v.b.sz = der_sz;
+	if (pmdr_pack(&pm, msg_send_cert, pv, PMDRVECLEN(pv)) == MDR_FAIL) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/msg_send_cert");
+		goto fail;
+	}
+
+	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
+		goto fail;
+	}
+
+	free(der_chain);
+	return 0;
+fail:
+	if (der_chain != NULL)
+		free(der_chain);
+	return -1;
+}
+
 int
 authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
     struct xerr *e)
@@ -468,15 +523,10 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	struct umdr_vec            uv[2];
 	struct certalator_session *cs = (struct certalator_session *)sess->data;
 	X509                      *crt = NULL;
+	const char                *op_id;
+	struct tm                  tm;
 	unsigned char             *crt_buf = NULL;
 	int                        crt_len;
-	struct pmdr                pm;
-	char                       pbuf[certalator_conf.max_cert_size];
-	struct pmdr_vec            pv[3];
-	const char                *op_id;
-	uint8_t                   *der_chain = NULL;
-	size_t                     der_sz;
-	struct tm                  tm;
 
 	if (umdr_unpack(msg, msg_bootstrap_answer, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -524,33 +574,7 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	if (crt_len < 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
-                XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
-                goto fail;
-	}
-
-	if (pack_intermediates(crt, &der_chain, &der_sz, xerrz(e)) == -1) {
-		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
-		    "backend failed");
-		XERR_PREPENDFN(e);
-                goto fail;
-	}
-
-	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	pv[0].type = MDR_S; /* Op ID */
-	pv[0].v.s = uv[0].v.s.bytes;
-	pv[1].type = MDR_B; /* cert */
-	pv[1].v.b.bytes = crt_buf;
-	pv[1].v.b.sz = crt_len;
-	pv[2].type = MDR_B; /* intermediates */
-	pv[2].v.b.bytes = der_chain;
-	pv[2].v.b.sz = der_sz;
-	if (pmdr_pack(&pm, msg_bootstrap_send_cert, pv,
-	    PMDRVECLEN(pv)) == MDR_FAIL) {
-		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
-		    "backend failed");
-		XERRF(e, XLOG_ERRNO, errno,
-		    "pmdr_pack/msg_bootstrap_send_cert");
-		goto fail;
+                return XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
 	}
 
 	bzero(&ce, sizeof(ce));
@@ -567,8 +591,6 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
-
-
 	ce.sans = be->sans;
 	ce.sans_sz = be->sans_sz;
 	ce.roles = be->roles;
@@ -591,8 +613,9 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	free(ce.serial);
 	free(ce.subject);
 
-	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
+	if (authority_send_cert(sess, op_id, crt, crt_buf, crt_len,
+	    xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
 		goto fail;
 	}
 
@@ -601,18 +624,234 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 
 	xlog(LOG_NOTICE, NULL, "%s: op_id %s completed", __func__, op_id);
 
-	free(der_chain);
 	free(crt_buf);
 	X509_free(crt);
 	certdb_bootstrap_free(be);
 	return 0;
 fail:
 	certdb_bootstrap_free(be);
-	if (der_chain != NULL)
-		free(crt);
-	if (crt != NULL)
-		X509_free(crt);
 	if (crt_buf != NULL)
 		free(crt_buf);
+	if (crt != NULL)
+		X509_free(crt);
+	return -1;
+}
+
+int
+authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
+    struct xerr *e)
+{
+	struct cert_entry         *ce = NULL;
+	struct umdr_vec            uv[2];
+	struct certalator_session *cs = (struct certalator_session *)sess->data;
+	X509                      *crt = NULL;
+	const char                *op_id;
+	struct tm                  tm;
+	char                      *serial;
+
+	if (umdr_unpack(msg, msg_bootstrap_answer, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL)
+                return XERRF(e, XLOG_ERRNO, errno,
+                    "umdr_unpack/msg_bootstrap_answer");
+
+	op_id = uv[0].v.s.bytes;
+
+	xlog(LOG_NOTICE, NULL, "%s: handling for %s, op_id=%s", __func__,
+	    certalator_client_name(sess, NULL, 0, xerrz(e)), op_id);
+
+	if (!agent_is_authority()) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
+		    "we are not an authority");
+		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		    "we are not an authority");
+	}
+
+	if (memcmp(cs->challenge, uv[1].v.b.bytes,
+	    MIN(sizeof(cs->challenge), uv[1].v.b.sz)) != 0) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
+		    "failed challenge");
+		return XERRF(e, XLOG_APP, XLOG_ACCES,
+		    "client failed challenge");
+	}
+
+	if ((serial = cert_serial_to_hex(sess->cert, xerrz(e))) == NULL) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		return XERR_PREPENDFN(e);
+	}
+	if ((ce = certdb_get_cert(serial, xerrz(e))) == NULL) {
+		free(serial);
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failure");
+		return XERR_PREPENDFN(e);
+	}
+	free(serial);
+
+	crt = cert_sign(sess->cert, agent_cert(), ce, xerrz(e));
+	if (crt == NULL) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	/*
+	 * Get the new cert serial
+	 */
+	if ((serial = cert_serial_to_hex(crt, xerrz(e))) == NULL) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	free(ce->serial);
+	ce->serial = serial;
+
+	/*
+	 * We can reuse 'ce' and simply modify the fields to update. But
+	 * since ce->der is dynamically allocated, free it first.
+	 */
+	free(ce->der);
+	ce->der = NULL;
+	ce->der_sz = i2d_X509(crt, &ce->der);
+	if (ce->der_sz < 0) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+                XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
+                goto fail;
+	}
+
+	ASN1_TIME_to_tm(X509_get_notBefore(crt), &tm);
+	ce->not_before_sec = timegm(&tm);
+	ASN1_TIME_to_tm(X509_get_notAfter(crt), &tm);
+	ce->not_after_sec = timegm(&tm);
+
+	/*
+	 * We'll just write the new cert and let the old one expire.
+	 * This also gives services using it time to load the new one.
+	 */
+	if (certdb_put_cert(ce, xerrz(e)) == -1) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	if (authority_send_cert(sess, op_id, crt, ce->der,
+	    ce->der_sz, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	xlog(LOG_NOTICE, NULL, "%s: op_id %s completed", __func__, op_id);
+
+	certdb_cert_free(ce);
+	X509_free(crt);
+	return 0;
+fail:
+	certdb_cert_free(ce);
+	if (crt != NULL)
+		X509_free(crt);
+	return -1;
+}
+
+int
+authority_cert_renewal_inquiry(struct mdrd_besession *sess, struct umdr *msg,
+    struct xerr *e)
+{
+	struct umdr_vec    uv[2];
+	const char        *op_id;
+	char              *serial;
+	struct cert_entry *ce;
+	char               challenge_host[256];
+	struct pmdr        pm;
+	char               pbuf[1024];
+	struct pmdr_vec    pv[1];
+
+	if (umdr_unpack(msg, msg_cert_renewal_inquiry, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL)
+                return XERRF(e, XLOG_ERRNO, errno,
+                    "umdr_unpack/msg_cert_renewal_inquiry");
+
+	op_id = uv[0].v.s.bytes;
+
+	xlog(LOG_NOTICE, NULL, "%s: handling for %s, op_id=%s", __func__,
+	    certalator_client_name(sess, NULL, 0, xerrz(e)), op_id);
+
+	if (!agent_is_authority()) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
+		    "we are not an authority");
+		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		    "we are not an authority");
+	}
+
+	if (!cert_has_role(sess->cert, ROLE_AGENT, xerrz(e))) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
+		    ROLE_AGENT " role required");
+		return XERRF(e, XLOG_APP, XLOG_ACCES,
+		    ROLE_AGENT " role required");
+	}
+
+	if ((serial = cert_serial_to_hex(sess->cert, xerrz(e))) == NULL) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		return XERR_PREPENDFN(e);
+	}
+	if ((ce = certdb_get_cert(serial, xerrz(e))) == NULL) {
+		free(serial);
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		return XERR_PREPENDFN(e);
+	}
+	free(serial);
+
+	switch (cert_must_renew(sess->cert, ce, xerrz(e))) {
+	case -1:
+		XERR_PREPENDFN(e);
+		goto fail;
+	case 0:
+		/*
+		 * Cert is already up-to-date, no need to
+		 * do anything
+		 */
+		certdb_cert_free(ce);
+		beout_ok(sess, op_id, MDRD_BEOUT_FNONE);
+		xlog(LOG_INFO, NULL, "%s: cert is already up-to-date "
+		    "for %s, op_id=%s", __func__,
+		    certalator_client_name(sess, NULL, 0, xerrz(e)), op_id);
+		return 0;
+	default:
+		/* We have to renew */
+		pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+		pv[0].type = MDR_S;
+		pv[0].v.s = op_id;
+		if (pmdr_pack(&pm, msg_cert_renewal_required,
+		    pv, PMDRVECLEN(pv)) == MDR_FAIL)
+			abort();
+		if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {
+			XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
+			goto fail;
+		}
+		break;
+	}
+
+	if (cert_subject_cn(ce->subject, challenge_host,
+	    sizeof(challenge_host), e) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	if (authority_challenge(sess, op_id,
+	    MDR_DCV_CERTALATOR_CERT_RENEW_DIALBACK, challenge_host, e) == -1) {
+		certdb_cert_free(ce);
+		return XERR_PREPENDFN(e);
+	}
+
+	certdb_cert_free(ce);
+	return 0;
+fail:
+	certdb_cert_free(ce);
+	beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+	    "backend failed");
 	return -1;
 }

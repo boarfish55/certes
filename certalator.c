@@ -38,6 +38,8 @@ struct certalator_flatconf certalator_conf = {
 	"agent.lock",
 	"agent.sock",
 	4096,
+	345600,
+	864000,
 	"serial",
 	"",
 	"",
@@ -150,6 +152,18 @@ struct flatconf certalator_config_vars[] = {
 		sizeof(certalator_conf.max_cert_size)
 	},
 	{
+		"cert_min_lifetime_seconds",
+		FLATCONF_ULONG,
+		&certalator_conf.cert_min_lifetime_seconds,
+		sizeof(certalator_conf.cert_min_lifetime_seconds)
+	},
+	{
+		"cert_renew_lifetime_seconds",
+		FLATCONF_ULONG,
+		&certalator_conf.cert_renew_lifetime_seconds,
+		sizeof(certalator_conf.cert_renew_lifetime_seconds)
+	},
+	{
 		"serial_file",
 		FLATCONF_STRING,
 		certalator_conf.serial_file,
@@ -191,9 +205,6 @@ usage()
 	printf("\t-config <conf>   Specify alternate configuration path\n");
 	printf("\n");
 	printf("  Commands:\n");
-	printf("\tverify           Ensures the certificate is signed by our "
-	    "authority\n");
-	printf("\tsign             Re-signs the certificate\n");
 	printf("\tmdrd-backend     Run as an mdrd backend\n");
 	printf("\tinit             Generate our initial key and "
 	    "self-signed cert\n");
@@ -340,7 +351,18 @@ mdrd_backend()
 			if (authority_bootstrap_answer(sess, &msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
+		case MDR_DCV_CERTALATOR_CERT_RENEW_ANSWER:
+			if (authority_cert_renew_answer(sess, &msg,
+			    &e) == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
+		case MDR_DCV_CERTALATOR_CERT_RENEWAL_INQUIRY:
+			if (authority_cert_renewal_inquiry(sess, &msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
 		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
+		case MDR_DCV_CERTALATOR_CERT_RENEW_DIALBACK:
 			/*
 			 * For these messages we only need to forward to
 			 * the agent, if they come from an authority.
@@ -360,8 +382,11 @@ mdrd_backend()
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		default:
-			mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
-			    MDR_ERR_NOTSUPP, "not supported");
+			xlog(LOG_ERR, NULL, "%s: message not supported (%x)",
+			    __func__, umdr_dcv(&msg));
+			if (agent_is_authority())
+				mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+				    MDR_ERR_NOTSUPP, "not supported");
 		}
 	}
 	X509_STORE_CTX_free(ctx);
@@ -378,14 +403,10 @@ cleanup()
 int
 main(int argc, char **argv)
 {
-	int             opt, status;
+	int             opt, status = 0;
 	char           *command;
 	size_t          sz;
-	FILE           *f;
-	X509           *crt, *newcrt;
-	X509_STORE_CTX *ctx;
 	struct xerr     e;
-	char            crtpath[PATH_MAX];
 
 	for (opt = 1; opt < argc; opt++) {
 		if (argv[opt][0] != '-')
@@ -447,59 +468,7 @@ main(int argc, char **argv)
 
 	load_mdr_defs();
 
-	if (strcmp(command, "verify") == 0) {
-		if (opt >= argc)
-			errx(1, "no certificate file provided");
-		if ((f = fopen(argv[opt], "r")) == NULL)
-			err(1, "fopen");
-		if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
-			ERR_print_errors_fp(stderr);
-			exit(1);
-		}
-		fclose(f);
-		if (agent_init(&e) == -1) {
-			xlog(LOG_ERR, &e, __func__);
-			exit(1);
-		}
-		if ((ctx = X509_STORE_CTX_new()) == NULL) {
-			ERR_print_errors_fp(stderr);
-			exit(1);
-		}
-		status = cert_verify(ctx, crt, 0);
-		X509_STORE_CTX_free(ctx);
-	} else if (strcmp(command, "sign") == 0) {
-		if (opt >= argc)
-			errx(1, "no certificate file provided");
-
-		if (agent_init(&e) == -1) {
-			xlog(LOG_ERR, &e, __func__);
-			exit(1);
-		}
-
-		if ((f = fopen(argv[opt], "r")) == NULL)
-			err(1, "fopen: %s", argv[opt]);
-		if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
-			ERR_print_errors_fp(stderr);
-			exit(1);
-		}
-		fclose(f);
-
-		newcrt = cert_sign(crt, agent_cert(), agent_key(),
-		    (const char **)argv + opt + 1);
-		if (newcrt == NULL) {
-			xlog(LOG_ERR, &e, "cert_sign");
-			exit(1);
-		}
-
-		snprintf(crtpath, sizeof(crtpath), "%s.new", argv[opt]);
-		if ((f = fopen(crtpath, "w")) == NULL)
-			err(1, "fopen: %s", crtpath);
-		if (!PEM_write_X509(f, newcrt)) {
-			ERR_print_errors_fp(stderr);
-			exit(1);
-		}
-		fclose(f);
-	} else if (strcmp(command, "mdrd-backend") == 0) {
+	if (strcmp(command, "mdrd-backend") == 0) {
 		if (*certalator_conf.certdb_path != '\0' &&
 		    certdb_init(certalator_conf.certdb_path, xerrz(&e)) == -1) {
 			xlog(LOG_ERR, &e, __func__);

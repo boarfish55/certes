@@ -375,7 +375,8 @@ void                   mdr_registry_clear();
                                       with nothing else to return to client */
 #define MDR_DCV_MDR_ERROR          MDR_DCV(0x00000000, 0x0003, 0x0000)
 enum mdr_err_code {
-	MDR_ERR_BEFAIL = 1, /* Failure on backend */
+	MDR_ERR_FAIL = 1,   /* Generic failure */
+	MDR_ERR_BEFAIL,     /* Failure on backend */
 	MDR_ERR_BADMSG,     /* Bad message format */
 	MDR_ERR_NOTSUPP,    /* Message not supported */
 	MDR_ERR_CERTFAIL,   /* Cerfificate validation failure */
