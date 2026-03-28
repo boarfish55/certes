@@ -1,6 +1,6 @@
 CC := gcc
 DEPDIR := .deps
-CFLAGS := -Wall -g -fstack-protector-strong \
+CFLAGS := -Wall -g -fstack-protector-strong -Wformat=0 \
 	$(shell pkg-config --cflags libbsd-overlay libbsd-ctor)
 LDFLAGS := $(shell pkg-config --libs libbsd-overlay libbsd-ctor \
 	   libcrypto libssl sqlite3) \

@@ -802,7 +802,6 @@ mdr_pack_array(struct mdr *m, uint8_t type, int32_t n, void *a)
 		break;
 	default:
 		/* Nothing, other types will check for available buffer */
-		break;
 	}
 
 	for (i = 0; i < n; i++) {
@@ -950,16 +949,16 @@ mdr_print(FILE *out, const struct mdr *m)
 	int            i;
 	const uint8_t *trace_id, *t;
 
-	fprintf(out, "  size:        %lu\n", mdr_size(m));
+	fprintf(out, "  size:        %llu\n", mdr_size(m));
 	fprintf(out, "  domain:      %u\n", mdr_domain(m));
 	fprintf(out, "  code:        %u\n", mdr_code(m));
 	fprintf(out, "  variant:     %u\n", mdr_variant(m));
 	if (mdr_features(m) & MDR_FTAILBYTES)
-		fprintf(out, "  tail bytes:  %lu\n", mdr_tail_bytes(m, NULL));
+		fprintf(out, "  tail bytes:  %llu\n", mdr_tail_bytes(m, NULL));
 	if (mdr_features(m) & MDR_FSTREAMID)
-		fprintf(out, "  stream ID:  %lu\n", mdr_stream_id(m));
+		fprintf(out, "  stream ID:  %llu\n", mdr_stream_id(m));
 	if (mdr_features(m) & MDR_FACCTID)
-		fprintf(out, "  accounting ID:  %lu\n", mdr_acct_id(m));
+		fprintf(out, "  accounting ID:  %llu\n", mdr_acct_id(m));
 	if (mdr_features(m) & MDR_FTRACEID) {
 		fprintf(out, "  trace ID:  ");
 		trace_id = mdr_trace_id(m);
@@ -968,7 +967,7 @@ mdr_print(FILE *out, const struct mdr *m)
 		fprintf(out, "\n");
 	}
 	fprintf(out, "\n");
-	fprintf(out, "  payload (%lu bytes):\n",
+	fprintf(out, "  payload (%llu bytes):\n",
 	    mdr_size(m) - mdr_hdr_size(mdr_features(m)));
 
 	for (b = m->buf + mdr_hdr_size(mdr_features(m)), i = 0;
