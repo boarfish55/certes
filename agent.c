@@ -454,7 +454,7 @@ authop_new(enum authop_type type, struct xerr *e)
 		goto fail;
 	}
 
-	if (snprintf(host, sizeof(host), "%s:%lu",
+	if (snprintf(host, sizeof(host), "%s:%llu",
 	    certalator_conf.authority_fqdn,
 	    certalator_conf.authority_port) >= sizeof(host)) {
 		XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
@@ -523,7 +523,7 @@ authop_new(enum authop_type type, struct xerr *e)
 
 	op->type = type;
 	clock_gettime(CLOCK_MONOTONIC, &op->created_at);
-	if (snprintf(op->id, sizeof(op->id), "%lu-%lu.%lu",
+	if (snprintf(op->id, sizeof(op->id), "%llu-%lld.%lu",
 	    next_authop_id, op->created_at.tv_sec, op->created_at.tv_nsec)
 	    >= sizeof(op->id)) {
 		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
