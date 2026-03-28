@@ -24,7 +24,6 @@
 
 static EVP_PKEY    *key = NULL;
 static X509        *cert = NULL;
-static X509        *ca_crt = NULL;
 static int          is_authority = 0;
 static X509_STORE  *store;
 static SSL_CTX     *ssl_ctx = NULL;
@@ -597,6 +596,7 @@ load_crl(const char *crl_path, struct xerr *e)
 	if (!X509_STORE_add_crl(store, crl))
 		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "X509_STORE_add_crl");
+	X509_CRL_free(crl);
 	return 0;
 }
 
@@ -1248,6 +1248,7 @@ agent_load_keys(struct xerr *e)
 	struct dirent *de;
 	int            de_len;
 	char           crl_path[PATH_MAX + NAME_MAX + 1];
+	X509          *ca_crt;
 #ifndef __OpenBSD__
 	int            pkey_sz;
 #endif
@@ -1291,6 +1292,7 @@ agent_load_keys(struct xerr *e)
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_add_cert");
 		goto fail;
 	}
+	X509_free(ca_crt);
 
 	if (*certalator_conf.crl_file != '\0') {
 		if (load_crl(certalator_conf.crl_file, xerrz(e)) == -1) {
@@ -1394,10 +1396,6 @@ fail:
 void
 agent_cleanup()
 {
-	if (ca_crt != NULL) {
-		X509_free(ca_crt);
-		ca_crt = NULL;
-	}
 	if (cert != NULL) {
 		X509_free(cert);
 		cert = NULL;

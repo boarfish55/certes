@@ -802,6 +802,7 @@ mdr_pack_array(struct mdr *m, uint8_t type, int32_t n, void *a)
 		break;
 	default:
 		/* Nothing, other types will check for available buffer */
+		break;
 	}
 
 	for (i = 0; i < n; i++) {

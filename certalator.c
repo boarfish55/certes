@@ -270,6 +270,8 @@ mdrd_backend()
 
 	xlog_init(CERTALATOR_PROGNAME, NULL, NULL, 1);
 
+	setproctitle("backend");
+
 	sigemptyset(&act.sa_mask);
 	act.sa_flags = 0;
 	act.sa_handler = SIG_IGN;
