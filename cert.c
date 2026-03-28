@@ -924,37 +924,61 @@ fail:
 int
 cert_new_privkey(struct xerr *e)
 {
-	EVP_PKEY_CTX *ctx;
 	EVP_PKEY     *pkey = NULL;
+	EC_KEY       *ec_key = NULL;
 	FILE         *f;
-	X509         *selfcrt;
+	X509         *selfcrt = NULL;
 
+	if ((ec_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1)) == NULL)
+		return XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "EC_KEY_new_by_curve_name");
+	if (!EC_KEY_generate_key(ec_key)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "EC_KEY_generate_key");
+		goto fail;
+	}
+	if ((pkey = EVP_PKEY_new()) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_new");
+		goto fail;
+	}
+	if (!EVP_PKEY_assign_EC_KEY(pkey, ec_key)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_assign_EC_KEY");
+		goto fail;
+	}
+#if 0
+	/*
+	 * Should ED25519 support come to LibreSSL, we can use this.
+	 * See:
+	 *   https://github.com/libressl/portable/issues/821
+	 */
+	EVP_PKEY_CTX *ctx;
 	if ((ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL)) == NULL)
 		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "EVP_PKEY_CTX_new_id");
-
 	if (EVP_PKEY_keygen_init(ctx) <= 0)
 		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "EVP_PKEY_keygen_init");
-
 	if (EVP_PKEY_keygen(ctx, &pkey) <= 0)
 		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "EVP_PKEY_keygen");
-
-	if ((f = fopen(certalator_conf.key_file, "w")) == NULL)
-		return XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+#endif
+	if ((f = fopen(certalator_conf.key_file, "w")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
 		    certalator_conf.key_file);
+		goto fail;
+	}
 
 	if (!PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "PEM_write_PrivateKey");
 		fclose(f);
-		return -1;
+		goto fail;
 	}
 
-	if (fclose(f) == EOF)
-		return XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
+	if (fclose(f) == EOF) {
+		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
 		    certalator_conf.key_file);
+		goto fail;
+	}
 
 	/*
 	 * If we don't have a key, we certainly don't
@@ -962,23 +986,39 @@ cert_new_privkey(struct xerr *e)
 	 * We'll need a temporary self-signed cert during
 	 * our first run.
 	 */
-	if ((selfcrt = cert_selfsign(pkey, e)) == NULL)
-		return XERR_PREPENDFN(e);
-	if ((f = fopen(certalator_conf.cert_file, "w")) == NULL)
-		return XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+	if ((selfcrt = cert_selfsign(pkey, e)) == NULL) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	if ((f = fopen(certalator_conf.cert_file, "w")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
 		    certalator_conf.cert_file);
+		goto fail;
+	}
 	if (!PEM_write_X509(f, selfcrt)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
 		fclose(f);
-		return -1;
+		goto fail;
 	}
-	if (fclose(f) == EOF)
-		return XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
+	if (fclose(f) == EOF) {
+		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
 		    certalator_conf.cert_file);
+		goto fail;
+	}
 
 	X509_free(selfcrt);
 
 	return 0;
+fail:
+	if (ec_key != NULL)
+		EC_KEY_free(ec_key);
+	if (pkey != NULL)
+		EVP_PKEY_free(pkey);
+	if (selfcrt != NULL)
+		X509_free(selfcrt);
+	unlink(certalator_conf.cert_file);
+	unlink(certalator_conf.key_file);
+	return -1;
 }
 
 int

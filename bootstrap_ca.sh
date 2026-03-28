@@ -17,7 +17,8 @@ touch $basedir/ca/index.txt
 # be kept on a secure machine or even offline storage. The certificate and
 # CRL will need to be deployed on all agents in the fleet.
 openssl req -x509 -nodes -config certalator.cnf -section root_ca \
-	-newkey ed25519 -keyout $basedir/ca/key.pem \
+	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+	-keyout $basedir/ca/key.pem \
 	-out $basedir/ca/root.pem -outform PEM -days 365 \
 	-extensions root_ext \
 	-subj "/emailAddress=cert@$DOMAIN/O=$ORG/CN=$ORG CA"
@@ -29,7 +30,8 @@ mkdir -p $basedir/authority1/certs \
 	$basedir/authority1/crl_store
 echo "01000000" > $basedir/authority1/serial
 touch $basedir/authority1/index.txt
-openssl req -nodes -config certalator.cnf -newkey ed25519 \
+openssl req -nodes -config certalator.cnf \
+	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 	-keyout $basedir/authority1/key.pem -keyform PEM \
 	-out $basedir/authority1/req.pem -outform PEM \
 	-subj "/O=$ORG/CN=authority1.$DOMAIN" \
@@ -45,7 +47,8 @@ openssl rehash $basedir/authority1/trust_store
 
 # Create a "ca-proxy" cert request for an mdrd daemon
 mkdir -p $basedir/proxy1
-openssl req -nodes -config certalator.cnf -newkey ed25519 \
+openssl req -nodes -config certalator.cnf \
+	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 	-keyout $basedir/proxy1/key.pem -keyform PEM \
 	-out $basedir/proxy1/req.pem -outform PEM \
 	-subj "/O=$ORG/CN=proxy1.$DOMAIN" \
@@ -58,7 +61,8 @@ cat $basedir/authority1/cert.pem >> $basedir/proxy1/cert.pem
 
 # Create a "client1" cert request
 mkdir -p $basedir/client1
-openssl req -nodes -config certalator.cnf -newkey ed25519 \
+openssl req -nodes -config certalator.cnf \
+	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 	-keyout $basedir/client1/key.pem -keyform PEM \
 	-out $basedir/client1/req.pem -outform PEM \
 	-subj "/O=$ORG/CN=client1.$DOMAIN" \
@@ -71,7 +75,8 @@ cat $basedir/authority1/cert.pem >> $basedir/client1/cert.pem
 
 # Create a "client2" cert request
 mkdir -p $basedir/client2
-openssl req -nodes -config certalator.cnf -newkey ed25519 \
+openssl req -nodes -config certalator.cnf \
+	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 	-keyout $basedir/client2/key.pem -keyform PEM \
 	-out $basedir/client2/req.pem -outform PEM \
 	-subj "/O=$ORG/CN=client2.$DOMAIN" \
