@@ -1068,6 +1068,71 @@ mdr_registry_clear()
 	}
 }
 
+size_t
+mdr_spec_base_sz(const struct mdr_spec *spec)
+{
+	int    i;
+	size_t sz = 0;
+
+	for (i = 0; i < spec->types_count; i++) {
+		switch (spec->types[i]) {
+		case MDR_U8:
+		case MDR_I8:
+			sz += sizeof(uint8_t);
+			break;
+		case MDR_U16:
+		case MDR_I16:
+			sz += sizeof(uint16_t);
+			break;
+		case MDR_U32:
+		case MDR_I32:
+		case MDR_F32:
+			sz += sizeof(uint32_t);
+			break;
+		case MDR_U64:
+		case MDR_I64:
+		case MDR_F64:
+		case MDR_S:
+		case MDR_B:
+			/*
+			 * We don't know how big the S/B payload may be,
+			 * but we can at least assume the size prefix is
+			 * up to uint64_t.
+			 */
+			sz += sizeof(uint64_t);
+			break;
+		case MDR_M:
+			/*
+			 * We can only know the maximum size of the MDR header.
+			 * Let's assume the worst.
+			 */
+			sz += mdr_hdr_size(MDR_FALL);
+			break;
+		case MDR_AU8:
+		case MDR_AU16:
+		case MDR_AU32:
+		case MDR_AU64:
+		case MDR_AI8:
+		case MDR_AI16:
+		case MDR_AI32:
+		case MDR_AI64:
+		case MDR_AF32:
+		case MDR_AF64:
+		case MDR_AS:
+		case MDR_AM:
+		default:
+			/*
+			 * We don't know how big the array, or each element
+			 * will be. All we can know is that there is the
+			 * array size prefix.
+			 */
+			sz += sizeof(uint64_t);
+			break;
+		}
+	}
+	return sz;
+}
+
 void *
 pmdr_buf(struct pmdr *m)
 {
