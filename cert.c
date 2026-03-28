@@ -6,6 +6,7 @@
 #include <err.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <string.h>
 #include <unistd.h>
 #include "agent.h"
 #include "certalator.h"
@@ -139,11 +140,10 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
 	    (const unsigned char **)&p, asn1str->length);
 
-	for (i = 0; !found && sk_ASN1_TYPE_num(seq) > 0; i++) {
-		v = sk_ASN1_TYPE_shift(seq);
+	for (i = 0; !found && i < sk_ASN1_TYPE_num(seq); i++) {
+		v = sk_ASN1_TYPE_value(seq, i);
 		if (strcmp(role, (const char *)v->value.ia5string->data) == 0)
 			found = 1;
-		ASN1_TYPE_free(v);
 	}
 	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
 	return found;
@@ -857,7 +857,7 @@ cert_new_selfreq(EVP_PKEY *key, const X509_NAME *subject, const char *ip6,
 		goto fail;
 	}
 
-	if (!X509_REQ_set_subject_name(req, subject)) {
+	if (!X509_REQ_set_subject_name(req, (X509_NAME *)subject)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "X509_req_set_subject_name");
 		goto fail;

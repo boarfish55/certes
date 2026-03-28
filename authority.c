@@ -405,6 +405,7 @@ fail:
 	return -1;
 }
 
+#ifdef __linux__
 static int
 pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
     struct xerr *e)
@@ -412,8 +413,8 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 	STACK_OF(X509) *chain = NULL;
 	X509           *c;
 	int             i, status = 0;
-	size_t          sz;
-	uint8_t        *p, *der = NULL;
+	int             sz;
+	uint8_t        *p, *der;
 
 	*der_chain = NULL;
 	*chain_sz = 0;
@@ -450,6 +451,7 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 
 	for (i = 1; i < sk_X509_num(chain); i++) {
 		c = sk_X509_value(chain, i);
+		der = NULL;
 		sz = i2d_X509(c, &der);
 		if (sz < 0) {
 			free(*der_chain);
@@ -467,6 +469,46 @@ end:
 	sk_X509_pop_free(chain, X509_free);
 	return status;
 }
+#else
+static int
+pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
+    struct xerr *e)
+{
+	int      sz;
+	uint8_t *p, *der;
+
+	*der_chain = NULL;
+	*chain_sz = 0;
+
+	/*
+	 * X509_build_chain does not exist on OpenBSD, but really
+	 * we should normally only have to pack this authority's
+	 * cert and nothing else, so that should suffice.
+	 */
+	sz = i2d_X509(agent_cert(), NULL);
+	if (sz < 0)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
+	*chain_sz += sz + sizeof(uint32_t);
+
+	if ((*der_chain = malloc(*chain_sz)) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "malloc");
+	p = *der_chain;
+
+	der = NULL;
+	sz = i2d_X509(agent_cert(), &der);
+	if (sz < 0) {
+		free(*der_chain);
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
+	}
+
+	*((uint32_t *)p) = htobe32(sz);
+	p += sizeof(uint32_t);
+	memcpy(p, der, sz);
+	free(der);
+
+	return 0;
+}
+#endif
 
 static int
 authority_send_cert(struct mdrd_besession *sess, const char *op_id,

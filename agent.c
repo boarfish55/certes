@@ -260,7 +260,7 @@ agent_run(int lsock, struct xerr *e)
 			}
 
 			/* Run background tasks when we're idle */
-			agent_tasks(xerrz(e));
+			agent_tasks();
 			continue;
 		}
 
@@ -441,6 +441,7 @@ authop_new(enum authop_type type, struct xerr *e)
 	SSL            *ssl = NULL;
 	struct authop  *op;
 	int             authority, caproxy;
+	X509           *peer_crt;
 
 	if ((op = malloc(sizeof(struct authop))) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
@@ -503,18 +504,28 @@ authop_new(enum authop_type type, struct xerr *e)
 		goto fail;
 	}
 
-	authority = cert_has_role(SSL_get0_peer_certificate(ssl),
-	    ROLE_AUTHORITY, xerrz(e));
+#ifdef __OpenBSD__
+	peer_crt = SSL_get_peer_certificate(ssl);
+#else
+	peer_crt = SSL_get1_peer_certificate(ssl);
+#endif
+	if (peer_crt == NULL) {
+		XERRF(e, XLOG_APP, XLOG_FAIL, "no peer cert");
+		goto fail;
+	}
+	authority = cert_has_role(peer_crt, ROLE_AUTHORITY, xerrz(e));
 	if (authority == -1) {
+		X509_free(peer_crt);
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
-	caproxy = cert_has_role(SSL_get0_peer_certificate(ssl),
-	    ROLE_CAPROXY, xerrz(e));
+	caproxy = cert_has_role(peer_crt, ROLE_CAPROXY, xerrz(e));
 	if (caproxy == -1) {
+		X509_free(peer_crt);
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	X509_free(peer_crt);
 	if (!authority && !caproxy) {
 		XERRF(e, XLOG_APP, XLOG_ACCES,
 		    "peer is neither a caproxy or valid authority");

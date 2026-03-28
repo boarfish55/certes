@@ -1,7 +1,9 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/tree.h>
+#include <sys/types.h>
 #include <err.h>
 #include <netdb.h>
 #include <signal.h>
