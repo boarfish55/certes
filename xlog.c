@@ -276,7 +276,7 @@ xlog(int priority, const struct xerr *e, const char *fmt, ...)
 			xlog_fprintf("[sp=%d, code=%lld]: %s: %s",
 			    e->sp, e->code, msg, e->msg);
 		} else {
-			syslog(priority, "[sp=%d, code=%lu]: %s",
+			syslog(priority, "[sp=%d, code=%lld]: %s",
 			    e->sp, e->code, e->msg);
 			xlog_fprintf("[sp=%d, code=%lld]: %s",
 			    e->sp, e->code, e->msg);
