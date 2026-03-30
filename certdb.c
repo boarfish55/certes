@@ -194,7 +194,7 @@ certdb_get_bootstrap(const uint8_t *bootstrap_key, size_t bootstrap_key_sz,
 	case SQLITE_ROW:
                 break;
         case SQLITE_DONE:
-                XERRF(e, XLOG_APP, XLOG_NOENT,
+                XERRF(e, XLOG_APP, XLOG_NOTFOUND,
                     "sqlite3_step: entry not found, bootstrap_key=%s",
 		    bootstrap_key);
                 goto fail;
@@ -394,7 +394,7 @@ certdb_get_cert(const char *serial, struct xerr *e)
 	case SQLITE_ROW:
 		break;
         case SQLITE_DONE:
-                XERRF(e, XLOG_APP, XLOG_NOENT,
+                XERRF(e, XLOG_APP, XLOG_NOTFOUND,
                     "sqlite3_step: entry not found, serial=%s", serial);
                 goto fail;
         case SQLITE_BUSY:

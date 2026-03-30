@@ -131,7 +131,7 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 		return 0;
 
 	if ((ext = X509_get_ext(crt, roles_idx)) == NULL)
-		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "%s: certalatorRoles extension not found", __func__);
 
 	asn1str = X509_EXTENSION_get_data(ext);
@@ -160,7 +160,7 @@ cert_has_san(X509 *crt, const char *san, struct xerr *e)
 	sans = (STACK_OF(GENERAL_NAME) *)X509_get_ext_d2i(crt,
 	    NID_subject_alt_name, NULL, NULL);
 	if (sans == NULL)
-		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "%s: subjectAltName extension not found", __func__);
 
 	for (i = 0; i < sk_GENERAL_NAME_num(sans) && !found; i++) {
@@ -196,7 +196,7 @@ cert_subject_from_str(const char *subject, struct xerr *e)
 	X509_NAME *name;
 
 	if (strlcpy(subject2, subject, sizeof(subject2)) >= sizeof(subject2)) {
-		XERRF(e, XLOG_APP, XLOG_NAMETOOLONG, "subject is too long");
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW, "subject is too long");
 		return NULL;
 	}
 
@@ -215,13 +215,13 @@ cert_subject_from_str(const char *subject, struct xerr *e)
 
 		field = strtok_r(token, "=", &save2);
 		if (field == NULL) {
-			XERRF(e, XLOG_APP, XLOG_INVAL, "malformed subject");
+			XERRF(e, XLOG_APP, XLOG_INVALID, "malformed subject");
 			goto fail;
 		}
 
 		value = strtok_r(NULL, "=", &save2);
 		if (value == NULL) {
-			XERRF(e, XLOG_APP, XLOG_INVAL, "malformed subject");
+			XERRF(e, XLOG_APP, XLOG_INVALID, "malformed subject");
 			goto fail;
 		}
 
@@ -310,8 +310,7 @@ cert_new_serial(struct xerr *e)
 
 	if (snprintf(tmpfile, sizeof(tmpfile), "%s.new",
 	    certalator_conf.serial_file) >= sizeof(tmpfile)) {
-		XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
-		    "tmpfile name too long");
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW, "tmpfile name too long");
 		goto fail;
 	}
 
@@ -334,7 +333,7 @@ cert_new_serial(struct xerr *e)
 
 	if (r > 0) {
 		if (buf[r - 1] != '\n') {
-			XERRF(e, XLOG_APP, XLOG_BADSERIALFILE,
+			XERRF(e, XLOG_APP, XLOG_INVALID,
 			    "serial file does not end in newline, "
 			    "or the value is too large");
 			goto fail;
@@ -344,7 +343,7 @@ cert_new_serial(struct xerr *e)
 			if (!((*p >= '0' && *p <= '9') ||
 			    (*p >= 'a' && *p <= 'f') ||
 			    (*p >= 'A' && *p <= 'F'))) {
-				XERRF(e, XLOG_APP, XLOG_BADSERIALFILE,
+				XERRF(e, XLOG_APP, XLOG_INVALID,
 				    "serial is not a valid hex integer");
 				goto fail;
 			}
@@ -355,7 +354,7 @@ cert_new_serial(struct xerr *e)
 		}
 
 		if (BN_cmp(v, min_bn) == -1) {
-			XERRF(e, XLOG_APP, XLOG_BADSERIALFILE,
+			XERRF(e, XLOG_APP, XLOG_INVALID,
 			    "saved serial is less than min_serial");
 			goto fail;
 		}
@@ -366,8 +365,7 @@ cert_new_serial(struct xerr *e)
 		}
 
 		if (BN_cmp(v, max_bn) > 0) {
-			XERRF(e, XLOG_APP, XLOG_MAXSERIALREACHED,
-			    "max_serial exceeded");
+			XERRF(e, XLOG_APP, XLOG_LIMITED, "max_serial exceeded");
 			goto fail;
 		}
 	} else {
@@ -713,7 +711,7 @@ cert_self(char *name, size_t name_sz, struct xerr *e)
 	if (ai != NULL)
 		return 0;
 
-	return XERRF(e, XLOG_APP, XLOG_NOENT, "no name found");
+	return XERRF(e, XLOG_APP, XLOG_NOTFOUND, "no name found");
 }
 
 static X509 *
@@ -1040,7 +1038,7 @@ cert_subject_cn(const char *subject, char *cn, size_t cn_sz, struct xerr *e)
 
 		field = strtok_r(token, "=", &save2);
 		if (field == NULL)
-			return XERRF(e, XLOG_APP, XLOG_INVAL,
+			return XERRF(e, XLOG_APP, XLOG_INVALID,
 			    "malformed subject");
 
 		if (strcmp(field, "CN") != 0)
@@ -1048,17 +1046,17 @@ cert_subject_cn(const char *subject, char *cn, size_t cn_sz, struct xerr *e)
 
 		value = strtok_r(NULL, "=", &save2);
 		if (value == NULL)
-			return XERRF(e, XLOG_APP, XLOG_INVAL,
+			return XERRF(e, XLOG_APP, XLOG_INVALID,
 			    "malformed subject");
 
 		if (strlcpy(cn, value, cn_sz) >= cn_sz)
-			return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+			return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "CN does not fit in buffer");
 
 		return 0;
 	}
 
-	return XERRF(e, XLOG_APP, XLOG_NOENT, "no CN in subject");
+	return XERRF(e, XLOG_APP, XLOG_NOTFOUND, "no CN in subject");
 }
 
 char *
@@ -1115,15 +1113,15 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 
 	roles_idx = X509_get_ext_by_NID(crt, NID_certalator_roles, -1);
 	if (roles_idx == -1)
-		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "%s: certalatorRoles extension not found", __func__);
 	san_idx = X509_get_ext_by_NID(crt, NID_subject_alt_name, -1);
 	if (san_idx == -1)
-		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "%s: subjectAltName extension not found", __func__);
 
 	if ((ex = X509_get_ext(crt, roles_idx)) == NULL)
-		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "%s: certalatorRoles extension not found", __func__);
 	asn1str = X509_EXTENSION_get_data(ex);
 	p = asn1str->data;
@@ -1140,7 +1138,7 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 			return 1;
 
 	if ((ex = X509_get_ext(crt, san_idx)) == NULL)
-		return XERRF(e, XLOG_APP, XLOG_SSLEXTNOTFOUND,
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "%s: subjectAltName extension not found", __func__);
 	asn1str = X509_EXTENSION_get_data(ex);
 	p = asn1str->data;

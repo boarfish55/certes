@@ -5,39 +5,40 @@
 #include <stdint.h>
 #include <syslog.h>
 
+__BEGIN_DECLS
+
 enum xerr_space {
 	XLOG_NONE = 0,
 	XLOG_APP,      /* App-internal error */
 	XLOG_ERRNO,    /* Standard errno code used internally only */
 	XLOG_SSL,      /* SSL error codes */
-	XLOG_EAI,      /* getaddrinfo error codes */
+	XLOG_EAI,      /* getaddrinfo() error codes */
 	XLOG_DB        /* DB error */
 };
 
 enum {
 	XLOG_SUCCESS = 0,
-	XLOG_FAIL,              /* Non-specific failure */
-	XLOG_EOF,               /* EOF on a pipe/socket */
-	XLOG_ACCES,             /* Access/permission denied */
-	XLOG_INVAL,             /* An invalid value was obtained */
-	XLOG_NOENT,             /* Entity not found */
-	XLOG_BUSY,              /* DB is busy with lock */
-	XLOG_IO,                /* IO error */
-	XLOG_OVERFLOW,          /* Value too large for container */
-	XLOG_RANGE,             /* Value exceeds allowed range */
-	XLOG_SHORTIO,           /* Short read/write */
-	XLOG_BADMSG,            /* Bad message format */
-	XLOG_NOTSUPP,           /* Unsupported message */
-	XLOG_TIMEOUT,           /* Operation timed out */
-	XLOG_WOULDBLOCK,        /* Operation would block but
-				   is set non-blocking */
-	XLOG_NAMETOOLONG,       /* Specified name is too long for limit */
-	XLOG_EDESTADDRREQ,      /* No destination address was specified */
-	XLOG_SSLEXTNOTFOUND,    /* SSL extension not found */
-	XLOG_SSLEXTNIDNOTFOUND, /* SSL extension NID not found */
-	XLOG_BADSERIALFILE,     /* Serial file is wrong format */
-	XLOG_MAXSERIALREACHED,  /* Maximum serial reached */
-	XLOG_CALLBACK_ERR       /* Callback error */
+	XLOG_FAIL,         /* Non-specific failure */
+	XLOG_EOF,          /* EOF on a pipe/socket */
+	XLOG_DENIED,       /* Operation was denied */
+	XLOG_LIMITED,      /* Operation was throttled or a limit was reached */
+	XLOG_INVALID,      /* An invalid value was obtained */
+	XLOG_BADMSG,       /* Message is malformed */
+	XLOG_NOTFOUND,     /* Entity not found */
+	XLOG_IO,           /* IO error */
+	XLOG_OVERFLOW,     /* Value too large for container */
+	XLOG_RANGE,        /* Value exceeds allowed range */
+	XLOG_SHORTIO,      /* Short read/write */
+	XLOG_BUSY,         /* Resource is busy */
+	XLOG_NOTSUP,       /* Function/feature not implemented or supported */
+	XLOG_TIMEOUT,      /* Operation timed out */
+	XLOG_WOULDBLOCK,   /* Operation would block but is set non-blocking */
+	XLOG_CALLBACK_ERR, /* A callback encountered an error the current
+			      context is unaware of (look for callback's own
+			      error handling) */
+
+	XLOG_USER_DEFINED = 65536 /* Users can define their own errors
+				     from this pointCallback error */
 };
 
 #define XLOG_ALL     0xFFFF
@@ -99,5 +100,7 @@ void xlog_strerror(int, int, const char *, ...);
 void xerr_print(const struct xerr *);
 int  xerr_prepend(struct xerr *, const char *);
 #define XERR_PREPENDFN(e) xerr_prepend(e, __func__)
+
+__END_DECLS
 
 #endif

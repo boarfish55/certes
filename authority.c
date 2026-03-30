@@ -33,7 +33,7 @@ authority_make_bootstrap(const char *cn, const char **sans,
 		if (snprintf(subject, sizeof(subject),
 		    "/O=%s/CN=%s/emailAddress=%s", certalator_conf.cert_org,
 		    cn, certalator_conf.cert_email) >= sizeof(subject))
-			return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+			return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "resulting subject name is too long "
 			    "for commonName %s", cn);
 	}
@@ -50,13 +50,13 @@ authority_make_bootstrap(const char *cn, const char **sans,
 
 	for (i = 0; i < roles_sz; i++)
 		if (strlen(roles[i]) > CERTALATOR_MAX_ROLE_LENGTH)
-			return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+			return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "role name %s longer than limit of %d",
 			    roles[i], CERTALATOR_MAX_ROLE_LENGTH);
 
 	for (i = 0; i < sans_sz; i++)
 		if (strlen(sans[i]) > CERTALATOR_MAX_SAN_LENGTH)
-			return XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+			return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "SAN name %s longer than limit of %d",
 			    sans[i], CERTALATOR_MAX_SAN_LENGTH);
 
@@ -86,14 +86,14 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 	if (!agent_is_authority()) {
 		mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_NOTSUPP,
 		    "we are not an authority");
-		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		return XERRF(e, XLOG_APP, XLOG_NOTSUP,
 		    "we are not an authority");
 	}
 
 	if (!cert_has_role(sess->cert, ROLE_BOOTSTRAP, xerrz(e))) {
 		mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
 		    MDR_ERR_DENIED, ROLE_BOOTSTRAP " role required");
-		return XERRF(e, XLOG_APP, XLOG_ACCES,
+		return XERRF(e, XLOG_APP, XLOG_DENIED,
 		    ROLE_BOOTSTRAP " role required");
 	}
 
@@ -181,7 +181,7 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 
 	if (snprintf(port, sizeof(port), "%u", CERTALATOR_AGENT_PORT) >=
 	    sizeof(port)) {
-		XERRF(e, XLOG_APP, XLOG_INVAL,
+		XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "failed to convert agent port");
 		goto befail;
 	}
@@ -315,7 +315,7 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 	if (!agent_is_authority()) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "we are not an authority");
-		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		return XERRF(e, XLOG_APP, XLOG_NOTSUP,
 		    "we are not an authority");
 	}
 
@@ -583,7 +583,7 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	if (!agent_is_authority()) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "we are not an authority");
-		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		return XERRF(e, XLOG_APP, XLOG_NOTSUP,
 		    "we are not an authority");
 	}
 
@@ -591,7 +591,7 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	    MIN(sizeof(cs->challenge), uv[1].v.b.sz)) != 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "failed challenge");
-		return XERRF(e, XLOG_APP, XLOG_ACCES,
+		return XERRF(e, XLOG_APP, XLOG_DENIED,
 		    "client failed challenge");
 	}
 
@@ -704,7 +704,7 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 	if (!agent_is_authority()) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "we are not an authority");
-		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		return XERRF(e, XLOG_APP, XLOG_NOTSUP,
 		    "we are not an authority");
 	}
 
@@ -712,7 +712,7 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 	    MIN(sizeof(cs->challenge), uv[1].v.b.sz)) != 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "failed challenge");
-		return XERRF(e, XLOG_APP, XLOG_ACCES,
+		return XERRF(e, XLOG_APP, XLOG_DENIED,
 		    "client failed challenge");
 	}
 
@@ -823,14 +823,14 @@ authority_cert_renewal_inquiry(struct mdrd_besession *sess, struct umdr *msg,
 	if (!agent_is_authority()) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "we are not an authority");
-		return XERRF(e, XLOG_APP, XLOG_NOTSUPP,
+		return XERRF(e, XLOG_APP, XLOG_NOTSUP,
 		    "we are not an authority");
 	}
 
 	if (!cert_has_role(sess->cert, ROLE_AGENT, xerrz(e))) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    ROLE_AGENT " role required");
-		return XERRF(e, XLOG_APP, XLOG_ACCES,
+		return XERRF(e, XLOG_APP, XLOG_DENIED,
 		    ROLE_AGENT " role required");
 	}
 

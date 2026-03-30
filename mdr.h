@@ -348,7 +348,7 @@ const struct mdr_spec *mdr_register_spec(struct mdr_def *);
 const struct mdr_spec *mdr_registry_get(uint64_t);
 void                   mdr_registry_clear();
 
-size_t                 mdr_spec_base_sz(const struct mdr_spec *);
+size_t                 mdr_spec_base_sz(const struct mdr_spec *, uint64_t);
 
 #define MDR_DCV(domain, code, variant) \
     ((uint64_t)domain << 32 | (uint64_t)code << 16 | (uint64_t)variant)
@@ -380,6 +380,7 @@ enum mdr_err_code {
 	MDR_ERR_FAIL = 1,   /* Generic failure */
 	MDR_ERR_BEFAIL,     /* Failure on backend */
 	MDR_ERR_BADMSG,     /* Bad message format */
+	MDR_ERR_SZEX,       /* MDR size exceeded */
 	MDR_ERR_NOTSUPP,    /* Message not supported */
 	MDR_ERR_CERTFAIL,   /* Cerfificate validation failure */
 	MDR_ERR_DENIED,     /* Client is not authorized for this operation */

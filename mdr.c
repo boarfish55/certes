@@ -1070,10 +1070,10 @@ mdr_registry_clear()
 }
 
 size_t
-mdr_spec_base_sz(const struct mdr_spec *spec)
+mdr_spec_base_sz(const struct mdr_spec *spec, uint64_t max_payload_bytes)
 {
 	int    i;
-	size_t sz = 0;
+	size_t sz = mdr_hdr_size(MDR_FALL);
 
 	for (i = 0; i < spec->types_count; i++) {
 		switch (spec->types[i]) {

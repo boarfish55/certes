@@ -450,7 +450,7 @@ authop_new(enum authop_type type, struct xerr *e)
 	bzero(op, sizeof(*op));
 
 	if (certalator_conf.authority_fqdn[0] == '\0') {
-		XERRF(e, XLOG_APP, XLOG_EDESTADDRREQ,
+		XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "no destination address was specified");
 		goto fail;
 	}
@@ -458,7 +458,7 @@ authop_new(enum authop_type type, struct xerr *e)
 	if (snprintf(host, sizeof(host), "%s:%llu",
 	    certalator_conf.authority_fqdn,
 	    certalator_conf.authority_port) >= sizeof(host)) {
-		XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 		    "resulting host:port is too long");
 		goto fail;
 	}
@@ -527,7 +527,7 @@ authop_new(enum authop_type type, struct xerr *e)
 	}
 	X509_free(peer_crt);
 	if (!authority && !caproxy) {
-		XERRF(e, XLOG_APP, XLOG_ACCES,
+		XERRF(e, XLOG_APP, XLOG_DENIED,
 		    "peer is neither a caproxy or valid authority");
 		goto fail;
 	}
@@ -627,7 +627,7 @@ agent_error(struct umdr *msg, struct xerr *e)
 	strlcpy(needle.id, uv[0].v.s.bytes, sizeof(needle.id));
 	op = SPLAY_FIND(authop_tree, &authops, &needle);
 	if (op == NULL)
-		return XERRF(e, XLOG_APP, XLOG_NOENT,
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "no such authop found: %s", needle.id);
 
 	xlog(LOG_ERR, NULL, "%s: %s (op type %d)",
@@ -666,7 +666,7 @@ agent_bootstrap(struct xerr *e)
 
 	if (strlen(certalator_conf.bootstrap_key) !=
 	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64)
-		return XERRF(e, XLOG_APP, XLOG_INVAL,
+		return XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "bad bootstrap key format in configuration; bad length");
 
 	if (b64dec(bootstrap_key, sizeof(bootstrap_key),
@@ -851,11 +851,11 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 	strlcpy(needle.id, uv[0].v.s.bytes, sizeof(needle.id));
 	op = SPLAY_FIND(authop_tree, &authops, &needle);
 	if (op == NULL)
-		return XERRF(e, XLOG_APP, XLOG_NOENT,
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "no such authop found: %s", needle.id);
 
 	if (op->type != AUTHOP_BOOTSTRAP)
-		return XERRF(e, XLOG_APP, XLOG_INVAL,
+		return XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "authop %s is not a bootstrap request", op->id);
 
 	xlog(LOG_INFO, NULL, "%s: authop id %s received",
@@ -943,7 +943,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	}
 
 	if (uv[0].v.s.bytes == NULL || strcmp(op->id, uv[0].v.s.bytes) != 0) {
-		XERRF(e, XLOG_APP, XLOG_INVAL,
+		XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "expected authop %s, got %s", op->id, uv[0].v.s.bytes);
 		goto fail;
 	}
@@ -959,7 +959,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 
 	if (snprintf(tmpfile, sizeof(tmpfile), "%s.new",
 	    certalator_conf.cert_file) >= sizeof(tmpfile)) {
-		XERRF(e, XLOG_APP, XLOG_NAMETOOLONG,
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 		    "temporary cert file name too long");
 		goto fail;
 	}
@@ -1045,11 +1045,11 @@ agent_cert_renew_dialback(struct umdr *msg, struct xerr *e)
 	strlcpy(needle.id, uv[0].v.s.bytes, sizeof(needle.id));
 	op = SPLAY_FIND(authop_tree, &authops, &needle);
 	if (op == NULL)
-		return XERRF(e, XLOG_APP, XLOG_NOENT,
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "no such authop found: %s", needle.id);
 
 	if (op->type != AUTHOP_CERT_RENEW)
-		return XERRF(e, XLOG_APP, XLOG_INVAL,
+		return XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "authop %s is not a bootstrap request", op->id);
 
 	xlog(LOG_INFO, NULL, "%s: authop id %s received",
