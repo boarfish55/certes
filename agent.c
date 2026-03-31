@@ -31,6 +31,7 @@ static uint64_t     next_authop_id = 1;
 
 static struct timespec last_authop_purge = {0, 0};
 static struct timespec last_certdb_purge = {0, 0};
+static struct timespec next_certdb_backup = {0, 0};
 static struct timespec last_cert_check = {0, 0};
 static int             agent_fd = -1;
 static int             cert_fetch_in_progress = 0;
@@ -194,6 +195,21 @@ agent_tasks()
 				xlog(LOG_ERR, &e, "%s", __func__);
 			if (certdb_clean_expired_bootstraps(xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
+		}
+
+		/*
+		 * We don't run a backup if the interval is 0.
+		 * TODO: add a signal handler, or command, to trigger
+		 * a backup.
+		 */
+		if (certalator_conf.certdb_backup_interval_seconds &&
+		    now.tv_sec > next_certdb_backup.tv_sec) {
+			if (*certalator_conf.certdb_backup_path != '\0' &&
+			    certdb_backup(certalator_conf.certdb_backup_path,
+			    certalator_conf.certdb_backup_pages_per_step,
+			    xerrz(&e)) == -1)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			memcpy(&next_certdb_backup, &now, sizeof(now));
 		}
 
 		// TODO: need a CRL regen task
@@ -1444,6 +1460,11 @@ agent_init(struct xerr *e)
 {
 	if (cert_init(xerrz(e)) == -1)
 		return XERR_PREPENDFN(e);
+
+	clock_gettime(CLOCK_MONOTONIC, &next_certdb_backup);
+	next_certdb_backup.tv_sec +=
+	    certalator_conf.certdb_backup_interval_seconds;
+
 	if ((store = X509_STORE_new()) == NULL)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_new");
 	if (agent_load_keys(e) == -1)

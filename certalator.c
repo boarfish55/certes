@@ -28,10 +28,13 @@ struct certalator_flatconf certalator_conf = {
 	"",
 	CERTALATOR_AGENT_PORT,
 	"",
+	"",
+	86400,                  /* certdb_backup_interval_seconds */
+	0,                      /* certdb_backup_pages_per_steps */
 	60000,
 	60000,
 	"",
-	30,                       /* challenge_timeout */
+	30,                     /* challenge_timeout */
 	"ca.pem",
 	"",
 	"",
@@ -80,6 +83,24 @@ struct flatconf certalator_config_vars[] = {
 		FLATCONF_STRING,
 		certalator_conf.certdb_path,
 		sizeof(certalator_conf.certdb_path)
+	},
+	{
+		"certdb_backup_path",
+		FLATCONF_STRING,
+		certalator_conf.certdb_backup_path,
+		sizeof(certalator_conf.certdb_backup_path)
+	},
+	{
+		"certdb_backup_interval_seconds",
+		FLATCONF_ULONG,
+		&certalator_conf.certdb_backup_interval_seconds,
+		sizeof(certalator_conf.certdb_backup_interval_seconds)
+	},
+	{
+		"certdb_backup_pages_per_step",
+		FLATCONF_ULONG,
+		&certalator_conf.certdb_backup_pages_per_step,
+		sizeof(certalator_conf.certdb_backup_pages_per_step)
 	},
 	{
 		"agent_send_timeout_ms",

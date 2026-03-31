@@ -42,6 +42,9 @@ struct certalator_flatconf {
 	char     authority_fqdn[256];
 	uint64_t authority_port;
 	char     certdb_path[PATH_MAX];
+	char     certdb_backup_path[PATH_MAX];
+	uint64_t certdb_backup_interval_seconds;
+	uint64_t certdb_backup_pages_per_step;
 	uint64_t agent_send_timeout_ms;
 	uint64_t agent_recv_timeout_ms;
 	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64 + 1];

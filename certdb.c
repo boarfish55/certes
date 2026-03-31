@@ -707,6 +707,50 @@ certdb_clean_expired_certs(struct xerr *e)
 }
 
 int
+certdb_backup(const char *path, int pages, struct xerr *e)
+{
+	int             r;
+	sqlite3        *bkdb;
+	sqlite3_backup *bk;
+
+	if ((r = sqlite3_open(path, &bkdb)))
+		return XERRF(e, XLOG_DB, r, "sqlite3_open: %s",
+		    sqlite3_errmsg(bkdb));
+
+	if ((bk = sqlite3_backup_init(bkdb, "main", db, "main")) == NULL) {
+		XERRF(e, XLOG_DB, r, "sqlite3_backup_init: %s",
+		    sqlite3_errmsg(bkdb));
+		goto fail;
+	}
+
+	if (pages < 1)
+		pages = -1;
+
+	for (;;) {
+		switch ((r = sqlite3_backup_step(bk, pages))) {
+		case SQLITE_DONE:
+			if ((r = sqlite3_backup_finish(bk))) {
+				XERRF(e, XLOG_DB, r,
+				    "sqlite3_backup_finish: %s",
+				    sqlite3_errmsg(bkdb));
+				goto fail;
+			}
+			sqlite3_close(bkdb);
+			return 0;
+		case SQLITE_OK:
+			break;
+		default:
+			XERRF(e, XLOG_DB, r, "sqlite3_backup_step: %s",
+			    sqlite3_errmsg(bkdb));
+			goto fail;
+		}
+	}
+fail:
+	sqlite3_close(bkdb);
+	return -1;
+}
+
+int
 certdb_init(const char *path, struct xerr *e)
 {
 	int r;

@@ -42,6 +42,7 @@ struct cert_entry {
 
 int  certdb_init(const char *, struct xerr *);
 void certdb_shutdown();
+int  certdb_backup(const char *, int, struct xerr *);
 
 struct bootstrap_entry *certdb_get_bootstrap(const uint8_t *, size_t,
                             struct xerr *);
