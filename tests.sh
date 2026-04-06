@@ -99,7 +99,7 @@ backend_unveils = [
 EOF
 
 ulimit -c unlimited
-../mdr/mdrd -c $basedir/authority1/mdrd.conf
+mdrd -c $basedir/authority1/mdrd.conf
 
 for i in 1 2 3 4 5; do
 	nc -vz localhost 9791 >/dev/null 2>&1 && break
@@ -193,7 +193,7 @@ backend_unveils = [
 ]
 EOF
 
-../mdr/mdrd -c $basedir/client3/mdrd.conf
+mdrd -c $basedir/client3/mdrd.conf
 echo "* Agent running with pid `cat $basedir/client3/mdrd.pid`"
 
 read -p "Press any key to terminate daemon..." PAUSE

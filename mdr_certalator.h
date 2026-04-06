@@ -1,8 +1,11 @@
 #ifndef MDR_CERTALATOR_H
 #define MDR_CERTALATOR_H
 
-#include "mdr.h"
-#include "mdrd.h"
+#include <mdr/mdr.h>
+#include <mdr/mdrd.h>
+
+#define MDR_DOMAIN_CERTALATOR \
+    MDR_DCV(0x00000002, 0x0002, 0x0000)
 
 /*
  * Certalator operation success

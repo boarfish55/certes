@@ -3,8 +3,8 @@
 
 #include <stdio.h>
 #include <openssl/x509.h>
-#include "mdr.h"
-#include "xlog.h"
+#include <mdr/mdr.h>
+#include <mdr/xlog.h>
 
 int         agent_load_keys(struct xerr *);
 int         agent_is_authority();

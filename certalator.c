@@ -8,16 +8,17 @@
 #include <netdb.h>
 #include <signal.h>
 #include <unistd.h>
+#include <mdr/flatconf.h>
+#include <mdr/mdrd.h>
+#include <mdr/util.h>
+#include <mdr/xlog.h>
+#include "util.h"
 #include "agent.h"
 #include "authority.h"
 #include "cert.h"
 #include "certalator.h"
 #include "certdb.h"
-#include "flatconf.h"
 #include "mdr_certalator.h"
-#include "mdrd.h"
-#include "util.h"
-#include "xlog.h"
 
 int  debug = 0;
 char config_file_path[PATH_MAX] = "/etc/certalator.conf";

@@ -1,10 +1,10 @@
 #ifndef AUTHORITY_H
 #define AUTHORITY_H
 
+#include <mdr/mdr.h>
+#include <mdr/mdrd.h>
+#include <mdr/xlog.h>
 #include "certdb.h"
-#include "mdr.h"
-#include "mdrd.h"
-#include "xlog.h"
 
 int  authority_bootstrap_setup(struct mdrd_besession *, struct umdr *,
          struct xerr *);

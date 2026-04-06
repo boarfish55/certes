@@ -6,11 +6,11 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <mdr/mdrd.h>
+#include <mdr/util.h>
 #include "authority.h"
 #include "agent.h"
 #include "cert.h"
-#include "mdrd.h"
-#include "util.h"
 
 extern struct certalator_flatconf certalator_conf;
 

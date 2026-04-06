@@ -14,12 +14,13 @@
 #include <poll.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <mdr/mdr.h>
+#include <mdr/xlog.h>
+#include <mdr/util.h>
 #include "agent.h"
 #include "certalator.h"
 #include "cert.h"
 #include "certdb.h"
-#include "mdr.h"
-#include "xlog.h"
 #include "util.h"
 
 static EVP_PKEY    *key = NULL;

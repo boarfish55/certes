@@ -4,8 +4,8 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <openssl/x509_vfy.h>
+#include <mdr/xlog.h>
 #include "certdb.h"
-#include "xlog.h"
 
 int             cert_init(struct xerr *);
 ssize_t         cert_decode_certalator_roles(X509_EXTENSION *, char **, ssize_t);

@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 #include <time.h>
+#include <mdr/xlog.h>
 #include "certalator.h"
-#include "xlog.h"
 
 #define CERTDB_BOOTSTRAP_FLAG_NONE  0x00000000
 #define CERTDB_BOOTSTRAP_FLAG_SETCN 0x00000001

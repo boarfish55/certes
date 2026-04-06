@@ -2,8 +2,8 @@
 #define CERTALATOR_H
 
 #include <limits.h>
+#include <mdr/xlog.h>
 #include "mdr_certalator.h"
-#include "xlog.h"
 
 #define MAX_HEX_SERIAL_LENGTH 32
 #define MAX_ACTIVE_CHALLENGES 32
