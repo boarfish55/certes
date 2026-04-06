@@ -204,9 +204,11 @@ agent_tasks()
 		 * a backup.
 		 */
 		if (certalator_conf.certdb_backup_interval_seconds &&
+		    *certalator_conf.certdb_backup_path != '\0' &&
 		    now.tv_sec > next_certdb_backup.tv_sec) {
-			if (*certalator_conf.certdb_backup_path != '\0' &&
-			    certdb_backup(certalator_conf.certdb_backup_path,
+			xlog(LOG_NOTICE, NULL, "backing up cert DB to %s",
+			    certalator_conf.certdb_backup_path);
+			if (certdb_backup(certalator_conf.certdb_backup_path,
 			    certalator_conf.certdb_backup_pages_per_step,
 			    xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
