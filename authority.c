@@ -161,16 +161,16 @@ static int
 authority_challenge(struct mdrd_besession *sess, const char *op_id,
     uint64_t dcv, const char *challenge_host, struct xerr *e)
 {
-	char                       port[6];
-	int                        fd;
-	struct timeval             timeout;
-	SSL_CTX                   *ctx = NULL;
-	SSL                       *ssl = NULL;
-	BIO                       *bio = NULL;
-	struct pmdr                pm;
-	char                       pbuf[256];
-	struct pmdr_vec            pv[2];
-	int                        r, status = 0;
+	char                   port[6];
+	int                    fd;
+	struct timeval         timeout;
+	SSL_CTX               *ctx = NULL;
+	SSL                   *ssl = NULL;
+	BIO                   *bio = NULL;
+	struct pmdr            pm;
+	char                   pbuf[256];
+	struct pmdr_vec        pv[2];
+	int                    r, status = 0;
 	struct certes_session *cs = (struct certes_session *)sess->data;
 
 	if ((cs->challenge = malloc(CERTES_CHALLENGE_LENGTH)) == NULL) {
@@ -294,13 +294,13 @@ int
 authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
     struct xerr *e)
 {
-	struct bootstrap_entry    *be = NULL;
-	struct umdr_vec            uv[3];
-	struct timespec            now;
-	struct certes_session *cs = (struct certes_session *)sess->data;
-	const char                *op_id;
-	char                       challenge_host[256];
-	X509_NAME                 *subject;
+	struct bootstrap_entry *be = NULL;
+	struct umdr_vec         uv[3];
+	struct timespec         now;
+	struct certes_session  *cs = (struct certes_session *)sess->data;
+	const char             *op_id;
+	char                    challenge_host[256];
+	X509_NAME              *subject;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
@@ -560,15 +560,15 @@ int
 authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
     struct xerr *e)
 {
-	struct bootstrap_entry    *be = NULL;
-	struct cert_entry          ce;
-	struct umdr_vec            uv[2];
-	struct certes_session *cs = (struct certes_session *)sess->data;
-	X509                      *crt = NULL;
-	const char                *op_id;
-	struct tm                  tm;
-	unsigned char             *crt_buf = NULL;
-	int                        crt_len;
+	struct bootstrap_entry *be = NULL;
+	struct cert_entry       ce;
+	struct umdr_vec         uv[2];
+	struct certes_session  *cs = (struct certes_session *)sess->data;
+	X509                   *crt = NULL;
+	const char             *op_id;
+	struct tm               tm;
+	unsigned char          *crt_buf = NULL;
+	int                     crt_len;
 
 	if (umdr_unpack(msg, msg_bootstrap_answer, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -683,13 +683,13 @@ int
 authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
     struct xerr *e)
 {
-	struct cert_entry         *ce = NULL;
-	struct umdr_vec            uv[2];
+	struct cert_entry     *ce = NULL;
+	struct umdr_vec        uv[2];
 	struct certes_session *cs = (struct certes_session *)sess->data;
-	X509                      *crt = NULL;
-	const char                *op_id;
-	struct tm                  tm;
-	char                      *serial;
+	X509                  *crt = NULL;
+	const char            *op_id;
+	struct tm              tm;
+	char                  *serial;
 
 	if (umdr_unpack(msg, msg_bootstrap_answer, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)

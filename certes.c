@@ -257,8 +257,8 @@ certes_client_name(struct mdrd_besession *s, char *dst, size_t sz,
     struct xerr *e)
 {
 	struct certes_session *cs = (struct certes_session *)s->data;
-	char                      *buf = dst;
-	int                        r;
+	char                  *buf = dst;
+	int                    r;
 
 	if (buf == NULL) {
 		buf = client_name_buf;
@@ -282,14 +282,14 @@ certes_client_name(struct mdrd_besession *s, char *dst, size_t sz,
 int
 mdrd_backend()
 {
-	struct pmdr                pm;
-	char                       pbuf[32768];
-	struct umdr                msg;
-	char                       msgbuf[16384];
-	X509_STORE_CTX            *ctx;
-	struct sigaction           act;
-	struct xerr                e;
-	struct mdrd_besession     *sess;
+	struct pmdr            pm;
+	char                   pbuf[32768];
+	struct umdr            msg;
+	char                   msgbuf[16384];
+	X509_STORE_CTX        *ctx;
+	struct sigaction       act;
+	struct xerr            e;
+	struct mdrd_besession *sess;
 	struct certes_session *cs;
 
 	xlog_init(CERTES_PROGNAME, NULL, NULL, 1);
