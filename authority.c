@@ -182,7 +182,7 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto befail;
 	}
-	arc4random_buf(cs->challenge, sizeof(cs->challenge));
+	arc4random_buf(cs->challenge, CERTES_CHALLENGE_LENGTH);
 
 	if (snprintf(port, sizeof(port), "%u", CERTES_AGENT_PORT) >=
 	    sizeof(port)) {
@@ -621,7 +621,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	if (crt_len < 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
-                return XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
+                XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
+		goto fail;
 	}
 
 	bzero(&ce, sizeof(ce));
@@ -695,6 +696,7 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 	const char            *op_id;
 	struct tm              tm;
 	char                  *serial;
+	int                    der_sz;
 
 	if (umdr_unpack(msg, msg_bootstrap_answer, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -760,13 +762,14 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 	 */
 	free(ce->der);
 	ce->der = NULL;
-	ce->der_sz = i2d_X509(crt, &ce->der);
-	if (ce->der_sz < 0) {
+	der_sz = i2d_X509(crt, &ce->der);
+	if (der_sz < 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
                 XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
                 goto fail;
 	}
+	ce->der_sz = der_sz;
 
 	ASN1_TIME_to_tm(X509_get_notBefore(crt), &tm);
 	ce->not_before_sec = timegm(&tm);

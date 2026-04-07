@@ -162,22 +162,29 @@ agent_connect(struct xerr *e)
 
 		if (connect(fd, (struct sockaddr *)&saddr,
 		    sizeof(saddr)) == -1) {
-			if (errno != ENOENT && errno != ECONNREFUSED)
+			if (errno != ENOENT && errno != ECONNREFUSED) {
+				close(fd);
 				return XERRF(e, XLOG_ERRNO, errno, "connect");
+			}
 
 			if (agent_start(xerrz(e)) == -1) {
-				if (errno != EWOULDBLOCK)
+				if (errno != EWOULDBLOCK) {
+					close(fd);
 					return XERR_PREPENDFN(e);
+				}
 			}
 			nanosleep(&tp, NULL);
-			continue;
+		} else {
+			xlog(LOG_NOTICE, NULL,
+			    "%s: connected to backend agent", __func__);
+			agent_fd = fd;
+			return 0;
 		}
-
-		agent_fd = fd;
 	}
 
-	xlog(LOG_NOTICE, NULL, "%s: connected to backend agent", __func__);
-	return 0;
+	close(fd);
+	return XERRF(e, XLOG_APP, XLOG_FAIL,
+	    "no agent to connect to after 5 attempts");
 }
 
 static void
@@ -284,7 +291,7 @@ agent_run(int lsock, struct xerr *e)
 			if (getppid() == 1) {
 				xlog(LOG_NOTICE, NULL, "%s: parent exited, so "
 				    "we will too", __func__);
-				return 0;
+				break;
 			}
 
 			/* Run background tasks when we're idle */
@@ -296,30 +303,8 @@ agent_run(int lsock, struct xerr *e)
 			if (fds[i].revents == 0)
 				continue;
 
-			if (fds[i].revents & POLLERR) {
-				xlog(LOG_ERR, NULL, "%s: fd %d error", __func__,
-				    fds[i].fd);
-				close(fds[i].fd);
-				if (fds[i].fd == lsock) {
-					xlog(LOG_ERR, NULL, "%s: lsock %d "
-					    "closed unexpectedly", __func__,
-					    lsock);
-					_exit(1);
-				}
-
-				needle.fd = fds[i].fd;
-				c = SPLAY_FIND(client_tree, &clients, &needle);
-				if (c != NULL) {
-					SPLAY_REMOVE(client_tree, &clients, c);
-					client_free(c);
-				}
-
-				continue;
-			}
-
 			/* Handle our listening socket for new clients. */
-			if (fds[i].fd == lsock &&
-			    fds[i].revents & POLLIN) {
+			if (fds[i].fd == lsock) {
 				if (client_tree_sz >= fds_sz) {
 					tmp = realloc(fds, client_tree_sz + 32);
 					if (tmp == NULL) {
@@ -338,6 +323,7 @@ agent_run(int lsock, struct xerr *e)
 						    "%s: accept", __func__);
 					continue;
 				}
+
 				c = malloc(sizeof(struct client));
 				if (c == NULL) {
 					xlog_strerror(LOG_ERR, errno,
@@ -1352,6 +1338,7 @@ agent_load_keys(struct xerr *e)
 				if (errno == 0)
 					break;
 				XERRF(e, XLOG_ERRNO, errno, "readdir");
+				closedir(d);
 				goto fail;
 			}
 			if (de->d_type != DT_REG)
@@ -1364,6 +1351,7 @@ agent_load_keys(struct xerr *e)
 			    certes_conf.crl_path, de->d_name);
 			if (load_crl(crl_path, xerrz(e)) == -1) {
 				XERR_PREPENDFN(e);
+				closedir(d);
 				goto fail;
 			}
 		}

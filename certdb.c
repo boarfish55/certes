@@ -158,6 +158,8 @@ certdb_qry_cleanup(sqlite3_stmt *stmt, struct xerr *e)
 void
 certdb_bootstrap_free(struct bootstrap_entry *be)
 {
+	if (be == NULL)
+		return;
 	if (be->subject != NULL)
 		free(be->subject);
 	if (be->sans != NULL)
@@ -373,6 +375,7 @@ certdb_cert_free(struct cert_entry *ce)
 		free(ce->roles);
 	if (ce->der != NULL)
 		free(ce->der);
+	free(ce);
 }
 
 struct cert_entry *
