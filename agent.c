@@ -31,7 +31,7 @@
 static EVP_PKEY    *key = NULL;
 static X509        *cert = NULL;
 static int          is_authority = 0;
-static X509_STORE  *store;
+static X509_STORE  *store = NULL;
 static SSL_CTX     *ssl_ctx = NULL;
 static uint64_t     next_authop_id = 1;
 
@@ -266,6 +266,7 @@ agent_run(int lsock, struct xerr *e)
 	struct umdr    um;
 	uint64_t       um_sz;
 	void          *tmp;
+	int            status = 0;
 
 	if ((fds = malloc(sizeof(struct pollfd) * fds_sz)) == NULL)
 		return XERRF(e, XLOG_ERRNO, errno, "malloc");
@@ -283,8 +284,8 @@ agent_run(int lsock, struct xerr *e)
 		}
 
 		if ((ready = poll(fds, nfds, 1000)) == -1) {
-			XERRF(e, XLOG_ERRNO, errno, "poll");
-			goto fail;
+			status = XERRF(e, XLOG_ERRNO, errno, "poll");
+			break;
 		}
 
 		if (ready == 0) {
@@ -435,15 +436,12 @@ agent_run(int lsock, struct xerr *e)
 			c->in_buf_used -= um_sz;
 		}
 	}
-	free(fds);
-	return 0;
-fail:
 	SPLAY_FOREACH(c, client_tree, &clients) {
 		SPLAY_REMOVE(client_tree, &clients, c);
 		client_free(c);
 	}
 	free(fds);
-	return -1;
+	return status;
 }
 
 static struct authop *
@@ -1558,7 +1556,7 @@ agent_start(struct xerr *e)
 
 	if ((null_fd = open("/dev/null", O_RDWR)) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: open /dev/null", __func__);
-		_exit(1);
+		exit(1);
 	}
 
 	dup2(null_fd, STDIN_FILENO);
@@ -1569,12 +1567,12 @@ agent_start(struct xerr *e)
 
 	if (xlog_init(CERTES_AGENT_PROGNAME, NULL, NULL, 0) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: xlog_init", __func__);
-		_exit(1);
+		exit(1);
 	}
 
 	if (setsid() == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: setsid", __func__);
-		_exit(1);
+		exit(1);
 	}
 
 	setproctitle("agent");
@@ -1584,30 +1582,30 @@ agent_start(struct xerr *e)
 	snprintf(pid_line, sizeof(pid_line), "%d\n", getpid());
 	if (write(lock_fd, pid_line, strlen(pid_line)) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: write", __func__);
-		_exit(1);
+		exit(1);
 	}
 	if (fsync(lock_fd) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: fsync", __func__);
-		_exit(1);
+		exit(1);
 	}
 
 	if ((lsock = socket(AF_LOCAL, SOCK_STREAM, 0)) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: sock", __func__);
-		_exit(1);
+		exit(1);
 	}
 	unlink(certes_conf.agent_sock_path);
 
 	if (fcntl(lsock, F_SETFD, FD_CLOEXEC) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: fcntl", __func__);
-		_exit(1);
+		exit(1);
 	}
 	if ((lsock_flags = fcntl(lsock, F_GETFL, 0)) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: fcntl", __func__);
-		_exit(1);
+		exit(1);
 	}
 	if (fcntl(lsock, F_SETFL, lsock_flags | O_NONBLOCK) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: fcntl", __func__);
-		_exit(1);
+		exit(1);
 	}
 
 	bzero(&saddr, sizeof(saddr));
@@ -1617,18 +1615,21 @@ agent_start(struct xerr *e)
 
 	if (bind(lsock, (struct sockaddr *)&saddr, SUN_LEN(&saddr)) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: bind", __func__);
-		_exit(1);
+		exit(1);
 	}
 
 	if (listen(lsock, 64) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: listen", __func__);
-		_exit(1);
+		exit(1);
 	}
 
 	if (agent_run(lsock, xerrz(e)) == -1) {
 		xlog(LOG_ERR, e, "%s", __func__);
-		_exit(1);
+		exit(1);
 	}
 
-	_exit(0);
+	agent_cleanup();
+	certdb_shutdown();
+	mdr_registry_clear();
+	exit(0);
 }

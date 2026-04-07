@@ -78,12 +78,36 @@ dbg_delay_to_backend_seconds = 5
 
 allowed_mdr_domains = [ 0x00000002 ]
 
+EOF
+
+if [ -x /usr/bin/valgrind ]; then
+	cat << EOF >> $basedir/authority1/mdrd.conf
+backend_argv = [
+	"/usr/bin/valgrind"
+	"--log-file=$basedir/authority1/valgrind.out"
+	"--keep-stacktraces=none"
+	"--leak-check=full"
+	"--track-origins=yes"
+	"--show-leak-kinds=definite,possible,indirect"
+	"-s"
+	"$(realpath certes)"
+	"-config"
+	"$basedir/authority1/certes.conf"
+	"mdrd-backend"
+]
+EOF
+else
+	cat << EOF >> $basedir/authority1/mdrd.conf
 backend_argv = [
 	"$(realpath certes)"
 	"-config"
 	"$basedir/authority1/certes.conf"
 	"mdrd-backend"
 ]
+EOF
+fi
+
+cat << EOF >> $basedir/authority1/mdrd.conf
 backend_uid = $uid
 backend_gid = $uid
 backend_promises = "stdio rpath"

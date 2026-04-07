@@ -296,6 +296,7 @@ mdrd_backend()
 	struct xerr            e;
 	struct mdrd_besession *sess;
 	struct certes_session *cs;
+	ptrdiff_t              r;
 
 	xlog_init(CERTES_PROGNAME, NULL, NULL, 1);
 
@@ -324,9 +325,9 @@ mdrd_backend()
 	}
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	while (mdrd_recv(&msg, msgbuf, sizeof(msgbuf),
+	while ((r = mdrd_recv(&msg, msgbuf, sizeof(msgbuf),
 	    certes_conf.max_cert_size, MDR_DOMAIN_CERTES, MDR_FNONE,
-	    &sess) > 0) {
+	    &sess)) > 0) {
 		/*
 		 * Verify the client's cert
 		 */
@@ -420,6 +421,8 @@ mdrd_backend()
 				    MDR_ERR_NOTSUPP, "not supported");
 		}
 	}
+	if (r != 0)
+		xlog_strerror(LOG_ERR, errno, "%s: mdrd_recv", __func__);
 	X509_STORE_CTX_free(ctx);
 	return 0;
 }
@@ -429,6 +432,7 @@ cleanup()
 {
 	flatconf_free(certes_config_vars);
 	agent_cleanup();
+        mdr_registry_clear();
 }
 
 int
@@ -506,6 +510,7 @@ main(int argc, char **argv)
 			exit(1);
 		}
 		status = mdrd_backend();
+		certdb_shutdown();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
 		agent_bootstrap_setup_cli(argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
@@ -522,6 +527,7 @@ main(int argc, char **argv)
 			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
+		certdb_shutdown();
 	} else if (strcmp(command, "init-db") == 0) {
 		if (*certes_conf.certdb_path == '\0')
 			errx(1, "certdb_path is unset");
@@ -529,6 +535,7 @@ main(int argc, char **argv)
 			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
+		certdb_shutdown();
 	} else {
 		usage();
 		status = 1;
