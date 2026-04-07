@@ -1,0 +1,4 @@
+Certes is an MDR (Minimal Data Representation) backend service acting as a
+certificate authority and role attributor. It issue X.509 certificates with
+a "role" extension, allowing services to grant privileges based on the
+client certificate's roles.

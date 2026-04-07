@@ -1,9 +1,9 @@
 .deps/
 .depend
-certes
 .vimtags
 *.o
 gdb.*
 testdata/
 *.core
 *.gdb
+/certes
