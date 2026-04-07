@@ -1,33 +1,33 @@
-#ifndef CERTALATOR_H
-#define CERTALATOR_H
+#ifndef CERTES_H
+#define CERTES_H
 
 #include <limits.h>
 #include <mdr/xlog.h>
-#include "mdr_certalator.h"
+#include "mdr_certes.h"
 
 #define MAX_HEX_SERIAL_LENGTH 32
 #define MAX_ACTIVE_CHALLENGES 32
 
-#define CERTALATOR_PROGNAME "certalator"
-#define CERTALATOR_AGENT_PROGNAME "certalator-agent"
+#define CERTES_PROGNAME "certes"
+#define CERTES_AGENT_PROGNAME "certes-agent"
 
-#define CERTALATOR_AGENT_PORT 9790
+#define CERTES_AGENT_PORT 9790
 
-#define CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64 64
-#define CERTALATOR_BOOTSTRAP_KEY_LENGTH     48
-#define CERTALATOR_MAX_MSG_SIZE             16384
+#define CERTES_BOOTSTRAP_KEY_LENGTH_B64 64
+#define CERTES_BOOTSTRAP_KEY_LENGTH     48
+#define CERTES_MAX_MSG_SIZE             16384
 
-#define CERTALATOR_CHALLENGE_LENGTH         32
-#define CERTALATOR_AUTHOP_ID_LENGTH         64 /* 3x 64-bit uints to string, so ~50 */
+#define CERTES_CHALLENGE_LENGTH         32
+#define CERTES_AUTHOP_ID_LENGTH         64 /* 3x 64-bit uints to string, so ~50 */
 
 
-#define CERTALATOR_MAX_SUBJET_LENGTH 1024
-#define CERTALATOR_MAX_SAN_LENGTH    512
-#define CERTALATOR_MAX_SANS          16
-#define CERTALATOR_MAX_ROLE_LENGTH   64
-#define CERTALATOR_MAX_ROLES         256
+#define CERTES_MAX_SUBJET_LENGTH 1024
+#define CERTES_MAX_SAN_LENGTH    512
+#define CERTES_MAX_SANS          16
+#define CERTES_MAX_ROLE_LENGTH   64
+#define CERTES_MAX_ROLES         256
 
-#define CERTALATOR_SHM "/certalator"
+#define CERTES_SHM "/certes"
 
 /* Built-in roles */
 #define ROLE_AUTHORITY "authority"
@@ -36,7 +36,7 @@
 #define ROLE_ADMIN     "admin"
 #define ROLE_AGENT     "agent"
 
-struct certalator_flatconf {
+struct certes_flatconf {
 	int      enable_coredumps;
 	uint64_t agent_bootstrap_port;
 	char     authority_fqdn[256];
@@ -47,7 +47,7 @@ struct certalator_flatconf {
 	uint64_t certdb_backup_pages_per_step;
 	uint64_t agent_send_timeout_ms;
 	uint64_t agent_recv_timeout_ms;
-	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64 + 1];
+	char     bootstrap_key[CERTES_BOOTSTRAP_KEY_LENGTH_B64 + 1];
 	uint64_t challenge_timeout_seconds;
 	char     ca_file[PATH_MAX];
 	char     crl_file[PATH_MAX];
@@ -68,7 +68,7 @@ struct certalator_flatconf {
 	char     max_serial[MAX_HEX_SERIAL_LENGTH + 3];
 };
 
-struct certalator_session {
+struct certes_session {
 	int       verified;
 
 	/* Used for dialin/req request */
@@ -77,7 +77,7 @@ struct certalator_session {
 	X509_REQ *req;
 };
 
-char *certalator_client_name(struct mdrd_besession *, char *, size_t,
-          struct xerr *);
+char *certes_client_name(struct mdrd_besession *, char *, size_t,
+      struct xerr *);
 
 #endif

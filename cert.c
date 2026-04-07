@@ -9,27 +9,27 @@
 #include <string.h>
 #include <unistd.h>
 #include "agent.h"
-#include "certalator.h"
+#include "certes.h"
 #include "cert.h"
 #include "util.h"
 
-extern struct certalator_flatconf certalator_conf;
+extern struct certes_flatconf certes_conf;
 
-int NID_certalator_roles;
-int NID_certalator_roles_idx;
+int NID_certes_roles;
+int NID_certes_roles_idx;
 
 int
 cert_init(struct xerr *e)
 {
-	NID_certalator_roles = OBJ_create("1.3.6.1.4.1.35910.3.1",
-	    "certalatorRoles", "Certalator Security Roles");
-	if (NID_certalator_roles == NID_undef)
+	NID_certes_roles = OBJ_create("1.3.6.1.4.1.35910.3.1",
+	    "certesRoles", "Certalator Security Roles");
+	if (NID_certes_roles == NID_undef)
 		return XERRF(e, XLOG_ERRNO, errno, "OBJ_create");
 	return 0;
 }
 
 ssize_t
-cert_decode_certalator_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
+cert_decode_certes_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
 {
 	ASN1_OCTET_STRING   *asn1str;
 	STACK_OF(ASN1_TYPE) *seq;
@@ -56,7 +56,7 @@ cert_decode_certalator_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_le
 	for (i = 0; i < roles_len && sk_ASN1_TYPE_num(seq) > 0; i++) {
 		v = sk_ASN1_TYPE_shift(seq);
 		strlcpy(roles[i], (const char *)v->value.ia5string->data,
-		    CERTALATOR_MAX_ROLE_LENGTH);
+		    CERTES_MAX_ROLE_LENGTH);
 		ASN1_TYPE_free(v);
 	}
 	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
@@ -64,7 +64,7 @@ cert_decode_certalator_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_le
 }
 
 X509_EXTENSION *
-cert_encode_certalator_roles(const char **roles)
+cert_encode_certes_roles(const char **roles)
 {
 	const char          **role;
 	X509_EXTENSION       *ex;
@@ -106,7 +106,7 @@ cert_encode_certalator_roles(const char **roles)
 	free(data);
 
 	// TODO: leak?
-	ex = X509_EXTENSION_create_by_NID(NULL, NID_certalator_roles, 0, asn1str);
+	ex = X509_EXTENSION_create_by_NID(NULL, NID_certes_roles, 0, asn1str);
 	ASN1_OCTET_STRING_free(asn1str);
 	if (ex == NULL) {
 		return NULL;
@@ -126,13 +126,13 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 	const unsigned char *p;
 	int                  found = 0;
 
-	roles_idx = X509_get_ext_by_NID(crt, NID_certalator_roles, -1);
+	roles_idx = X509_get_ext_by_NID(crt, NID_certes_roles, -1);
 	if (roles_idx == -1)
 		return 0;
 
 	if ((ext = X509_get_ext(crt, roles_idx)) == NULL)
 		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
-		    "%s: certalatorRoles extension not found", __func__);
+		    "%s: certesRoles extension not found", __func__);
 
 	asn1str = X509_EXTENSION_get_data(ext);
 	p = asn1str->data;
@@ -190,7 +190,7 @@ cert_has_san(X509 *crt, const char *san, struct xerr *e)
 X509_NAME *
 cert_subject_from_str(const char *subject, struct xerr *e)
 {
-	char       subject2[CERTALATOR_MAX_SUBJET_LENGTH];
+	char       subject2[CERTES_MAX_SUBJET_LENGTH];
 	char      *token, *field, *value, *t;
 	char      *save1, *save2;
 	X509_NAME *name;
@@ -297,19 +297,19 @@ cert_new_serial(struct xerr *e)
 	char     buf[MAX_HEX_SERIAL_LENGTH + 1];
 	char     tmpfile[PATH_MAX];
 
-	if (!BN_hex2bn(&min_bn, certalator_conf.min_serial)) {
+	if (!BN_hex2bn(&min_bn, certes_conf.min_serial)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
 		return NULL;
 	}
 
-	if (!BN_hex2bn(&max_bn, certalator_conf.max_serial)) {
+	if (!BN_hex2bn(&max_bn, certes_conf.max_serial)) {
 		BN_free(min_bn);
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
 		return NULL;
 	}
 
 	if (snprintf(tmpfile, sizeof(tmpfile), "%s.new",
-	    certalator_conf.serial_file) >= sizeof(tmpfile)) {
+	    certes_conf.serial_file) >= sizeof(tmpfile)) {
 		XERRF(e, XLOG_APP, XLOG_OVERFLOW, "tmpfile name too long");
 		goto fail;
 	}
@@ -319,7 +319,7 @@ cert_new_serial(struct xerr *e)
 	 * tmp file and overwrite the serial file. This way other processes
 	 * may not read or write while we are incrementing the serial.
 	 */
-	if ((fd = open_wflock(certalator_conf.serial_file,
+	if ((fd = open_wflock(certes_conf.serial_file,
 	    O_RDWR|O_CREAT, 0666, LOCK_EX)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "open_wflock");
 		goto fail;
@@ -406,7 +406,7 @@ cert_new_serial(struct xerr *e)
 	}
 	fsync(fdtmp);
 	close(fdtmp);
-	if (rename(tmpfile, certalator_conf.serial_file) == -1) {
+	if (rename(tmpfile, certes_conf.serial_file) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "rename");
 		goto fail;
 	}
@@ -553,7 +553,7 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 		goto fail;
 	}
 
-	ex = cert_encode_certalator_roles((const char **)be->roles);
+	ex = cert_encode_certes_roles((const char **)be->roles);
 	if (!X509_add_ext(newcrt, ex, -1)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
 		goto fail;
@@ -620,7 +620,7 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 
 	X509_gmtime_adj(X509_get_notBefore(newcrt), 0);
 	X509_gmtime_adj(X509_get_notAfter(newcrt),
-	    certalator_conf.cert_renew_lifetime_seconds);
+	    certes_conf.cert_renew_lifetime_seconds);
 
 	if ((strlist_join(ce->sans, ce->sans_sz, &sans)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
@@ -662,7 +662,7 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 		goto fail;
 	}
 
-	ex = cert_encode_certalator_roles((const char **)ce->roles);
+	ex = cert_encode_certes_roles((const char **)ce->roles);
 	if (!X509_add_ext(newcrt, ex, -1)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
 		goto fail;
@@ -757,21 +757,21 @@ cert_selfsign(EVP_PKEY *pkey, struct xerr *e)
 	}
 
 	if (!X509_NAME_add_entry_by_txt(name, "O",
-	    MBSTRING_ASC, (unsigned char *)certalator_conf.cert_org,
+	    MBSTRING_ASC, (unsigned char *)certes_conf.cert_org,
 	    -1, -1, 0)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "X509_NAME_add_entry_by_txt: O=%s",
-		    certalator_conf.cert_org);
+		    certes_conf.cert_org);
 		X509_NAME_free(name);
 		goto fail;
 	}
 
 	if (!X509_NAME_add_entry_by_txt(name, "emailAddress",
-	    MBSTRING_ASC, (unsigned char *)certalator_conf.cert_email,
+	    MBSTRING_ASC, (unsigned char *)certes_conf.cert_email,
 	    -1, -1, 0)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "X509_NAME_add_entry_by_txt: emailAddress=%s",
-		    certalator_conf.cert_email);
+		    certes_conf.cert_email);
 		X509_NAME_free(name);
 		goto fail;
 	}
@@ -959,9 +959,9 @@ cert_new_privkey(struct xerr *e)
 		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "EVP_PKEY_keygen");
 #endif
-	if ((f = fopen(certalator_conf.key_file, "w")) == NULL) {
+	if ((f = fopen(certes_conf.key_file, "w")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
-		    certalator_conf.key_file);
+		    certes_conf.key_file);
 		goto fail;
 	}
 
@@ -974,7 +974,7 @@ cert_new_privkey(struct xerr *e)
 
 	if (fclose(f) == EOF) {
 		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
-		    certalator_conf.key_file);
+		    certes_conf.key_file);
 		goto fail;
 	}
 
@@ -988,9 +988,9 @@ cert_new_privkey(struct xerr *e)
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
-	if ((f = fopen(certalator_conf.cert_file, "w")) == NULL) {
+	if ((f = fopen(certes_conf.cert_file, "w")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
-		    certalator_conf.cert_file);
+		    certes_conf.cert_file);
 		goto fail;
 	}
 	if (!PEM_write_X509(f, selfcrt)) {
@@ -1000,7 +1000,7 @@ cert_new_privkey(struct xerr *e)
 	}
 	if (fclose(f) == EOF) {
 		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
-		    certalator_conf.cert_file);
+		    certes_conf.cert_file);
 		goto fail;
 	}
 
@@ -1014,15 +1014,15 @@ fail:
 		EVP_PKEY_free(pkey);
 	if (selfcrt != NULL)
 		X509_free(selfcrt);
-	unlink(certalator_conf.cert_file);
-	unlink(certalator_conf.key_file);
+	unlink(certes_conf.cert_file);
+	unlink(certes_conf.key_file);
 	return -1;
 }
 
 int
 cert_subject_cn(const char *subject, char *cn, size_t cn_sz, struct xerr *e)
 {
-	char  subject2[CERTALATOR_MAX_SUBJET_LENGTH];
+	char  subject2[CERTES_MAX_SUBJET_LENGTH];
 	char *token, *field, *value, *t;
 	char *save1, *save2;
 
@@ -1111,10 +1111,10 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 	struct tm            tm;
 	struct timespec      now;
 
-	roles_idx = X509_get_ext_by_NID(crt, NID_certalator_roles, -1);
+	roles_idx = X509_get_ext_by_NID(crt, NID_certes_roles, -1);
 	if (roles_idx == -1)
 		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
-		    "%s: certalatorRoles extension not found", __func__);
+		    "%s: certesRoles extension not found", __func__);
 	san_idx = X509_get_ext_by_NID(crt, NID_subject_alt_name, -1);
 	if (san_idx == -1)
 		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
@@ -1122,7 +1122,7 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 
 	if ((ex = X509_get_ext(crt, roles_idx)) == NULL)
 		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
-		    "%s: certalatorRoles extension not found", __func__);
+		    "%s: certesRoles extension not found", __func__);
 	asn1str = X509_EXTENSION_get_data(ex);
 	p = asn1str->data;
 	/*
@@ -1159,7 +1159,7 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 
 	clock_gettime(CLOCK_REALTIME, &now);
 	if (expiry < now.tv_sec || expiry - now.tv_sec <
-	    certalator_conf.cert_min_lifetime_seconds)
+	    certes_conf.cert_min_lifetime_seconds)
 		return 1;
 
 	return 0;

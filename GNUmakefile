@@ -12,13 +12,13 @@ YACC := byacc
 
 DEPFLAGS = -MMD -MP -MF $(DEPDIR)/$@.d
 
-SRCS = certalator.c util.c certdb.c mdr_certalator.c authority.c cert.c agent.c
+SRCS = certes.c util.c certdb.c mdr_certes.c authority.c cert.c agent.c
 OBJS = $(SRCS:.c=.o)
 
-all: certalator
+all: certes
 
-certalator: $(OBJS)
-	$(CC) $(CFLAGS) -o certalator $(OBJS) $(LDFLAGS)
+certes: $(OBJS)
+	$(CC) $(CFLAGS) -o certes $(OBJS) $(LDFLAGS)
 
 .c.o:
 	@mkdir -p $(DEPDIR)
@@ -26,6 +26,6 @@ certalator: $(OBJS)
 
 .PHONY: clean
 clean:
-	rm -f certalator *.o certalator.core core
+	rm -f certes *.o certes.core core
 
 -include $(DEPDIR)/*

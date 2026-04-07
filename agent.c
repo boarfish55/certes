@@ -18,7 +18,7 @@
 #include <mdr/xlog.h>
 #include <mdr/util.h>
 #include "agent.h"
-#include "certalator.h"
+#include "certes.h"
 #include "cert.h"
 #include "certdb.h"
 #include "util.h"
@@ -37,7 +37,7 @@ static struct timespec last_cert_check = {0, 0};
 static int             agent_fd = -1;
 static int             cert_fetch_in_progress = 0;
 
-extern struct certalator_flatconf certalator_conf;
+extern struct certes_flatconf certes_conf;
 
 enum authop_type {
 	AUTHOP_BOOTSTRAP_SETUP = 1,
@@ -46,7 +46,7 @@ enum authop_type {
 };
 
 struct authop {
-	char              id[CERTALATOR_AUTHOP_ID_LENGTH];
+	char              id[CERTES_AUTHOP_ID_LENGTH];
 	enum authop_type  type;
 	BIO              *bio;
 	struct timespec   created_at;
@@ -152,7 +152,7 @@ agent_connect(struct xerr *e)
 	for (try = 0; try < 5 && agent_fd == -1; try++) {
 		bzero(&saddr, sizeof(saddr));
 		saddr.sun_family = AF_LOCAL;
-		strlcpy(saddr.sun_path, certalator_conf.agent_sock_path,
+		strlcpy(saddr.sun_path, certes_conf.agent_sock_path,
 		    sizeof(saddr.sun_path));
 
 		if (connect(fd, (struct sockaddr *)&saddr,
@@ -205,18 +205,18 @@ agent_tasks()
 		 * TODO: add a signal handler, or command, to trigger
 		 * a backup.
 		 */
-		if (certalator_conf.certdb_backup_interval_seconds &&
-		    *certalator_conf.certdb_backup_path != '\0' &&
+		if (certes_conf.certdb_backup_interval_seconds &&
+		    *certes_conf.certdb_backup_path != '\0' &&
 		    now.tv_sec > next_certdb_backup.tv_sec) {
 			xlog(LOG_NOTICE, NULL, "backing up cert DB to %s",
-			    certalator_conf.certdb_backup_path);
-			if (certdb_backup(certalator_conf.certdb_backup_path,
-			    certalator_conf.certdb_backup_pages_per_step,
+			    certes_conf.certdb_backup_path);
+			if (certdb_backup(certes_conf.certdb_backup_path,
+			    certes_conf.certdb_backup_pages_per_step,
 			    xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			memcpy(&next_certdb_backup, &now, sizeof(now));
 			next_certdb_backup.tv_sec +=
-			    certalator_conf.certdb_backup_interval_seconds;
+			    certes_conf.certdb_backup_interval_seconds;
 		}
 
 		// TODO: need a CRL regen task
@@ -423,12 +423,12 @@ agent_run(int lsock, struct xerr *e)
 				if (agent_error(&um, xerrz(e)) == MDR_FAIL)
 					xlog(LOG_ERR, e, "%s", __func__);
 				break;
-			case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
+			case MDR_DCV_CERTES_BOOTSTRAP_DIALBACK:
 				if (agent_bootstrap_dialback(&um, xerrz(e))
 				    == MDR_FAIL)
 					xlog(LOG_ERR, e, "%s", __func__);
 				break;
-			case MDR_DCV_CERTALATOR_CERT_RENEW_DIALBACK:
+			case MDR_DCV_CERTES_CERT_RENEW_DIALBACK:
 				if (agent_cert_renew_dialback(&um, xerrz(e))
 				    == MDR_FAIL)
 					xlog(LOG_ERR, e, "%s", __func__);
@@ -472,15 +472,15 @@ authop_new(enum authop_type type, struct xerr *e)
 	}
 	bzero(op, sizeof(*op));
 
-	if (certalator_conf.authority_fqdn[0] == '\0') {
+	if (certes_conf.authority_fqdn[0] == '\0') {
 		XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "no destination address was specified");
 		goto fail;
 	}
 
 	if (snprintf(host, sizeof(host), "%s:%llu",
-	    certalator_conf.authority_fqdn,
-	    certalator_conf.authority_port) >= sizeof(host)) {
+	    certes_conf.authority_fqdn,
+	    certes_conf.authority_port) >= sizeof(host)) {
 		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 		    "resulting host:port is too long");
 		goto fail;
@@ -505,8 +505,8 @@ authop_new(enum authop_type type, struct xerr *e)
 		goto fail;
 	}
 
-	timeout.tv_sec = certalator_conf.agent_send_timeout_ms / 1000;
-	timeout.tv_usec = certalator_conf.agent_send_timeout_ms % 1000;
+	timeout.tv_sec = certes_conf.agent_send_timeout_ms / 1000;
+	timeout.tv_usec = certes_conf.agent_send_timeout_ms % 1000;
 	fd = BIO_get_fd(op->bio, NULL);
 	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
 	    &timeout, sizeof(timeout)) == -1) {
@@ -514,8 +514,8 @@ authop_new(enum authop_type type, struct xerr *e)
 		goto fail;
 	}
 
-	timeout.tv_sec = certalator_conf.agent_recv_timeout_ms / 1000;
-	timeout.tv_usec = certalator_conf.agent_recv_timeout_ms % 1000;
+	timeout.tv_sec = certes_conf.agent_recv_timeout_ms / 1000;
+	timeout.tv_usec = certes_conf.agent_recv_timeout_ms % 1000;
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
 	    &timeout, sizeof(timeout)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "setsockopt");
@@ -669,8 +669,8 @@ agent_bootstrap(struct xerr *e)
 {
 	struct pmdr          pm;
 	struct pmdr_vec      pv[3];
-	char                 pbuf[CERTALATOR_MAX_MSG_SIZE];
-	uint8_t              bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
+	char                 pbuf[CERTES_MAX_MSG_SIZE];
+	uint8_t              bootstrap_key[CERTES_BOOTSTRAP_KEY_LENGTH];
 	struct authop       *op;
 	unsigned char       *req_buf = NULL;
 	int                  req_len;
@@ -687,13 +687,13 @@ agent_bootstrap(struct xerr *e)
 		return 0;
 	cert_fetch_in_progress = 1;
 
-	if (strlen(certalator_conf.bootstrap_key) !=
-	    CERTALATOR_BOOTSTRAP_KEY_LENGTH_B64)
+	if (strlen(certes_conf.bootstrap_key) !=
+	    CERTES_BOOTSTRAP_KEY_LENGTH_B64)
 		return XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "bad bootstrap key format in configuration; bad length");
 
 	if (b64dec(bootstrap_key, sizeof(bootstrap_key),
-	    certalator_conf.bootstrap_key) < sizeof(bootstrap_key))
+	    certes_conf.bootstrap_key) < sizeof(bootstrap_key))
 		return XERRF(e, XLOG_ERRNO, errno, "b64dec");
 
 	if ((op = authop_new(AUTHOP_BOOTSTRAP, xerrz(e))) == NULL) {
@@ -755,9 +755,9 @@ agent_bootstrap(struct xerr *e)
 	}
 
 	switch (umdr_dcv(&um)) {
-	case MDR_DCV_CERTALATOR_OK:
+	case MDR_DCV_CERTES_OK:
 		break;
-	case MDR_DCV_CERTALATOR_ERROR:
+	case MDR_DCV_CERTES_ERROR:
 		if (umdr_unpack(&um, msg_error, uv,
 		    UMDRVECLEN(uv)) == MDR_FAIL) {
 			XERR_PREPENDFN(e);
@@ -784,7 +784,7 @@ agent_cert_renew_inquiry(struct xerr *e)
 {
 	struct pmdr          pm;
 	struct pmdr_vec      pv[1];
-	char                 pbuf[CERTALATOR_MAX_MSG_SIZE];
+	char                 pbuf[CERTES_MAX_MSG_SIZE];
 	struct authop       *op;
 	struct umdr          um;
 	char                 ubuf[256];
@@ -825,15 +825,15 @@ agent_cert_renew_inquiry(struct xerr *e)
 	}
 
 	switch (umdr_dcv(&um)) {
-	case MDR_DCV_CERTALATOR_OK:
+	case MDR_DCV_CERTES_OK:
 		/*
 		 * No renewal required, cancel the op.
 		 */
 		authop_free(op);
 		break;
-	case MDR_DCV_CERTALATOR_CERT_RENEWAL_REQUIRED:
+	case MDR_DCV_CERTES_CERT_RENEWAL_REQUIRED:
 		break;
-	case MDR_DCV_CERTALATOR_ERROR:
+	case MDR_DCV_CERTES_ERROR:
 		if (umdr_unpack(&um, msg_error, uv,
 		    UMDRVECLEN(uv)) == MDR_FAIL) {
 			XERR_PREPENDFN(e);
@@ -861,7 +861,7 @@ agent_bootstrap_dialback(struct umdr *msg, struct xerr *e)
 {
 	struct umdr_vec  uv[3];
 	struct pmdr      pm;
-	char             pbuf[CERTALATOR_MAX_MSG_SIZE];
+	char             pbuf[CERTES_MAX_MSG_SIZE];
 	struct pmdr_vec  pv[2];
 	struct authop   *op;
 	struct authop    needle;
@@ -919,7 +919,7 @@ static int
 agent_recv_cert(struct authop *op, struct xerr *e)
 {
 	struct umdr      um;
-	char             ubuf[CERTALATOR_MAX_MSG_SIZE];
+	char             ubuf[CERTES_MAX_MSG_SIZE];
 	struct umdr_vec  uv[3];
 	int              r;
 	X509            *crt = NULL, *icrt;
@@ -940,9 +940,9 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	}
 
 	switch (umdr_dcv(&um)) {
-	case MDR_DCV_CERTALATOR_SEND_CERT:
+	case MDR_DCV_CERTES_SEND_CERT:
 		break;
-	case MDR_DCV_CERTALATOR_ERROR:
+	case MDR_DCV_CERTES_ERROR:
 		if (umdr_unpack(&um, msg_error, uv,
 		    UMDRVECLEN(uv)) == MDR_FAIL) {
 			XERR_PREPENDFN(e);
@@ -981,7 +981,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	}
 
 	if (snprintf(tmpfile, sizeof(tmpfile), "%s.new",
-	    certalator_conf.cert_file) >= sizeof(tmpfile)) {
+	    certes_conf.cert_file) >= sizeof(tmpfile)) {
 		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 		    "temporary cert file name too long");
 		goto fail;
@@ -1021,7 +1021,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	fclose(f);
 	f = NULL;
 
-	if (rename(tmpfile, certalator_conf.cert_file) == -1) {
+	if (rename(tmpfile, certes_conf.cert_file) == -1) {
 		unlink(tmpfile);
 		XERRF(e, XLOG_ERRNO, errno, "rename");
 		goto fail;
@@ -1031,7 +1031,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 
 	cert = crt;
 	if (SSL_CTX_use_certificate_chain_file(ssl_ctx,
-	    certalator_conf.cert_file) != 1) {
+	    certes_conf.cert_file) != 1) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "SSL_CTX_use_certificate_chain_file");
 		goto fail;
@@ -1056,7 +1056,7 @@ agent_cert_renew_dialback(struct umdr *msg, struct xerr *e)
 {
 	struct umdr_vec  uv[3];
 	struct pmdr      pm;
-	char             pbuf[CERTALATOR_MAX_MSG_SIZE];
+	char             pbuf[CERTES_MAX_MSG_SIZE];
 	struct pmdr_vec  pv[2];
 	struct authop   *op;
 	struct authop    needle;
@@ -1114,7 +1114,7 @@ static void
 bootstrap_setup_usage()
 {
 	printf("Usage: %s bootstrap-setup [options]\n",
-	    CERTALATOR_PROGNAME);
+	    CERTES_PROGNAME);
 	printf("\t-help        Prints this help\n");
 	printf("\t-timeout     Validity of bootstrap entry in "
 	    "seconds (default 600)\n");
@@ -1286,7 +1286,7 @@ agent_load_keys(struct xerr *e)
 #ifndef __OpenBSD__
 	int            pkey_sz;
 #endif
-	if ((f = fopen(certalator_conf.key_file, "r")) == NULL)
+	if ((f = fopen(certes_conf.key_file, "r")) == NULL)
 		return XERRF(e, XLOG_ERRNO, errno, "fopen");
 	if ((key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
 		fclose(f);
@@ -1311,7 +1311,7 @@ agent_load_keys(struct xerr *e)
 		goto fail;
 	}
 
-	if ((f = fopen(certalator_conf.ca_file, "r")) == NULL) {
+	if ((f = fopen(certes_conf.ca_file, "r")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen");
 		goto fail;
 	}
@@ -1328,14 +1328,14 @@ agent_load_keys(struct xerr *e)
 	}
 	X509_free(ca_crt);
 
-	if (*certalator_conf.crl_file != '\0') {
-		if (load_crl(certalator_conf.crl_file, xerrz(e)) == -1) {
+	if (*certes_conf.crl_file != '\0') {
+		if (load_crl(certes_conf.crl_file, xerrz(e)) == -1) {
 			XERR_PREPENDFN(e);
 			goto fail;
 		}
 	}
-	if (*certalator_conf.crl_path != '\0') {
-		if ((d = opendir(certalator_conf.crl_path)) == NULL) {
+	if (*certes_conf.crl_path != '\0') {
+		if ((d = opendir(certes_conf.crl_path)) == NULL) {
 			XERRF(e, XLOG_ERRNO, errno, "opendir");
 			goto fail;
 		}
@@ -1356,7 +1356,7 @@ agent_load_keys(struct xerr *e)
 				continue;
 
 			snprintf(crl_path, sizeof(crl_path), "%s/%s",
-			    certalator_conf.crl_path, de->d_name);
+			    certes_conf.crl_path, de->d_name);
 			if (load_crl(crl_path, xerrz(e)) == -1) {
 				XERR_PREPENDFN(e);
 				goto fail;
@@ -1365,9 +1365,9 @@ agent_load_keys(struct xerr *e)
 		closedir(d);
 	}
 
-	if ((f = fopen(certalator_conf.cert_file, "r")) == NULL) {
+	if ((f = fopen(certes_conf.cert_file, "r")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
-		    certalator_conf.cert_file);
+		    certes_conf.cert_file);
 		goto fail;
 	}
 	if ((cert = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
@@ -1411,7 +1411,7 @@ agent_load_keys(struct xerr *e)
 	}
 
 	if (SSL_CTX_use_certificate_chain_file(ssl_ctx,
-	    certalator_conf.cert_file) != 1) {
+	    certes_conf.cert_file) != 1) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "SSL_CTX_use_certificate_chain_file");
 		goto fail;
@@ -1470,7 +1470,7 @@ agent_init(struct xerr *e)
 
 	clock_gettime(CLOCK_MONOTONIC, &next_certdb_backup);
 	next_certdb_backup.tv_sec +=
-	    certalator_conf.certdb_backup_interval_seconds;
+	    certes_conf.certdb_backup_interval_seconds;
 
 	if ((store = X509_STORE_new()) == NULL)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_new");
@@ -1529,10 +1529,10 @@ agent_start(struct xerr *e)
 	int                lsock, lsock_flags;
 	struct sockaddr_un saddr;
 
-	if ((lock_fd = open(certalator_conf.lock_file,
+	if ((lock_fd = open(certes_conf.lock_file,
 	    O_CREAT|O_WRONLY|O_CLOEXEC, 0644)) == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "open: %s",
-		    certalator_conf.lock_file);
+		    certes_conf.lock_file);
 
 	if (flock(lock_fd, LOCK_EX|LOCK_NB) == -1) {
 		if (errno == EWOULDBLOCK) {
@@ -1540,7 +1540,7 @@ agent_start(struct xerr *e)
 			return XERRF(e, XLOG_ERRNO, errno,
 			    "lock file %s is already locked; "
 			    "is another instance running?",
-			    certalator_conf.lock_file);
+			    certes_conf.lock_file);
 		}
 		close(lock_fd);
 		return XERRF(e, XLOG_ERRNO, errno, "flock");
@@ -1574,7 +1574,7 @@ agent_start(struct xerr *e)
 	if (null_fd > 2)
 		close(null_fd);
 
-	if (xlog_init(CERTALATOR_AGENT_PROGNAME, NULL, NULL, 0) == -1) {
+	if (xlog_init(CERTES_AGENT_PROGNAME, NULL, NULL, 0) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: xlog_init", __func__);
 		_exit(1);
 	}
@@ -1602,7 +1602,7 @@ agent_start(struct xerr *e)
 		xlog_strerror(LOG_ERR, errno, "%s: sock", __func__);
 		_exit(1);
 	}
-	unlink(certalator_conf.agent_sock_path);
+	unlink(certes_conf.agent_sock_path);
 
 	if (fcntl(lsock, F_SETFD, FD_CLOEXEC) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: fcntl", __func__);
@@ -1619,7 +1619,7 @@ agent_start(struct xerr *e)
 
 	bzero(&saddr, sizeof(saddr));
 	saddr.sun_family = AF_LOCAL;
-	strlcpy(saddr.sun_path, certalator_conf.agent_sock_path,
+	strlcpy(saddr.sun_path, certes_conf.agent_sock_path,
 	    sizeof(saddr.sun_path));
 
 	if (bind(lsock, (struct sockaddr *)&saddr, SUN_LEN(&saddr)) == -1) {

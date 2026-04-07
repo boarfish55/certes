@@ -1,10 +1,9 @@
 .deps/
 .depend
-certalator
+certes
 .vimtags
 *.o
 gdb.*
 testdata/
 *.core
 *.gdb
-flatconf.c

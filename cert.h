@@ -8,8 +8,8 @@
 #include "certdb.h"
 
 int             cert_init(struct xerr *);
-ssize_t         cert_decode_certalator_roles(X509_EXTENSION *, char **, ssize_t);
-X509_EXTENSION *cert_encode_certalator_roles(const char **);
+ssize_t         cert_decode_certes_roles(X509_EXTENSION *, char **, ssize_t);
+X509_EXTENSION *cert_encode_certes_roles(const char **);
 int             cert_has_role(X509 *, const char *, struct xerr *);
 int             cert_has_san(X509 *, const char *, struct xerr *);
 int             cert_verify(X509_STORE_CTX *, X509 *, int);

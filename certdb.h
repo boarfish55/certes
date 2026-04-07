@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <mdr/xlog.h>
-#include "certalator.h"
+#include "certes.h"
 
 #define CERTDB_BOOTSTRAP_FLAG_NONE  0x00000000
 #define CERTDB_BOOTSTRAP_FLAG_SETCN 0x00000001
@@ -14,7 +14,7 @@
 #define CERTDB_FLAG_ALL     0xFFFFFFFF
 
 struct bootstrap_entry {
-	char     bootstrap_key[CERTALATOR_BOOTSTRAP_KEY_LENGTH];
+	char     bootstrap_key[CERTES_BOOTSTRAP_KEY_LENGTH];
 	time_t   valid_until_sec;
 	char    *subject;
 	char   **sans;

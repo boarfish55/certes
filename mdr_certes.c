@@ -1,9 +1,9 @@
 #include <err.h>
-#include "mdr_certalator.h"
+#include "mdr_certes.h"
 
 struct mdr_def msgdef_error = {
-	MDR_DCV_CERTALATOR_ERROR,
-	"certalator.error",
+	MDR_DCV_CERTES_ERROR,
+	"certes.error",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_U32, /* Error code */
@@ -15,8 +15,8 @@ const struct mdr_spec *msg_error;
 
 /* Generic OK message */
 struct mdr_def msgdef_ok = {
-	MDR_DCV_CERTALATOR_OK,
-	"certalator.ok",
+	MDR_DCV_CERTES_OK,
+	"certes.ok",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_LAST
@@ -25,8 +25,8 @@ struct mdr_def msgdef_ok = {
 const struct mdr_spec *msg_ok;
 
 struct mdr_def msgdef_bootstrap_setup = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP,
-	"certalator.bootstrap_setup",
+	MDR_DCV_CERTES_BOOTSTRAP_SETUP,
+	"certes.bootstrap_setup",
 	{
 		MDR_S,   /* cert commonName */
 		MDR_AS,  /* cert subjectAltNames */
@@ -40,8 +40,8 @@ struct mdr_def msgdef_bootstrap_setup = {
 const struct mdr_spec *msg_bootstrap_setup;
 
 struct mdr_def msgdef_bootstrap_dialin = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN,
-	"certalator.bootstrap_dialin",
+	MDR_DCV_CERTES_BOOTSTRAP_DIALIN,
+	"certes.bootstrap_dialin",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_B,   /* Bootstrap key */
@@ -52,8 +52,8 @@ struct mdr_def msgdef_bootstrap_dialin = {
 const struct mdr_spec *msg_bootstrap_dialin;
 
 struct mdr_def msgdef_bootstrap_dialback = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK,
-	"certalator.bootstrap_dialback",
+	MDR_DCV_CERTES_BOOTSTRAP_DIALBACK,
+	"certes.bootstrap_dialback",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_B,   /* Challenge answer */
@@ -63,8 +63,8 @@ struct mdr_def msgdef_bootstrap_dialback = {
 const struct mdr_spec *msg_bootstrap_dialback;
 
 struct mdr_def msgdef_bootstrap_answer = {
-	MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER,
-	"certalator.bootstrap_req",
+	MDR_DCV_CERTES_BOOTSTRAP_ANSWER,
+	"certes.bootstrap_req",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_B,   /* Challenge answer */
@@ -74,8 +74,8 @@ struct mdr_def msgdef_bootstrap_answer = {
 const struct mdr_spec *msg_bootstrap_answer;
 
 struct mdr_def msgdef_send_cert = {
-	MDR_DCV_CERTALATOR_SEND_CERT,
-	"certalator.bootstrap_send_cert",
+	MDR_DCV_CERTES_SEND_CERT,
+	"certes.bootstrap_send_cert",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_B,   /* X509 cert (DER) */
@@ -86,8 +86,8 @@ struct mdr_def msgdef_send_cert = {
 const struct mdr_spec *msg_send_cert;
 
 struct mdr_def msgdef_cert_renewal_inquiry = {
-	MDR_DCV_CERTALATOR_CERT_RENEWAL_INQUIRY,
-	"certalator.cert_renewal_inquiry",
+	MDR_DCV_CERTES_CERT_RENEWAL_INQUIRY,
+	"certes.cert_renewal_inquiry",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_LAST
@@ -96,8 +96,8 @@ struct mdr_def msgdef_cert_renewal_inquiry = {
 const struct mdr_spec *msg_cert_renewal_inquiry;
 
 struct mdr_def msgdef_cert_renewal_required = {
-	MDR_DCV_CERTALATOR_CERT_RENEWAL_REQUIRED,
-	"certalator.cert_renewal_required",
+	MDR_DCV_CERTES_CERT_RENEWAL_REQUIRED,
+	"certes.cert_renewal_required",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_LAST
@@ -106,8 +106,8 @@ struct mdr_def msgdef_cert_renewal_required = {
 const struct mdr_spec *msg_cert_renewal_required;
 
 struct mdr_def msgdef_cert_renew_dialback = {
-	MDR_DCV_CERTALATOR_CERT_RENEW_DIALBACK,
-	"certalator.cert_renew_dialback",
+	MDR_DCV_CERTES_CERT_RENEW_DIALBACK,
+	"certes.cert_renew_dialback",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_B,   /* Challenge answer */
@@ -117,8 +117,8 @@ struct mdr_def msgdef_cert_renew_dialback = {
 const struct mdr_spec *msg_cert_renew_dialback;
 
 struct mdr_def msgdef_cert_renew_answer = {
-	MDR_DCV_CERTALATOR_CERT_RENEW_ANSWER,
-	"certalator.cert_renew_answer",
+	MDR_DCV_CERTES_CERT_RENEW_ANSWER,
+	"certes.cert_renew_answer",
 	{
 		MDR_S,   /* Operation identifier */
 		MDR_B,   /* Challenge answer */

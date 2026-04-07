@@ -2,20 +2,20 @@ uid = plalonde
 gid = plalonde
 enable_coredumps = true
 
-ca_file = "/home/plalonde/prog/certalator/testdata/ca/root.pem"
-crl_path = "/home/plalonde/prog/certalator/testdata/authority1/crl_store"
+ca_file = "/home/plalonde/prog/certes/testdata/ca/root.pem"
+crl_path = "/home/plalonde/prog/certes/testdata/authority1/crl_store"
 
 # We ue a certificate specifically made for mdrd which is
 # different than the one used to issue certs; clients will
 # expect this cert to have the "caproxy" role
-cert_file = "/home/plalonde/prog/certalator/testdata/proxy1/cert.pem"
-key_file = "/home/plalonde/prog/certalator/testdata/proxy1/key.pem"
+cert_file = "/home/plalonde/prog/certes/testdata/proxy1/cert.pem"
+key_file = "/home/plalonde/prog/certes/testdata/proxy1/key.pem"
 
 port = 9791
 listen_backlog = 1024
 prefork = 4
-pid_file = "/home/plalonde/prog/certalator/testdata/authority1/mdrd.pid"
-counters_sock = "/home/plalonde/prog/certalator/testdata/authority1/counters.sock"
+pid_file = "/home/plalonde/prog/certes/testdata/authority1/mdrd.pid"
+counters_sock = "/home/plalonde/prog/certes/testdata/authority1/counters.sock"
 
 # Maximum number of concurrent client connections per fork
 max_clients = 10000
@@ -56,9 +56,9 @@ max_cert_size = 4096
 allowed_mdr_domains = [ 0x00000002 ]
 
 backend_argv = [
-	"/home/plalonde/prog/certalator/certalator"
+	"/home/plalonde/prog/certes/certes"
 	"-config"
-	"/home/plalonde/prog/certalator/certalator_authority.conf.sample"
+	"/home/plalonde/prog/certes/certes_authority.conf.sample"
 	"mdrd-backend"
 ]
 backend_uid = plalonde
@@ -67,13 +67,13 @@ backend_gid = plalonde
 # The following only affect OpenBSD's pledge() and unveil() calls
 backend_promises = "stdio rpath"
 backend_unveils = [
-	"x=/home/plalonde/prog/certalator/certalator"
-	"r=/home/plalonde/prog/certalator/testdata/ca/root.pem"
-	"r=/home/plalonde/prog/certalator/testdata/ca/root.crl"
-	"r=/home/plalonde/prog/certalator/testdata/authority1/key.pem"
-	"r=/home/plalonde/prog/certalator/testdata/authority1/cert.pem"
-	"r=/home/plalonde/prog/certalator/testdata/authority1/agent.lock"
-	"rw=/home/plalonde/prog/certalator/testdata/authority1/agent.sock"
-	"rw=/home/plalonde/prog/certalator/testdata/authority1/serial"
-	"rw=/home/plalonde/prog/certalator/testdata/authority1/certdb.sqlite"
+	"x=/home/plalonde/prog/certes/certes"
+	"r=/home/plalonde/prog/certes/testdata/ca/root.pem"
+	"r=/home/plalonde/prog/certes/testdata/ca/root.crl"
+	"r=/home/plalonde/prog/certes/testdata/authority1/key.pem"
+	"r=/home/plalonde/prog/certes/testdata/authority1/cert.pem"
+	"r=/home/plalonde/prog/certes/testdata/authority1/agent.lock"
+	"rw=/home/plalonde/prog/certes/testdata/authority1/agent.sock"
+	"rw=/home/plalonde/prog/certes/testdata/authority1/serial"
+	"rw=/home/plalonde/prog/certes/testdata/authority1/certdb.sqlite"
 ]

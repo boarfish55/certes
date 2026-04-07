@@ -12,7 +12,7 @@
 #include "agent.h"
 #include "cert.h"
 
-extern struct certalator_flatconf certalator_conf;
+extern struct certes_flatconf certes_conf;
 
 /*
  * Create a bootstrap entry with certificate parameters and a challenge key
@@ -25,14 +25,14 @@ authority_make_bootstrap(const char *cn, const char **sans,
     uint32_t timeout, uint32_t flags, struct xerr *e)
 {
 	int                    i;
-	char                   subject[CERTALATOR_MAX_SUBJET_LENGTH] = "";
+	char                   subject[CERTES_MAX_SUBJET_LENGTH] = "";
 	struct bootstrap_entry be;
 	struct timespec        tp;
 
 	if (flags & CERTDB_BOOTSTRAP_FLAG_SETCN) {
 		if (snprintf(subject, sizeof(subject),
-		    "/O=%s/CN=%s/emailAddress=%s", certalator_conf.cert_org,
-		    cn, certalator_conf.cert_email) >= sizeof(subject))
+		    "/O=%s/CN=%s/emailAddress=%s", certes_conf.cert_org,
+		    cn, certes_conf.cert_email) >= sizeof(subject))
 			return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "resulting subject name is too long "
 			    "for commonName %s", cn);
@@ -49,16 +49,16 @@ authority_make_bootstrap(const char *cn, const char **sans,
 	be.flags = flags;
 
 	for (i = 0; i < roles_sz; i++)
-		if (strlen(roles[i]) > CERTALATOR_MAX_ROLE_LENGTH)
+		if (strlen(roles[i]) > CERTES_MAX_ROLE_LENGTH)
 			return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "role name %s longer than limit of %d",
-			    roles[i], CERTALATOR_MAX_ROLE_LENGTH);
+			    roles[i], CERTES_MAX_ROLE_LENGTH);
 
 	for (i = 0; i < sans_sz; i++)
-		if (strlen(sans[i]) > CERTALATOR_MAX_SAN_LENGTH)
+		if (strlen(sans[i]) > CERTES_MAX_SAN_LENGTH)
 			return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "SAN name %s longer than limit of %d",
-			    sans[i], CERTALATOR_MAX_SAN_LENGTH);
+			    sans[i], CERTES_MAX_SAN_LENGTH);
 
 	be.roles = (char **)roles;
 	be.roles_sz = roles_sz;
@@ -81,7 +81,7 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 	struct umdr_vec   uv[6];
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
-	    certalator_client_name(sess, NULL, 0, xerrz(e)));
+	    certes_client_name(sess, NULL, 0, xerrz(e)));
 
 	if (!agent_is_authority()) {
 		mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_NOTSUPP,
@@ -171,15 +171,15 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	char                       pbuf[256];
 	struct pmdr_vec            pv[2];
 	int                        r, status = 0;
-	struct certalator_session *cs = (struct certalator_session *)sess->data;
+	struct certes_session *cs = (struct certes_session *)sess->data;
 
-	if ((cs->challenge = malloc(CERTALATOR_CHALLENGE_LENGTH)) == NULL) {
+	if ((cs->challenge = malloc(CERTES_CHALLENGE_LENGTH)) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto befail;
 	}
 	arc4random_buf(cs->challenge, sizeof(cs->challenge));
 
-	if (snprintf(port, sizeof(port), "%u", CERTALATOR_AGENT_PORT) >=
+	if (snprintf(port, sizeof(port), "%u", CERTES_AGENT_PORT) >=
 	    sizeof(port)) {
 		XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "failed to convert agent port");
@@ -227,8 +227,8 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 		    "BIO_do_connect: %s", challenge_host);
 	}
 
-	timeout.tv_sec = certalator_conf.agent_send_timeout_ms / 1000;
-	timeout.tv_usec = certalator_conf.agent_send_timeout_ms % 1000;
+	timeout.tv_sec = certes_conf.agent_send_timeout_ms / 1000;
+	timeout.tv_usec = certes_conf.agent_send_timeout_ms % 1000;
 	fd = BIO_get_fd(bio, NULL);
 	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
 	    &timeout, sizeof(timeout)) == -1) {
@@ -236,8 +236,8 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 		goto befail;
 	}
 
-	timeout.tv_sec = certalator_conf.agent_recv_timeout_ms / 1000;
-	timeout.tv_usec = certalator_conf.agent_recv_timeout_ms % 1000;
+	timeout.tv_sec = certes_conf.agent_recv_timeout_ms / 1000;
+	timeout.tv_usec = certes_conf.agent_recv_timeout_ms % 1000;
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
 	    &timeout, sizeof(timeout)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "setsockopt");
@@ -251,7 +251,7 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	pv[1].v.b.bytes = cs->challenge;
 	pv[1].v.b.sz = sizeof(cs->challenge);
 	if (pmdr_pack(&pm,
-	    (dcv == MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK)
+	    (dcv == MDR_DCV_CERTES_BOOTSTRAP_DIALBACK)
 	    ? msg_bootstrap_dialback
 	    : msg_cert_renew_dialback,
 	    pv, PMDRVECLEN(pv)) == MDR_FAIL) {
@@ -297,13 +297,13 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 	struct bootstrap_entry    *be = NULL;
 	struct umdr_vec            uv[3];
 	struct timespec            now;
-	struct certalator_session *cs = (struct certalator_session *)sess->data;
+	struct certes_session *cs = (struct certes_session *)sess->data;
 	const char                *op_id;
 	char                       challenge_host[256];
 	X509_NAME                 *subject;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
-	    certalator_client_name(sess, NULL, 0, xerrz(e)));
+	    certes_client_name(sess, NULL, 0, xerrz(e)));
 
 	if (umdr_unpack(msg, msg_bootstrap_dialin, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -319,7 +319,7 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 		    "we are not an authority");
 	}
 
-	if (uv[1].v.b.sz != CERTALATOR_BOOTSTRAP_KEY_LENGTH) {
+	if (uv[1].v.b.sz != CERTES_BOOTSTRAP_KEY_LENGTH) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BADMSG,
 		    "bootstrap key received from client has incorrect length");
 		return XERRF(e, XLOG_APP, XLOG_BADMSG,
@@ -378,7 +378,7 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 		goto fail;
 	}
 
-	if ((cs->bootstrap_key = malloc(CERTALATOR_BOOTSTRAP_KEY_LENGTH))
+	if ((cs->bootstrap_key = malloc(CERTES_BOOTSTRAP_KEY_LENGTH))
 	    == NULL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
@@ -386,14 +386,14 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 		goto fail;
 	}
 	memcpy(cs->bootstrap_key, uv[1].v.b.bytes,
-	    CERTALATOR_BOOTSTRAP_KEY_LENGTH);
+	    CERTES_BOOTSTRAP_KEY_LENGTH);
 
 	/*
 	 * Then we challenge the client by connecting to its CommonName
 	 * as per our DB.
 	 */
 	if (authority_challenge(sess, op_id,
-	    MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK, challenge_host, e) == -1) {
+	    MDR_DCV_CERTES_BOOTSTRAP_DIALBACK, challenge_host, e) == -1) {
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
@@ -517,7 +517,7 @@ authority_send_cert(struct mdrd_besession *sess, const char *op_id,
 	uint8_t         *der_chain = NULL;
 	size_t           der_sz;
 	struct pmdr      pm;
-	char             pbuf[certalator_conf.max_cert_size];
+	char             pbuf[certes_conf.max_cert_size];
 	struct pmdr_vec  pv[3];
 
 	if (pack_intermediates(crt, &der_chain, &der_sz, xerrz(e)) == -1) {
@@ -563,7 +563,7 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	struct bootstrap_entry    *be = NULL;
 	struct cert_entry          ce;
 	struct umdr_vec            uv[2];
-	struct certalator_session *cs = (struct certalator_session *)sess->data;
+	struct certes_session *cs = (struct certes_session *)sess->data;
 	X509                      *crt = NULL;
 	const char                *op_id;
 	struct tm                  tm;
@@ -578,7 +578,7 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	op_id = uv[0].v.s.bytes;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s, op_id=%s", __func__,
-	    certalator_client_name(sess, NULL, 0, xerrz(e)), op_id);
+	    certes_client_name(sess, NULL, 0, xerrz(e)), op_id);
 
 	if (!agent_is_authority()) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
@@ -596,7 +596,7 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	}
 
 	if ((be = certdb_get_bootstrap(cs->bootstrap_key,
-	    CERTALATOR_BOOTSTRAP_KEY_LENGTH, e)) == NULL) {
+	    CERTES_BOOTSTRAP_KEY_LENGTH, e)) == NULL) {
 		/*
 		 * We always reply OK to mitigate enumeration attacks.
 		 */
@@ -685,7 +685,7 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 {
 	struct cert_entry         *ce = NULL;
 	struct umdr_vec            uv[2];
-	struct certalator_session *cs = (struct certalator_session *)sess->data;
+	struct certes_session *cs = (struct certes_session *)sess->data;
 	X509                      *crt = NULL;
 	const char                *op_id;
 	struct tm                  tm;
@@ -699,7 +699,7 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 	op_id = uv[0].v.s.bytes;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s, op_id=%s", __func__,
-	    certalator_client_name(sess, NULL, 0, xerrz(e)), op_id);
+	    certes_client_name(sess, NULL, 0, xerrz(e)), op_id);
 
 	if (!agent_is_authority()) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
@@ -818,7 +818,7 @@ authority_cert_renewal_inquiry(struct mdrd_besession *sess, struct umdr *msg,
 	op_id = uv[0].v.s.bytes;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s, op_id=%s", __func__,
-	    certalator_client_name(sess, NULL, 0, xerrz(e)), op_id);
+	    certes_client_name(sess, NULL, 0, xerrz(e)), op_id);
 
 	if (!agent_is_authority()) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
@@ -860,7 +860,7 @@ authority_cert_renewal_inquiry(struct mdrd_besession *sess, struct umdr *msg,
 		beout_ok(sess, op_id, MDRD_BEOUT_FNONE);
 		xlog(LOG_INFO, NULL, "%s: cert is already up-to-date "
 		    "for %s, op_id=%s", __func__,
-		    certalator_client_name(sess, NULL, 0, xerrz(e)), op_id);
+		    certes_client_name(sess, NULL, 0, xerrz(e)), op_id);
 		return 0;
 	default:
 		/* We have to renew */
@@ -884,7 +884,7 @@ authority_cert_renewal_inquiry(struct mdrd_besession *sess, struct umdr *msg,
 	}
 
 	if (authority_challenge(sess, op_id,
-	    MDR_DCV_CERTALATOR_CERT_RENEW_DIALBACK, challenge_host, e) == -1) {
+	    MDR_DCV_CERTES_CERT_RENEW_DIALBACK, challenge_host, e) == -1) {
 		certdb_cert_free(ce);
 		return XERR_PREPENDFN(e);
 	}

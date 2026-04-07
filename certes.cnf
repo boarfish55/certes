@@ -1,8 +1,8 @@
 dir                     = testdata
-oid_section             = certalator_oids
+oid_section             = certes_oids
 
-[certalator_oids]
-certalatorRoles         = 1.3.6.1.4.1.35910.3.1
+[certes_oids]
+certesRoles             = 1.3.6.1.4.1.35910.3.1
 
 [ca]
 default_ca              = intermediate_ca
@@ -33,22 +33,22 @@ basicConstraints        = critical,CA:true
 keyUsage                = critical,cRLSign,digitalSignature,keyCertSign
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid:always,issuer
-certalatorRoles         = ASN1:SEQUENCE:root_ca_roles
+certesRoles             = ASN1:SEQUENCE:root_ca_roles
 
 [root_ca_roles]
-certalatorRoles.0       = IA5:authority
+certesRoles.0           = IA5:authority
 
 [intermediate_ca_ext]
 basicConstraints        = critical,CA:true,pathlen:0
 keyUsage                = critical,cRLSign,digitalSignature,keyCertSign
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer
-certalatorRoles         = ASN1:SEQUENCE:intermediate_ca_roles
+certesRoles             = ASN1:SEQUENCE:intermediate_ca_roles
 
 [intermediate_ca_roles]
-certalatorRoles.0       = IA5:agent
-certalatorRoles.1       = IA5:authority
-certalatorRoles.2       = IA5:bootstrap
+certesRoles.0           = IA5:agent
+certesRoles.1           = IA5:authority
+certesRoles.2           = IA5:bootstrap
 
 [intermediate_ca]
 certificate             = $dir/authority1/cert.pem
@@ -76,10 +76,10 @@ keyUsage                = critical,nonRepudiation,digitalSignature
 extendedKeyUsage        = serverAuth,clientAuth
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer
-certalatorRoles         = ASN1:SEQUENCE:proxy_roles
+certesRoles             = ASN1:SEQUENCE:proxy_roles
 
 [proxy_roles]
-certalatorRoles.0       = IA5:caproxy
+certesRoles.0           = IA5:caproxy
 
 [intermediate_client_crt_ext]
 basicConstraints        = critical,CA:false
@@ -87,11 +87,11 @@ keyUsage                = critical,nonRepudiation,digitalSignature
 extendedKeyUsage        = serverAuth,clientAuth
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer
-certalatorRoles         = ASN1:SEQUENCE:client_roles
+certesRoles             = ASN1:SEQUENCE:client_roles
 
 [client_roles]
-certalatorRoles.0       = IA5:agent
-certalatorRoles.1       = IA5:extremely_long_stupid_role_yiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyi
+certesRoles.0           = IA5:agent
+certesRoles.1           = IA5:extremely_long_stupid_role_yiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyi
 
 [req]
 default_bits            = 4096

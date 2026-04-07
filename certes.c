@@ -16,18 +16,18 @@
 #include "agent.h"
 #include "authority.h"
 #include "cert.h"
-#include "certalator.h"
+#include "certes.h"
 #include "certdb.h"
-#include "mdr_certalator.h"
+#include "mdr_certes.h"
 
 int  debug = 0;
-char config_file_path[PATH_MAX] = "/etc/certalator.conf";
+char config_file_path[PATH_MAX] = "/etc/certes.conf";
 
-struct certalator_flatconf certalator_conf = {
+struct certes_flatconf certes_conf = {
 	0,
-	CERTALATOR_AGENT_PORT,
+	CERTES_AGENT_PORT,
 	"",
-	CERTALATOR_AGENT_PORT,
+	CERTES_AGENT_PORT,
 	"",
 	"",
 	86400,                  /* certdb_backup_interval_seconds */
@@ -54,168 +54,168 @@ struct certalator_flatconf certalator_conf = {
 	"0x0"
 };
 
-struct flatconf certalator_config_vars[] = {
+struct flatconf certes_config_vars[] = {
 	{
 		"enable_coredumps",
 		FLATCONF_BOOLINT,
-		&certalator_conf.enable_coredumps,
-		sizeof(certalator_conf.enable_coredumps)
+		&certes_conf.enable_coredumps,
+		sizeof(certes_conf.enable_coredumps)
 	},
 	{
 		"agent_bootstrap_port",
 		FLATCONF_ULONG,
-		&certalator_conf.agent_bootstrap_port,
-		sizeof(certalator_conf.agent_bootstrap_port)
+		&certes_conf.agent_bootstrap_port,
+		sizeof(certes_conf.agent_bootstrap_port)
 	},
 	{
 		"authority_fqdn",
 		FLATCONF_STRING,
-		certalator_conf.authority_fqdn,
-		sizeof(certalator_conf.authority_fqdn)
+		certes_conf.authority_fqdn,
+		sizeof(certes_conf.authority_fqdn)
 	},
 	{
 		"authority_port",
 		FLATCONF_ULONG,
-		&certalator_conf.authority_port,
-		sizeof(certalator_conf.authority_port)
+		&certes_conf.authority_port,
+		sizeof(certes_conf.authority_port)
 	},
 	{
 		"certdb_path",
 		FLATCONF_STRING,
-		certalator_conf.certdb_path,
-		sizeof(certalator_conf.certdb_path)
+		certes_conf.certdb_path,
+		sizeof(certes_conf.certdb_path)
 	},
 	{
 		"certdb_backup_path",
 		FLATCONF_STRING,
-		certalator_conf.certdb_backup_path,
-		sizeof(certalator_conf.certdb_backup_path)
+		certes_conf.certdb_backup_path,
+		sizeof(certes_conf.certdb_backup_path)
 	},
 	{
 		"certdb_backup_interval_seconds",
 		FLATCONF_ULONG,
-		&certalator_conf.certdb_backup_interval_seconds,
-		sizeof(certalator_conf.certdb_backup_interval_seconds)
+		&certes_conf.certdb_backup_interval_seconds,
+		sizeof(certes_conf.certdb_backup_interval_seconds)
 	},
 	{
 		"certdb_backup_pages_per_step",
 		FLATCONF_ULONG,
-		&certalator_conf.certdb_backup_pages_per_step,
-		sizeof(certalator_conf.certdb_backup_pages_per_step)
+		&certes_conf.certdb_backup_pages_per_step,
+		sizeof(certes_conf.certdb_backup_pages_per_step)
 	},
 	{
 		"agent_send_timeout_ms",
 		FLATCONF_ULONG,
-		&certalator_conf.agent_send_timeout_ms,
-		sizeof(certalator_conf.agent_send_timeout_ms)
+		&certes_conf.agent_send_timeout_ms,
+		sizeof(certes_conf.agent_send_timeout_ms)
 	},
 	{
 		"agent_recv_timeout_ms",
 		FLATCONF_ULONG,
-		&certalator_conf.agent_recv_timeout_ms,
-		sizeof(certalator_conf.agent_recv_timeout_ms)
+		&certes_conf.agent_recv_timeout_ms,
+		sizeof(certes_conf.agent_recv_timeout_ms)
 	},
 	{
 		"bootstrap_key",
 		FLATCONF_STRING,
-		certalator_conf.bootstrap_key,
-		sizeof(certalator_conf.bootstrap_key)
+		certes_conf.bootstrap_key,
+		sizeof(certes_conf.bootstrap_key)
 	},
 	{
 		"challenge_timeout_seconds",
 		FLATCONF_ULONG,
-		&certalator_conf.challenge_timeout_seconds,
-		sizeof(certalator_conf.challenge_timeout_seconds)
+		&certes_conf.challenge_timeout_seconds,
+		sizeof(certes_conf.challenge_timeout_seconds)
 	},
 	{
 		"ca_file",
 		FLATCONF_STRING,
-		certalator_conf.ca_file,
-		sizeof(certalator_conf.ca_file)
+		certes_conf.ca_file,
+		sizeof(certes_conf.ca_file)
 	},
 	{
 		"crl_file",
 		FLATCONF_STRING,
-		certalator_conf.crl_file,
-		sizeof(certalator_conf.crl_file)
+		certes_conf.crl_file,
+		sizeof(certes_conf.crl_file)
 	},
 	{
 		"crl_path",
 		FLATCONF_STRING,
-		certalator_conf.crl_path,
-		sizeof(certalator_conf.crl_path)
+		certes_conf.crl_path,
+		sizeof(certes_conf.crl_path)
 	},
 	{
 		"key_file",
 		FLATCONF_STRING,
-		certalator_conf.key_file,
-		sizeof(certalator_conf.key_file)
+		certes_conf.key_file,
+		sizeof(certes_conf.key_file)
 	},
 	{
 		"cert_file",
 		FLATCONF_STRING,
-		certalator_conf.cert_file,
-		sizeof(certalator_conf.cert_file)
+		certes_conf.cert_file,
+		sizeof(certes_conf.cert_file)
 	},
 	{
 		"lock_file",
 		FLATCONF_STRING,
-		certalator_conf.lock_file,
-		sizeof(certalator_conf.lock_file)
+		certes_conf.lock_file,
+		sizeof(certes_conf.lock_file)
 	},
 	{
 		"agent_socket_path",
 		FLATCONF_STRING,
-		certalator_conf.agent_sock_path,
-		sizeof(certalator_conf.agent_sock_path)
+		certes_conf.agent_sock_path,
+		sizeof(certes_conf.agent_sock_path)
 	},
 	{
 		"max_cert_size",
 		FLATCONF_ULONG,
-		&certalator_conf.max_cert_size,
-		sizeof(certalator_conf.max_cert_size)
+		&certes_conf.max_cert_size,
+		sizeof(certes_conf.max_cert_size)
 	},
 	{
 		"cert_min_lifetime_seconds",
 		FLATCONF_ULONG,
-		&certalator_conf.cert_min_lifetime_seconds,
-		sizeof(certalator_conf.cert_min_lifetime_seconds)
+		&certes_conf.cert_min_lifetime_seconds,
+		sizeof(certes_conf.cert_min_lifetime_seconds)
 	},
 	{
 		"cert_renew_lifetime_seconds",
 		FLATCONF_ULONG,
-		&certalator_conf.cert_renew_lifetime_seconds,
-		sizeof(certalator_conf.cert_renew_lifetime_seconds)
+		&certes_conf.cert_renew_lifetime_seconds,
+		sizeof(certes_conf.cert_renew_lifetime_seconds)
 	},
 	{
 		"serial_file",
 		FLATCONF_STRING,
-		certalator_conf.serial_file,
-		sizeof(certalator_conf.serial_file)
+		certes_conf.serial_file,
+		sizeof(certes_conf.serial_file)
 	},
 	{
 		"cert_org",
 		FLATCONF_STRING,
-		certalator_conf.cert_org,
-		sizeof(certalator_conf.cert_org)
+		certes_conf.cert_org,
+		sizeof(certes_conf.cert_org)
 	},
 	{
 		"cert_email",
 		FLATCONF_STRING,
-		certalator_conf.cert_email,
-		sizeof(certalator_conf.cert_email)
+		certes_conf.cert_email,
+		sizeof(certes_conf.cert_email)
 	},
 	{
 		"min_serial",
 		FLATCONF_STRING,
-		certalator_conf.min_serial,
-		sizeof(certalator_conf.min_serial)
+		certes_conf.min_serial,
+		sizeof(certes_conf.min_serial)
 	},
 	{
 		"max_serial",
 		FLATCONF_STRING,
-		certalator_conf.max_serial,
-		sizeof(certalator_conf.max_serial)
+		certes_conf.max_serial,
+		sizeof(certes_conf.max_serial)
 	},
 	FLATCONF_LAST
 };
@@ -223,7 +223,7 @@ struct flatconf certalator_config_vars[] = {
 void
 usage()
 {
-	printf("Usage: %s [options] <command>\n", CERTALATOR_PROGNAME);
+	printf("Usage: %s [options] <command>\n", CERTES_PROGNAME);
 	printf("\t-help            Prints this help\n");
 	printf("\t-debug           Do not fork and print errors to STDERR\n");
 	printf("\t-config <conf>   Specify alternate configuration path\n");
@@ -238,9 +238,9 @@ usage()
 }
 
 static void
-free_certalator_session(void *data)
+free_certes_session(void *data)
 {
-	struct certalator_session *cs = (struct certalator_session *)data;
+	struct certes_session *cs = (struct certes_session *)data;
 
 	if (cs->challenge != NULL)
 		free(cs->challenge);
@@ -253,10 +253,10 @@ free_certalator_session(void *data)
 static char client_name_buf[1024];
 
 char *
-certalator_client_name(struct mdrd_besession *s, char *dst, size_t sz,
+certes_client_name(struct mdrd_besession *s, char *dst, size_t sz,
     struct xerr *e)
 {
-	struct certalator_session *cs = (struct certalator_session *)s->data;
+	struct certes_session *cs = (struct certes_session *)s->data;
 	char                      *buf = dst;
 	int                        r;
 
@@ -290,9 +290,9 @@ mdrd_backend()
 	struct sigaction           act;
 	struct xerr                e;
 	struct mdrd_besession     *sess;
-	struct certalator_session *cs;
+	struct certes_session *cs;
 
-	xlog_init(CERTALATOR_PROGNAME, NULL, NULL, 1);
+	xlog_init(CERTES_PROGNAME, NULL, NULL, 1);
 
 	setproctitle("backend");
 
@@ -320,13 +320,13 @@ mdrd_backend()
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	while (mdrd_recv(&msg, msgbuf, sizeof(msgbuf),
-	    certalator_conf.max_cert_size, MDR_DOMAIN_CERTALATOR, MDR_FNONE,
+	    certes_conf.max_cert_size, MDR_DOMAIN_CERTES, MDR_FNONE,
 	    &sess) > 0) {
 		/*
 		 * Verify the client's cert
 		 */
 		if (sess->is_new) {
-			cs = malloc(sizeof(struct certalator_session));
+			cs = malloc(sizeof(struct certes_session));
 			if (cs == NULL) {
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: malloc", __func__);
@@ -334,22 +334,22 @@ mdrd_backend()
 				    MDR_ERR_BEFAIL, "backend failed");
 				continue;
 			}
-			bzero(cs, sizeof(struct certalator_session));
+			bzero(cs, sizeof(struct certes_session));
 			mdrd_besession_set_data(sess, cs,
-			    free_certalator_session);
+			    free_certes_session);
 
 			if (cert_verify(ctx, sess->cert, 0) == 0)
 				cs->verified = 1;
 		} else
-			cs = (struct certalator_session *)sess->data;
+			cs = (struct certes_session *)sess->data;
 
 		/*
 		 * The only message we can accept with an invalid cert
 		 * is a bootstrap dialin or bootstrap req request.
 		 */
 		if (!cs->verified &&
-		    umdr_dcv(&msg) != MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN &&
-		    umdr_dcv(&msg) != MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER) {
+		    umdr_dcv(&msg) != MDR_DCV_CERTES_BOOTSTRAP_DIALIN &&
+		    umdr_dcv(&msg) != MDR_DCV_CERTES_BOOTSTRAP_ANSWER) {
 			xlog(LOG_NOTICE, NULL, "%s: no certificate "
 			    "provided, or verification failed",
 			    __func__);
@@ -363,32 +363,32 @@ mdrd_backend()
 		 * Client is now verified; let's process their request.
 		 */
 		switch (umdr_dcv(&msg)) {
-		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALIN:
+		case MDR_DCV_CERTES_BOOTSTRAP_DIALIN:
 			if (authority_bootstrap_dialin(sess, &msg, &e)
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
-		case MDR_DCV_CERTALATOR_BOOTSTRAP_SETUP:
+		case MDR_DCV_CERTES_BOOTSTRAP_SETUP:
 			if (authority_bootstrap_setup(sess, &msg, &e)
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
-		case MDR_DCV_CERTALATOR_BOOTSTRAP_ANSWER:
+		case MDR_DCV_CERTES_BOOTSTRAP_ANSWER:
 			if (authority_bootstrap_answer(sess, &msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
-		case MDR_DCV_CERTALATOR_CERT_RENEW_ANSWER:
+		case MDR_DCV_CERTES_CERT_RENEW_ANSWER:
 			if (authority_cert_renew_answer(sess, &msg,
 			    &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
-		case MDR_DCV_CERTALATOR_CERT_RENEWAL_INQUIRY:
+		case MDR_DCV_CERTES_CERT_RENEWAL_INQUIRY:
 			if (authority_cert_renewal_inquiry(sess, &msg, &e)
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
-		case MDR_DCV_CERTALATOR_BOOTSTRAP_DIALBACK:
-		case MDR_DCV_CERTALATOR_CERT_RENEW_DIALBACK:
+		case MDR_DCV_CERTES_BOOTSTRAP_DIALBACK:
+		case MDR_DCV_CERTES_CERT_RENEW_DIALBACK:
 			/*
 			 * For these messages we only need to forward to
 			 * the agent, if they come from an authority.
@@ -401,7 +401,7 @@ mdrd_backend()
 				continue;
 			}
 			/* Fallthrough */
-		case MDR_DCV_CERTALATOR_ERROR:
+		case MDR_DCV_CERTES_ERROR:
 		case MDR_DCV_MDR_ERROR:
 			if (agent_send(umdr_buf(&msg), umdr_size(&msg),
 			    &e) == -1)
@@ -422,7 +422,7 @@ mdrd_backend()
 void
 cleanup()
 {
-	flatconf_free(certalator_config_vars);
+	flatconf_free(certes_config_vars);
 	agent_cleanup();
 }
 
@@ -465,29 +465,29 @@ main(int argc, char **argv)
 
 	umask(077);
 
-	if (flatconf_read(config_file_path, certalator_config_vars, NULL) == -1)
+	if (flatconf_read(config_file_path, certes_config_vars, NULL) == -1)
 		err(1, "config_vars_read");
 
-	if (certalator_conf.authority_port > 65535 ||
-	    certalator_conf.authority_port == 0)
+	if (certes_conf.authority_port > 65535 ||
+	    certes_conf.authority_port == 0)
 		errx(1, "authority_port must be non-zero and <= 65535");
 
-	if (strncmp(certalator_conf.min_serial, "0x", 2) != 0)
+	if (strncmp(certes_conf.min_serial, "0x", 2) != 0)
 		errx(1, "min_serial does not begin with \"0x\"");
-	sz = strlen(certalator_conf.min_serial) - 2;
-	memmove(certalator_conf.min_serial,
-	    certalator_conf.min_serial + 2, sz);
-	certalator_conf.min_serial[sz] = '\0';
-	if (!is_hex_str(certalator_conf.min_serial))
+	sz = strlen(certes_conf.min_serial) - 2;
+	memmove(certes_conf.min_serial,
+	    certes_conf.min_serial + 2, sz);
+	certes_conf.min_serial[sz] = '\0';
+	if (!is_hex_str(certes_conf.min_serial))
 		errx(1, "min_serial is not a valid hex integer");
 
-	if (strncmp(certalator_conf.max_serial, "0x", 2) != 0)
+	if (strncmp(certes_conf.max_serial, "0x", 2) != 0)
 		errx(1, "max_serial does not begin with \"0x\"");
-	sz = strlen(certalator_conf.max_serial) - 2;
-	memmove(certalator_conf.max_serial,
-	    certalator_conf.max_serial + 2, sz);
-	certalator_conf.max_serial[sz] = '\0';
-	if (!is_hex_str(certalator_conf.max_serial))
+	sz = strlen(certes_conf.max_serial) - 2;
+	memmove(certes_conf.max_serial,
+	    certes_conf.max_serial + 2, sz);
+	certes_conf.max_serial[sz] = '\0';
+	if (!is_hex_str(certes_conf.max_serial))
 		errx(1, "max_serial is not a valid hexadecimal integer");
 
 	command = argv[opt++];
@@ -495,8 +495,8 @@ main(int argc, char **argv)
 	load_mdr_defs();
 
 	if (strcmp(command, "mdrd-backend") == 0) {
-		if (*certalator_conf.certdb_path != '\0' &&
-		    certdb_init(certalator_conf.certdb_path, xerrz(&e)) == -1) {
+		if (*certes_conf.certdb_path != '\0' &&
+		    certdb_init(certes_conf.certdb_path, xerrz(&e)) == -1) {
 			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
@@ -508,8 +508,8 @@ main(int argc, char **argv)
 		 * Do a standalone run to get our initial key/cert,
 		 * without mdrd.
 		 */
-		if (*certalator_conf.certdb_path != '\0' &&
-		    certdb_init(certalator_conf.certdb_path, xerrz(&e)) == -1) {
+		if (*certes_conf.certdb_path != '\0' &&
+		    certdb_init(certes_conf.certdb_path, xerrz(&e)) == -1) {
 			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
@@ -518,9 +518,9 @@ main(int argc, char **argv)
 			exit(1);
 		}
 	} else if (strcmp(command, "init-db") == 0) {
-		if (*certalator_conf.certdb_path == '\0')
+		if (*certes_conf.certdb_path == '\0')
 			errx(1, "certdb_path is unset");
-		if (certdb_init(certalator_conf.certdb_path, &e) == -1) {
+		if (certdb_init(certes_conf.certdb_path, &e) == -1) {
 			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
