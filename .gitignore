@@ -7,3 +7,5 @@ testdata/
 *.core
 *.gdb
 /certes
+coverity/
+.build/
