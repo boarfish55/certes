@@ -11,6 +11,8 @@ GH_TAGNAME =    ${VERSION}
 
 PERMIT_PACKAGE =	Yes
 
+WANTLIB += sqlite3 mdr flatconf
+
 MAKE_FLAGS =	EXTRA_CFLAGS=-O2
 
 do-install:

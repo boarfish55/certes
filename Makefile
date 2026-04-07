@@ -1,9 +1,9 @@
 CC = cc
 EXTRA_CFLAGS =
 VERSION = 0.0.1
-CFLAGS = -Wall -g ${EXTRA_CFLAGS}
-LDFLAGS = -L/usr/local/lib
-LIBS = -lcrypto -lssl -ltls -lsqlite3
+CFLAGS = -Wall -g ${EXTRA_CFLAGS} \
+	 `pkg-config --cflags libcrypto libssl mdr flatconf sqlite3`
+LDFLAGS = `pkg-config --libs libcrypto libssl mdr flatconf sqlite3`
 SRCS = certes.c util.c certdb.c mdr_certes.c authority.c cert.c agent.c
 OBJS = util.o certdb.o mdr_certes.o authority.o cert.o agent.o
 YACC = yacc
