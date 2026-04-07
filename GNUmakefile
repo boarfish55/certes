@@ -1,4 +1,5 @@
 CC := gcc
+VERSION = 0.0.1
 DEPDIR := .deps
 CFLAGS := -Wall -g -fstack-protector-strong -Wformat=0 \
 	  -Wdeprecated-declarations -fstack-clash-protection \
