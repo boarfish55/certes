@@ -191,6 +191,8 @@ agent_tasks()
 
 	if (is_authority) {
 		if (now.tv_sec > last_certdb_purge.tv_sec + 300) {
+			xlog(LOG_INFO, NULL, "%s: purging expired certs and "
+			    "bootstrap entries", __func__);
 			memcpy(&last_certdb_purge, &now, sizeof(now));
 			if (certdb_clean_expired_certs(xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
@@ -213,6 +215,8 @@ agent_tasks()
 			    xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			memcpy(&next_certdb_backup, &now, sizeof(now));
+			next_certdb_backup.tv_sec +=
+			    certalator_conf.certdb_backup_interval_seconds;
 		}
 
 		// TODO: need a CRL regen task
