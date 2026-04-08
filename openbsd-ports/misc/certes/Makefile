@@ -11,15 +11,24 @@ GH_TAGNAME =    ${VERSION}
 
 PERMIT_PACKAGE =	Yes
 
-WANTLIB += sqlite3 mdr flatconf
+WANTLIB +=      sqlite3 mdr>=0.5 flatconf>=0.5
+
+LIB_DEPENDS =   databases/sqlite3 \
+                devel/libmdr
 
 MAKE_FLAGS =	EXTRA_CFLAGS=-O2
 
 do-install:
 	${INSTALL_PROGRAM} ${WRKBUILD}/certes ${PREFIX}/sbin/
+
 	${INSTALL_DATA_DIR} ${PREFIX}/share/doc/certes/
-	${INSTALL_DATA} ${WRKBUILD}/README.md ${PREFIX}/share/doc/certes/
+	${INSTALL_DATA} ${WRKBUILD}/README ${PREFIX}/share/doc/certes/
 	${INSTALL_DATA} ${WRKBUILD}/LICENSE ${PREFIX}/share/doc/certes/
 	${INSTALL_DATA} ${WRKBUILD}/certes.conf.sample ${PREFIX}/share/doc/certes/
+	${INSTALL_DATA} ${WRKBUILD}/certes_authority.conf.sample ${PREFIX}/share/doc/certes/
+
+	${INSTALL_DATA_DIR} ${PREFIX}/share/certes/
+	${INSTALL_DATA} ${WRKBUILD}/certes.cnf ${PREFIX}/share/certes/
+	${INSTALL_DATA} ${WRKBUILD}/setup_ca.sh ${PREFIX}/share/setup_ca.sh
 
 .include <bsd.port.mk>

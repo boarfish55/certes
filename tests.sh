@@ -2,7 +2,7 @@
 
 set -e
 
-./bootstrap_ca.sh
+./setup_ca.sh
 
 basedir=`realpath testdata`
 certes_dir=`realpath .`
