@@ -48,7 +48,7 @@ struct certes_flatconf certes_conf = {
 	"cert.pem",
 	"agent.lock",
 	"agent.sock",
-	4096,
+	4096,                   /* max_cert_size */
 	345600,
 	864000,
 	"serial",
@@ -253,6 +253,7 @@ free_certes_session(void *data)
 		free(cs->bootstrap_key);
 	if (cs->req != NULL)
 		X509_REQ_free(cs->req);
+	free(data);
 }
 
 static char client_name_buf[1024];
@@ -328,6 +329,9 @@ mdrd_backend()
 	while ((r = mdrd_recv(&msg, msgbuf, sizeof(msgbuf),
 	    certes_conf.max_cert_size, MDR_DOMAIN_CERTES, MDR_FNONE,
 	    &sess)) > 0) {
+		if ((r = mdrd_purge_sessions(300)) > 0)
+			xlog(LOG_NOTICE, NULL, "purged %d idle sessions", r);
+
 		/*
 		 * Verify the client's cert
 		 */
@@ -421,6 +425,8 @@ mdrd_backend()
 				    MDR_ERR_NOTSUPP, "not supported");
 		}
 	}
+	if ((r = mdrd_purge_sessions(300)) > 0)
+		xlog(LOG_NOTICE, NULL, "purging %d sessions before exit", r);
 	if (r != 0)
 		xlog_strerror(LOG_ERR, errno, "%s: mdrd_recv", __func__);
 	X509_STORE_CTX_free(ctx);

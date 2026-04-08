@@ -522,8 +522,9 @@ authority_send_cert(struct mdrd_besession *sess, const char *op_id,
 	uint8_t         *der_chain = NULL;
 	size_t           der_sz;
 	struct pmdr      pm;
-	char             pbuf[certes_conf.max_cert_size];
 	struct pmdr_vec  pv[3];
+	char             pbuf[mdr_spec_base_sz(msg_send_cert,
+	    certes_conf.max_cert_size * 2)];
 
 	if (pack_intermediates(crt, &der_chain, &der_sz, xerrz(e)) == -1) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
@@ -602,10 +603,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 
 	if ((be = certdb_get_bootstrap(cs->bootstrap_key,
 	    CERTES_BOOTSTRAP_KEY_LENGTH, e)) == NULL) {
-		/*
-		 * We always reply OK to mitigate enumeration attacks.
-		 */
-		mdrd_beout_ok(sess, MDRD_BEOUT_FNONE);
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
+		    "no such bootstrap entry");
 		return XERR_PREPENDFN(e);
 	}
 

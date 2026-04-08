@@ -74,7 +74,7 @@ socket_timeout_min = 3
 socket_timeout_max = 300
 max_payload_size = 16384
 max_cert_size = 4096
-dbg_delay_to_backend_seconds = 5
+dbg_delay_to_backend_seconds = 0
 
 allowed_mdr_domains = [ 0x00000002 ]
 
@@ -197,7 +197,7 @@ socket_timeout_min = 3
 socket_timeout_max = 300
 max_payload_size = 16384
 max_cert_size = 4096
-dbg_delay_to_backend_seconds = 5
+dbg_delay_to_backend_seconds = 0
 
 allowed_mdr_domains = [ 0x00000002 ]
 
