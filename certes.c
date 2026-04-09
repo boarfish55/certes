@@ -264,24 +264,31 @@ certes_client_name(struct mdrd_besession *s, char *dst, size_t sz,
 {
 	struct certes_session *cs = (struct certes_session *)s->data;
 	char                  *buf = dst;
+	char                   namebuf[256];
+	char                  *cnbuf;
 	int                    r;
 
 	if (buf == NULL) {
 		buf = client_name_buf;
 		sz = sizeof(client_name_buf);
 	}
-	// TODO: also report about the cert CN, and maybe verified status
-	// That is, s->cert
-	if ((r = getnameinfo((struct sockaddr *)&s->peer, s->peer_len, buf, sz,
-            NULL, 0, NI_NUMERICHOST)) != 0)
+
+	if ((r = getnameinfo((struct sockaddr *)&s->peer, s->peer_len, namebuf,
+	    sizeof(namebuf), NULL, 0, NI_NUMERICHOST)) != 0)
 		XERRF(e, XLOG_EAI, r, "getnameinfo");
 
-	if (cs->verified && s->cert != NULL)
-		strlcat(buf, " (verified)", sz);
-	else if (!cs->verified && s->cert != NULL)
-		strlcat(buf, " (unverified)", sz);
-	else
-		strlcat(buf, " (unverified - no certificate)", sz);
+	if (s->cert == NULL) {
+		snprintf(buf, sz, "peer=%s (no certificate)", namebuf);
+		return buf;
+	}
+
+	cnbuf = cert_subject_oneline(s->cert, NULL);
+
+	snprintf(buf, sz, "peer=%s, subject=%s, verified=%s",
+	    namebuf, (cnbuf == NULL) ? "???" : cnbuf,
+	    (cs->verified) ? "verified" : "unverified");
+	free(cnbuf);
+
 	return buf;
 }
 
@@ -533,6 +540,9 @@ main(int argc, char **argv)
 			xlog(LOG_ERR, &e, __func__);
 			exit(1);
 		}
+		if (mkdir(certes_conf.crl_path, 0755) == -1)
+			if (errno != EEXIST)
+				err(1, "mkdir: %s", certes_conf.crl_path);
 		certdb_shutdown();
 	} else if (strcmp(command, "init-db") == 0) {
 		if (*certes_conf.certdb_path == '\0')

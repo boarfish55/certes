@@ -1,11 +1,9 @@
-dir                     = testdata
+CERTES_DIR              = testdata
+dir                     = $ENV::CERTES_DIR
 oid_section             = certes_oids
 
 [certes_oids]
 certesRoles             = 1.3.6.1.4.1.35910.3.1
-
-[ca]
-default_ca              = intermediate_ca
 
 [root_ca]
 certificate             = $dir/ca/root.pem
@@ -16,9 +14,9 @@ serial                  = $dir/ca/serial
 default_crl_days        = 365
 default_days            = 365
 default_md              = sha256
-copy_extensions         = none
+copy_extensions         = copy
 policy                  = root_ca_policy
-x509_extensions         = intermediate_ca_ext
+x509_extensions         = root_ext
 
 [root_ca_policy]
 commonName              = supplied
@@ -38,6 +36,26 @@ certesRoles             = ASN1:SEQUENCE:root_ca_roles
 [root_ca_roles]
 certesRoles.0           = IA5:authority
 
+[intermediate_ca]
+certificate             = $dir/authority1/cert.pem
+database                = $dir/authority1/index.txt
+new_certs_dir           = $dir/authority1/certs
+private_key             = $dir/authority1/key.pem
+serial                  = $dir/authority1/serial
+default_crl_days        = 365
+default_days            = 365
+default_md              = sha256
+copy_extensions         = none
+policy                  = intermediate_ca_policy
+
+[intermediate_ca_policy]
+commonName              = supplied
+stateOrProvinceName     = optional
+countryName             = optional
+emailAddress            = optional
+organizationName        = supplied
+organizationalUnitName  = optional
+
 [intermediate_ca_ext]
 basicConstraints        = critical,CA:true,pathlen:0
 keyUsage                = critical,cRLSign,digitalSignature,keyCertSign
@@ -49,26 +67,6 @@ certesRoles             = ASN1:SEQUENCE:intermediate_ca_roles
 certesRoles.0           = IA5:agent
 certesRoles.1           = IA5:authority
 certesRoles.2           = IA5:bootstrap
-
-[intermediate_ca]
-certificate             = $dir/authority1/cert.pem
-database                = $dir/authority1/index.txt
-new_certs_dir           = $dir/authority1/certs
-private_key             = $dir/authority1/key.pem
-serial                  = $dir/authority1/serial
-default_crl_days        = 365
-default_days            = 365
-default_md              = sha256
-copy_extensions         = copy
-policy                  = intermediate_ca_policy
-
-[intermediate_ca_policy]
-commonName              = supplied
-stateOrProvinceName     = optional
-countryName             = optional
-emailAddress            = optional
-organizationName        = supplied
-organizationalUnitName  = optional
 
 [intermediate_proxy_crt_ext]
 basicConstraints        = critical,CA:false
@@ -91,7 +89,6 @@ certesRoles             = ASN1:SEQUENCE:client_roles
 
 [client_roles]
 certesRoles.0           = IA5:agent
-certesRoles.1           = IA5:extremely_long_stupid_role_yiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyiyi
 
 [req]
 default_bits            = 4096

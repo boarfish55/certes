@@ -2,112 +2,237 @@
 
 set -e
 
-DOMAIN=example.com
-ORG=Example
+fail() {
+	echo "$(basename $0): $@" >&2
+	exit 1
+}
 
-basedir=testdata
+usage() {
+	echo "Usage: $(basename $0) [-h] <command>"
+	echo "       -h              Help"
+	echo "       -s <config>     SSL config (default: $CERTES_SSL_CONFIG)"
+	echo "       -c <config>     certes config (default: $CERTES_CONFIG)"
+	echo "       -x <days>       Expiry (default: $expiry)"
+	echo "       -y              Don't ask for openssl commands"
+	echo ""
+	echo "Commands:"
+	echo ""
+	echo "        setup-root                         Create basic root CA structure"
+	echo "        ca-reqs <ca cn> <proxy cn> <sans>  Create CA & proxy REQ"
+	echo "        sign-ca-req                        Sign a CA REQ from STDIN"
+	echo "        sign-proxy-req <sans>              Sign a proxy REQ from STDIN"
+}
 
-rm -rf $basedir
+CERTES_DIR=/etc/certes
+CERTES_SSL_CONFIG=""
+CERTES_CONFIG=""
+CERTES_MDRD_CONFIG=""
+CERTES_DOMAIN=""
+CERTES_ORG=""
 
-mkdir -p $basedir/ca/certs
-echo "01" > $basedir/ca/serial
-touch $basedir/ca/index.txt
+expiry=365
+do_yes=false
 
-# Create self-signed root certificate; in a real situation, the key should
-# be kept on a secure machine or even offline storage. The certificate and
-# CRL will need to be deployed on all agents in the fleet.
-openssl req -x509 -nodes -config certes.cnf -section root_ca \
-	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-	-keyout $basedir/ca/key.pem \
-	-out $basedir/ca/root.pem -outform PEM -days 365 \
-	-extensions root_ext \
-	-subj "/emailAddress=cert@$DOMAIN/O=$ORG/CN=$ORG CA"
+args=`getopt hs:d:O:D:x:yc:m: $*`
+if [ $? -ne 0 ]; then
+        usage
+        exit 2
+fi
+set -- $args
 
-# Each "authority" can create and renew certs. They are intermediate
-# signing authorities.
-mkdir -p $basedir/authority1/certs \
-	$basedir/authority1/trust_store \
-	$basedir/authority1/crl_store
-echo "01000000" > $basedir/authority1/serial
-touch $basedir/authority1/index.txt
-openssl req -nodes -config certes.cnf \
-	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-	-keyout $basedir/authority1/key.pem -keyform PEM \
-	-out $basedir/authority1/req.pem -outform PEM \
-	-subj "/O=$ORG/CN=authority1.$DOMAIN" \
-	-addext "subjectAltName = DNS:authority1.$DOMAIN,DNS:localhost"
-# Sign authority1 cert & verify
-yes | openssl ca -config certes.cnf -name root_ca \
-	-in $basedir/authority1/req.pem -extensions intermediate_ca_ext \
-	-out $basedir/authority1/cert.pem
-openssl verify -CAfile $basedir/ca/root.pem $basedir/authority1/cert.pem
-cp $basedir/ca/root.pem $basedir/authority1/trust_store/
-cp $basedir/authority1/cert.pem $basedir/authority1/trust_store/
-openssl rehash $basedir/authority1/trust_store
+while [ $# -ne 0 ]; do
+	case "$1" in
+		-h)
+			usage
+			exit 0
+			;;
+		-c)
+			CERTES_CONFIG="$2"
+			shift
+			shift
+			;;
+		-s)
+			CERTES_SSL_CONFIG="$2"
+			shift
+			shift
+			;;
+		-d)
+			CERTES_DIR="$2"
+			shift
+			shift
+			;;
+		-D)
+			CERTES_DOMAIN="$2"
+			shift
+			shift
+			;;
+		-O)
+			CERTES_ORG="$2"
+			shift
+			shift
+			;;
+		-x)
+			expiry="$2"
+			shift
+			shift
+			;;
+		-y)
+			do_yes=true
+			shift
+			;;
+		--)
+			shift
+			break
+			;;
+	esac
+done
 
-# Create a "ca-proxy" cert request for an mdrd daemon
-mkdir -p $basedir/proxy1
-openssl req -nodes -config certes.cnf \
-	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-	-keyout $basedir/proxy1/key.pem -keyform PEM \
-	-out $basedir/proxy1/req.pem -outform PEM \
-	-subj "/O=$ORG/CN=proxy1.$DOMAIN" \
-	-addext "subjectAltName=DNS:proxy1.$DOMAIN,DNS:localhost"
-# Sign proxy1 cert & verify
-yes | openssl ca -config certes.cnf -in $basedir/proxy1/req.pem \
-	-out $basedir/proxy1/cert.pem -extensions intermediate_proxy_crt_ext
-openssl verify -CApath $basedir/authority1/trust_store $basedir/proxy1/cert.pem
-cat $basedir/authority1/cert.pem >> $basedir/proxy1/cert.pem
+[ -z "$CERTES_SSL_CONFIG" ] && CERTES_SSL_CONFIG=$CERTES_DIR/openssl.cnf
+[ -z "$CERTES_CONFIG" ] && CERTES_CONFIG=$CERTES_DIR/certes.conf
+[ -z "$CERTES_MDRD_CONFIG" ] && CERTES_MDRD_CONFIG=$CERTES_DIR/mdrd.conf
 
-# Create a "client1" cert request
-mkdir -p $basedir/client1
-openssl req -nodes -config certes.cnf \
-	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-	-keyout $basedir/client1/key.pem -keyform PEM \
-	-out $basedir/client1/req.pem -outform PEM \
-	-subj "/O=$ORG/CN=client1.$DOMAIN" \
-	-addext "subjectAltName=DNS:client1.$DOMAIN,DNS:`hostname -f`,IP:172.16.5.14,IP:fe80::c2a5:e8ff:fe29:5874"
-# Sign client1 cert & verify
-yes | openssl ca -config certes.cnf -in $basedir/client1/req.pem \
-	-out $basedir/client1/cert.pem -extensions intermediate_client_crt_ext
-openssl verify -CApath $basedir/authority1/trust_store $basedir/client1/cert.pem
-cat $basedir/authority1/cert.pem >> $basedir/client1/cert.pem
+export CERTES_DIR
+export CERTES_DOMAIN
+export CERTES_ORG
 
-# Create a "client2" cert request
-mkdir -p $basedir/client2
-openssl req -nodes -config certes.cnf \
-	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-	-keyout $basedir/client2/key.pem -keyform PEM \
-	-out $basedir/client2/req.pem -outform PEM \
-	-subj "/O=$ORG/CN=client2.$DOMAIN" \
-	-addext "subjectAltName = DNS:client2.$DOMAIN"
+command="$1"
+if [ -z "$command" ]; then
+	usage
+	exit 2
+fi
+shift
 
-# Sign and revoke client2 cert
-yes | openssl ca -config certes.cnf -in $basedir/client2/req.pem \
-	-out $basedir/client2/cert.pem -extensions intermediate_client_crt_ext
-openssl verify -CApath $basedir/authority1/trust_store $basedir/client2/cert.pem
-cat $basedir/authority1/cert.pem >> $basedir/client2/cert.pem
-openssl ca -config certes.cnf -revoke $basedir/client2/cert.pem
-# Generate CRL
-openssl ca -config certes.cnf \
-	-gencrl -out $basedir/authority1/authority1.crl
-# View it and verify signature
-openssl crl -in $basedir/authority1/authority1.crl -text -noout \
-	-CApath $basedir/authority1/trust_store
+[ "$CERTES_DIR" = "" ] && fail "CERTES_DIR must be set"
 
-# Generate root CRL
-openssl ca -config certes.cnf -section root_ca \
-	-gencrl -out $basedir/ca/root.crl
-# View it and verify signature
-openssl crl -in $basedir/ca/root.crl -text -noout -CAfile $basedir/ca/root.pem
+setup_root()
+{
+	[ "$CERTES_DOMAIN" = "" ] && fail "CERTES_DOMAIN must be set"
+	[ "$CERTES_ORG" = "" ] && fail "CERTES_ORG must be set"
 
-cp $basedir/ca/root.crl $basedir/authority1/crl_store/
-cp $basedir/authority1/authority1.crl $basedir/authority1/crl_store/
+	mkdir -p $CERTES_DIR/ca/certs
+	echo "01" > $CERTES_DIR/ca/serial
+	touch $CERTES_DIR/ca/index.txt
 
-# Test and see if client2's cert is indeed revoked, as it should
-openssl verify -CApath $basedir/authority1/trust_store \
-	-CRLfile $basedir/ca/root.crl \
-	-CRLfile $basedir/authority1/authority1.crl \
-	-crl_check $basedir/client2/cert.pem || true
+	# Create self-signed root certificate; in a real situation, the key
+	# should be kept on a secure machine or even offline storage. The
+	# certificate and CRL will need to be deployed on all agents in the
+	# fleet.
+	openssl req -x509 -nodes -config $CERTES_SSL_CONFIG -section root_ca \
+		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+		-keyout $CERTES_DIR/ca/key.pem \
+		-out $CERTES_DIR/ca/root.pem -outform PEM -days $expiry \
+		-subj "/emailAddress=certes@$CERTES_DOMAIN/O=$CERTES_ORG/CN=$CERTES_ORG CA"
+	openssl ca -config $CERTES_SSL_CONFIG -section root_ca \
+		-gencrl -out $CERTES_DIR/ca/root.crl
+	openssl x509 -in $CERTES_DIR/ca/root.pem -text -noout
+}
 
-echo "All good!"
+ca_reqs()
+{
+	local ca_cn="$1"
+	local proxy_cn="$2"
+	local sans="$3"
+	if [ -z "$ca_cn" ]; then
+		fail "must specify a CN for the CA"
+	fi
+	if [ -z "$proxy_cn" ]; then
+		proxy_cn=`hostname -f`
+	fi
+	if [ -z "$sans" ]; then
+		sans="DNS:`hostname -f`"
+	fi
+
+	local mdrd_uid=$(egrep -o '^uid *= *[a-zA-Z0-9\._-]+ *' \
+		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' ')
+	local mdrd_gid=$(egrep -o '^gid *= *[a-zA-Z0-9\._-]+ *' \
+		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' ')
+
+	local certes_uid=$(egrep -o '^backend_uid *= *[a-zA-Z0-9\._-]+ *' \
+		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' ')
+	local certes_gid=$(egrep -o '^backend_gid *= *[a-zA-Z0-9\._-]+ *' \
+		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' ')
+
+	openssl req -config $CERTES_SSL_CONFIG -noenc \
+		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+		-keyout $CERTES_DIR/ca_key.pem -keyform PEM \
+		-out $CERTES_DIR/ca_req.pem -outform PEM \
+		-subj "/O=$CERTES_ORG/CN=$ca_cn"
+	[ ! -z "$certes_uid" ] && chown "$certes_uid" $CERTES_DIR/ca_key.pem
+	[ ! -z "$certes_gid" ] && chown "$certes_gid" $CERTES_DIR/ca_key.pem
+
+	openssl req -config $CERTES_SSL_CONFIG -noenc \
+		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+		-keyout $CERTES_DIR/proxy_key.pem -keyform PEM \
+		-out $CERTES_DIR/proxy_req.pem -outform PEM \
+		-subj "/O=$CERTES_ORG/CN=$proxy_cn" \
+		-addext "subjectAltName = $sans"
+	[ ! -z "$mdrd_uid" ] && chown "$mdrd_uid" $CERTES_DIR/proxy_key.pem
+	[ ! -z "$mdrd_gid" ] && chown "$mdrd_gid" $CERTES_DIR/proxy_key.pem
+
+	echo "Sign CA REQ:"
+	openssl req -in $CERTES_DIR/ca_req.pem
+	echo ""
+	echo "Sign proxy REQ:"
+	openssl req -in $CERTES_DIR/proxy_req.pem
+}
+
+sign_ca_req()
+{
+	local last_serial=`cat $CERTES_DIR/ca/serial`
+	local req=`mktemp -t setup_ca.XXXXXX`
+	cat > $req
+	openssl req -in $req -text
+	if $do_yes; then
+		yes | openssl ca -config $CERTES_SSL_CONFIG -name root_ca \
+			-extensions intermediate_ca_ext \
+			-in $req && \
+			echo "cert written to $CERTES_DIR/ca/certs/${last_serial}.pem"
+	else
+		openssl ca -config $CERTES_SSL_CONFIG -name root_ca \
+			-extensions intermediate_ca_ext \
+			-in $req && \
+			echo "cert written to $CERTES_DIR/ca/certs/${last_serial}.pem"
+	fi
+	rm -f $req
+}
+
+sign_proxy_req()
+{
+	local last_serial=`cat $CERTES_DIR/ca/serial`
+	local req=`mktemp -t setup_ca.XXXXXX`
+	cat > $req
+	openssl req -in $req -text
+	if $do_yes; then
+		yes | openssl ca -config $CERTES_SSL_CONFIG -name root_ca \
+			-extensions intermediate_proxy_crt_ext \
+			-in $req && \
+			echo "cert written to $CERTES_DIR/ca/certs/${last_serial}.pem"
+	else
+		openssl ca -config $CERTES_SSL_CONFIG -name root_ca \
+			-extensions intermediate_proxy_crt_ext \
+			-in $req && \
+			echo "cert written to $CERTES_DIR/ca/certs/${last_serial}.pem"
+	fi
+	rm -f $req
+}
+
+case "$command" in
+	setup-root)
+		setup_root $@
+		;;
+	ca-reqs)
+		ca_reqs $@
+		;;
+	sign-ca-req)
+		sign_ca_req $@
+		;;
+	sign-proxy-req)
+		sign_proxy_req $@
+		;;
+	*)
+		usage
+		exit 2
+		;;
+esac
+
+exit 0
