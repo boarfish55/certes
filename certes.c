@@ -133,6 +133,7 @@ struct flatconf certes_config_vars[] = {
 		sizeof(certes_conf.challenge_timeout_seconds)
 	},
 	{
+		// TODO: rename to root_ca_file
 		"ca_file",
 		FLATCONF_STRING,
 		certes_conf.ca_file,
@@ -517,6 +518,7 @@ main(int argc, char **argv)
 	load_mdr_defs();
 
 	if (strcmp(command, "mdrd-backend") == 0) {
+		// TODO: move this in agent_start() maybe?
 		if (*certes_conf.certdb_path != '\0' &&
 		    certdb_init(certes_conf.certdb_path, xerrz(&e)) == -1) {
 			xlog(LOG_ERR, &e, __func__);

@@ -40,6 +40,7 @@ struct cert_entry {
 	size_t     roles_sz;
 	time_t     not_before_sec;
 	time_t     not_after_sec;
+	time_t     revoked_at_sec;
 	uint32_t   flags;
 	uint8_t   *der;
 	size_t     der_sz;
@@ -48,6 +49,7 @@ struct cert_entry {
 int  certdb_init(const char *, struct xerr *);
 void certdb_shutdown();
 int  certdb_backup(const char *, int, struct xerr *);
+int  certdb_initialized();
 
 struct bootstrap_entry *certdb_get_bootstrap(const uint8_t *, size_t,
                             struct xerr *);
@@ -59,8 +61,12 @@ int                     certdb_del_bootstrap(const struct bootstrap_entry *,
 int                     certdb_clean_expired_bootstraps(struct xerr *);
 
 struct cert_entry *certdb_get_cert(const char *, struct xerr *);
+int                certdb_revoke_cert(const char *, struct xerr *);
 void               certdb_cert_free(struct cert_entry *);
 int                certdb_put_cert(const struct cert_entry *, struct xerr *);
 int                certdb_clean_expired_certs(struct xerr *);
+int                certdb_get_revoked_certs(
+                       int(*cb)(const struct cert_entry *, void *),
+                       void *, struct xerr *);
 
 #endif

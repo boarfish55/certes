@@ -231,7 +231,7 @@ agent_tasks()
 			    certes_conf.certdb_backup_interval_seconds;
 		}
 
-		// TODO: need a CRL regen task
+		// TODO: need to sync CRLs from other authorities
 
 		return;
 	}
@@ -252,7 +252,8 @@ agent_tasks()
 			xlog(LOG_ERR, &e, "%s", __func__);
 	}
 
-	// TODO: need a CRL refresh task
+	// TODO: need to refresh CRLs from our authority
+	// Meaning we also need to recreate the store; see agent_load_keys.
 }
 
 static int
@@ -831,6 +832,15 @@ agent_cert_renew_inquiry(struct xerr *e)
 		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
 		    op->id, uv[2].v.s.bytes, uv[1].v.u32);
 		goto fail;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
+		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
+		    op->id, uv[1].v.s.bytes, uv[0].v.u32);
+		goto fail;
 	default:
 		XERRF(e, XLOG_APP, XLOG_BADMSG, "bad response from authority");
 		goto fail;
@@ -1317,18 +1327,46 @@ agent_load_keys(struct xerr *e)
 	}
 	X509_free(ca_crt);
 
-	if (*certes_conf.crl_file != '\0') {
-		if (load_crl(certes_conf.crl_file, xerrz(e)) == -1) {
+	if ((f = fopen(certes_conf.cert_file, "r")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+		    certes_conf.cert_file);
+		goto fail;
+	}
+	if ((cert = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
+		fclose(f);
+		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509");
+		goto fail;
+	}
+	fclose(f);
+
+	is_authority = cert_has_role(cert, ROLE_AUTHORITY, xerrz(e));
+	if (is_authority == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	/*
+	 * Authorities need their own cert to the store, as well as all
+	 * other authorities, so they can validate the clients they signed.
+	 */
+	if (is_authority) {
+		if (certdb_initialized() && cert_gen_crl(xerrz(e)) == -1) {
 			XERR_PREPENDFN(e);
 			goto fail;
 		}
+		// TODO: need to add other authorities too...
+		if (!X509_STORE_add_cert(store, cert)) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_STORE_add_cert");
+			goto fail;
+		}
 	}
+
 	if (*certes_conf.crl_path != '\0') {
 		if ((d = opendir(certes_conf.crl_path)) == NULL) {
 			XERRF(e, XLOG_ERRNO, errno, "opendir");
 			goto fail;
 		}
-
 		for (;;) {
 			errno = 0;
 			de = readdir(d);
@@ -1354,37 +1392,6 @@ agent_load_keys(struct xerr *e)
 			}
 		}
 		closedir(d);
-	}
-
-	if ((f = fopen(certes_conf.cert_file, "r")) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
-		    certes_conf.cert_file);
-		goto fail;
-	}
-	if ((cert = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
-		fclose(f);
-		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509");
-		goto fail;
-	}
-	fclose(f);
-
-	is_authority = cert_has_role(cert, ROLE_AUTHORITY, xerrz(e));
-	if (is_authority == -1) {
-		XERR_PREPENDFN(e);
-		goto fail;
-	}
-
-	/*
-	 * Authorities need their own cert to the store, as well as all
-	 * other authorities, so they can validate the clients they signed.
-	 */
-	if (is_authority) {
-		// TODO: need to add other authorities too...
-		if (!X509_STORE_add_cert(store, cert)) {
-			XERRF(e, XLOG_SSL, ERR_get_error(),
-			    "X509_STORE_add_cert");
-			goto fail;
-		}
 	}
 
 	if ((ssl_ctx = SSL_CTX_new(TLS_client_method())) == NULL) {

@@ -1197,3 +1197,140 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 
 	return 0;
 }
+
+static int
+add_to_crl(const struct cert_entry *ce, void *args)
+{
+	X509_CRL     *crl = (X509_CRL *)args;
+	ASN1_TIME    *rev_date = NULL;
+	X509_REVOKED *revcrt = NULL;
+	BIGNUM       *serial_bn = NULL;
+	ASN1_INTEGER *serial = NULL;
+	struct xerr   e;
+
+	if ((revcrt = X509_REVOKED_new()) == NULL) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(),
+		    "X509_REVOKED_new");
+		goto fail;
+	}
+
+	if ((rev_date = ASN1_TIME_adj(NULL, ce->revoked_at_sec, 0, 0))
+	    == NULL) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "ASN1_TIME_adj");
+		goto fail;
+	}
+
+	if (!X509_REVOKED_set_revocationDate(revcrt, rev_date)) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(),
+		    "X509_REVOKED_set_revocationDate");
+		goto fail;
+	}
+
+	if (!BN_hex2bn(&serial_bn, ce->serial)) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
+		goto fail;
+	}
+	if ((serial = BN_to_ASN1_INTEGER(serial_bn, NULL)) == NULL) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "BN_to_ASN1_INTEGER");
+		goto fail;
+	}
+
+	if (!X509_REVOKED_set_serialNumber(revcrt, serial)) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(),
+		    "X509_REVOKED_set_serialNumber");
+		goto fail;
+	}
+
+	if (!X509_CRL_add0_revoked(crl, revcrt)) {
+		XERRF(&e, XLOG_SSL, ERR_get_error(), "X509_CRL_add0_revoked");
+		goto fail;
+	}
+
+	ASN1_TIME_free(rev_date);
+	BN_free(serial_bn);
+	ASN1_INTEGER_free(serial);
+	return 1;
+fail:
+	xlog(LOG_ERR, &e, __func__);
+	if (revcrt != NULL)
+		X509_REVOKED_free(revcrt);
+	if (rev_date != NULL)
+		ASN1_TIME_free(rev_date);
+	if (serial_bn != NULL)
+		BN_free(serial_bn);
+	if (serial != NULL)
+		ASN1_INTEGER_free(serial);
+	return 0;
+}
+
+int
+cert_gen_crl(struct xerr *e)
+{
+	// See: openbsd/src/usr.bin/openssl/ca.c:1369
+
+	X509_CRL  *crl = NULL;
+	ASN1_TIME *tmptm = NULL;
+	FILE      *f = NULL;
+
+	if ((crl = X509_CRL_new()) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_CRL_new");
+		return -1;
+	}
+
+	if (!X509_CRL_set_issuer_name(crl,
+	    X509_get_subject_name(agent_cert()))) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_CRL_set_issuer_name");
+		goto fail;
+	}
+
+	if ((tmptm = X509_gmtime_adj(NULL, 0)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_gmtime_adj");
+		goto fail;
+	}
+
+	if (!X509_CRL_set_lastUpdate(crl, tmptm)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_CRL_set_lastUpdate");
+		goto fail;
+	}
+	if ((tmptm = X509_gmtime_adj(tmptm, 86400 * 365)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_gmtime_adj");
+		goto fail;
+	}
+
+	if (!X509_CRL_set_nextUpdate(crl, tmptm)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_CRL_set_nextUpdate");
+		goto fail;
+	}
+	ASN1_TIME_free(tmptm);
+	tmptm = NULL;
+
+	if (certdb_get_revoked_certs(&add_to_crl, crl, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	X509_CRL_sort(crl);
+
+	if (!X509_CRL_sign(crl, agent_key(), EVP_sha256())) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_CRL_sign");
+		goto fail;
+	}
+
+	if ((f = fopen(certes_conf.crl_file, "w")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", certes_conf.crl_file);
+		goto fail;
+	}
+	if (!PEM_write_X509_CRL(f, crl)) {
+		fclose(f);
+		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509_CRL");
+		goto fail;
+	}
+	fclose(f);
+
+	return 0;
+fail:
+	if (tmptm != NULL)
+		ASN1_TIME_free(tmptm);
+	X509_CRL_free(crl);
+	return -1;
+}

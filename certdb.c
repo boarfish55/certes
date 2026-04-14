@@ -10,7 +10,7 @@
 #include "certdb.h"
 #include "util.h"
 
-static sqlite3 *db;
+static sqlite3 *db = NULL;
 
 const int qry_busy_timeout = 1000;
 
@@ -46,12 +46,38 @@ const char *qry_create_certs_table = "create table if not exists certs("
 		"roles blob, "
 		"not_before_sec int not null, "
 		"not_after_sec int not null, "
+		"revoked_at_sec int not null default 0, "
 		"flags int not null, "
 		"der blob not null, "
                 "primary key(serial))";
 
 const char *qry_create_certs_index = "create index if not exists "
                 "by_serial_flags on certs (flags, serial desc)";
+
+struct {
+	sqlite3_stmt    *stmt;
+	char            *sql;
+	struct timespec  start;
+} qry_begin_txn = {
+	NULL,
+	"begin transaction"
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+} qry_commit_txn = {
+	NULL,
+	"commit"
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+} qry_rollback_txn = {
+	NULL,
+	"rollback"
+};
 
 struct {
         sqlite3_stmt *stmt;
@@ -133,13 +159,35 @@ struct {
         int           o_roles;
         int           o_not_before_sec;
         int           o_not_after_sec;
+        int           o_revoked_at_sec;
         int           o_flags;
         int           o_der;
 } qry_cert_get = {
         NULL,
-        "select subject, sans, roles, not_before_sec, not_after_sec, flags, "
-            "der from certs where serial = ?1",
-        1, 0, 1, 2, 3, 4, 5, 6
+        "select subject, sans, roles, not_before_sec, not_after_sec, "
+	"revoked_at_sec, flags, der from certs where serial = ?1",
+        1, 0, 1, 2, 3, 4, 5, 6, 7
+};
+
+struct {
+        sqlite3_stmt *stmt;
+        char         *sql;
+        int           i_serial;
+} qry_revoke_cert = {
+        NULL,
+        "update certs set flags = (flags | 1) where serial = ?1",
+        1
+};
+
+struct {
+        sqlite3_stmt *stmt;
+        char         *sql;
+        int           o_serial;
+        int           o_revoked_at_sec;
+} qry_get_revoked_certs = {
+        NULL,
+        "select serial, revoked_at_sec from certs where (flags & 1) <> 0",
+        0, 1
 };
 
 static int
@@ -153,6 +201,122 @@ certdb_qry_cleanup(sqlite3_stmt *stmt, struct xerr *e)
 		return XERRF(e, XLOG_DB, r,
 		    "sqlite3_clear_bindings: %s (%d)", sqlite3_errmsg(db), r);
 	return 0;
+}
+
+static time_t
+txn_duration()
+{
+	time_t          delta_ns;
+	struct timespec end;
+
+	clock_gettime(CLOCK_REALTIME, &end);
+
+	delta_ns = ((end.tv_sec * 1000000000) + end.tv_nsec) -
+	    ((qry_begin_txn.start.tv_sec * 1000000000) +
+	     qry_begin_txn.start.tv_nsec);
+	return delta_ns;
+}
+
+static int
+certdb_begin_txn(struct xerr *e)
+{
+	int         r;
+	struct xerr e2;
+
+	switch ((r = sqlite3_step(qry_begin_txn.stmt))) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+		XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
+		goto fail;
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
+		    sqlite3_errmsg(db), r);
+		goto fail;
+	}
+
+	clock_gettime(CLOCK_REALTIME, &qry_begin_txn.start);
+	return certdb_qry_cleanup(qry_begin_txn.stmt, e);
+fail:
+	if (certdb_qry_cleanup(qry_begin_txn.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+static int
+certdb_commit_txn(struct xerr *e)
+{
+	int         r;
+	struct xerr e2;
+	time_t      delta_ns;
+
+	switch ((r = sqlite3_step(qry_commit_txn.stmt))) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+		XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
+		goto fail;
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
+		    sqlite3_errmsg(db), r);
+		goto fail;
+	}
+
+	delta_ns = txn_duration();
+	xlog(LOG_DEBUG, NULL, "%s: transaction held the lock for %ld.%09ld "
+	    "seconds", __func__, delta_ns / 1000000000, delta_ns % 1000000000);
+
+	return certdb_qry_cleanup(qry_commit_txn.stmt, e);
+fail:
+	// TODO: rollback?
+	if (certdb_qry_cleanup(qry_commit_txn.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+static int
+certdb_rollback_txn(struct xerr *e)
+{
+	int         r;
+	struct xerr e2;
+	time_t      delta_ns;
+
+	switch ((r = sqlite3_step(qry_rollback_txn.stmt))) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+		XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
+		goto fail;
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
+		    sqlite3_errmsg(db), r);
+		goto fail;
+	}
+
+	delta_ns = txn_duration();
+	xlog(LOG_DEBUG, NULL, "%s: transaction held the lock for %ld.%09ld "
+	    "seconds", __func__, delta_ns / 1000000000, delta_ns % 1000000000);
+
+	return certdb_qry_cleanup(qry_rollback_txn.stmt, e);
+fail:
+	if (certdb_qry_cleanup(qry_rollback_txn.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+int
+certdb_initialized()
+{
+	return (db == NULL) ? 0 : 1;
 }
 
 void
@@ -500,6 +664,9 @@ certdb_get_cert(const char *serial, struct xerr *e)
 	dst->not_after_sec = (uint64_t)sqlite3_column_int64(
 	    qry_cert_get.stmt,
 	    qry_cert_get.o_not_after_sec);
+	dst->revoked_at_sec = (uint64_t)sqlite3_column_int64(
+	    qry_cert_get.stmt,
+	    qry_cert_get.o_revoked_at_sec);
 	dst->flags = (uint32_t)sqlite3_column_int(
 	    qry_cert_get.stmt,
 	    qry_cert_get.o_flags);
@@ -516,6 +683,96 @@ fail:
 	if (certdb_qry_cleanup(qry_cert_get.stmt, xerrz(&e2)) == -1)
 		xlog(LOG_ERR, &e2, "%s", __func__);
 	return NULL;
+}
+
+int
+certdb_revoke_cert(const char *serial, struct xerr *e)
+{
+	int         r;
+	struct xerr e2;
+
+	if ((r = sqlite3_bind_blob(qry_revoke_cert.stmt,
+	    qry_revoke_cert.i_serial, serial, sizeof(strlen(serial)),
+	    SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	switch (sqlite3_step(qry_revoke_cert.stmt)) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	return certdb_qry_cleanup(qry_revoke_cert.stmt, e);
+fail:
+	if (certdb_qry_cleanup(qry_revoke_cert.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+int
+certdb_get_revoked_certs(int(*cb)(const struct cert_entry *, void *),
+    void *cb_args, struct xerr *e)
+{
+	int                r;
+	struct xerr        e2;
+	struct cert_entry  ce;
+	int                status = 0;
+
+	if (certdb_begin_txn(e) == -1)
+		return XERR_PREPENDFN(e);
+
+	while ((r = sqlite3_step(qry_get_revoked_certs.stmt)) != SQLITE_DONE) {
+		bzero(&ce, sizeof(ce));
+		switch (r) {
+		case SQLITE_ROW:
+			if (sqlite3_column_bytes(qry_get_revoked_certs.stmt,
+			    qry_get_revoked_certs.o_serial) == 0) {
+				status = XERRF(e, XLOG_APP, XLOG_FAIL,
+				    "serial was NULL for a revoked cert");
+				goto end;
+			}
+			ce.serial = strdup(sqlite3_column_blob(
+			    qry_get_revoked_certs.stmt,
+			    qry_get_revoked_certs.o_serial));
+			if (ce.serial == NULL) {
+				status = XERRF(e, XLOG_ERRNO, errno, "strdup");
+				goto end;
+			}
+			ce.revoked_at_sec = sqlite3_column_int64(
+			    qry_get_revoked_certs.stmt,
+			    qry_get_revoked_certs.o_revoked_at_sec);
+
+			if (!cb(&ce, cb_args)) {
+				free(ce.serial);
+				status = -1;
+				goto end;
+			}
+			free(ce.serial);
+			break;
+		case SQLITE_BUSY:
+			status = XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
+			goto end;
+		case SQLITE_MISUSE:
+		case SQLITE_ERROR:
+		default:
+			status = XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
+			    sqlite3_errmsg(db), r);
+			goto end;
+		}
+	}
+end:
+	certdb_rollback_txn(e);
+	if (certdb_qry_cleanup(qry_get_revoked_certs.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return status;
 }
 
 int
@@ -789,6 +1046,25 @@ certdb_init(const char *path, struct xerr *e)
 		goto fail;
 	}
 
+	if ((r = sqlite3_prepare_v2(db, qry_begin_txn.sql, -1,
+	    &qry_begin_txn.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_begin_txn: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_commit_txn.sql, -1,
+	    &qry_commit_txn.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_commit_txn: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_rollback_txn.sql, -1,
+	    &qry_rollback_txn.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_rollback_txn: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+
 	if ((r = sqlite3_prepare_v2(db, qry_bootstrap_put.sql, -1,
 	    &qry_bootstrap_put.stmt, NULL))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
@@ -820,6 +1096,18 @@ certdb_init(const char *path, struct xerr *e)
 		    "qry_cert_get: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
+	if ((r = sqlite3_prepare_v2(db, qry_revoke_cert.sql, -1,
+	    &qry_revoke_cert.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_revoke_cert: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_get_revoked_certs.sql, -1,
+	    &qry_get_revoked_certs.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_get_revoked_certs: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
 
 	return 0;
 fail:
@@ -830,6 +1118,18 @@ fail:
 void
 certdb_shutdown()
 {
+	if (sqlite3_finalize(qry_begin_txn.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_begin_txn: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_commit_txn.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_commit_txn: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_rollback_txn.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_rollback_txn: %s",
+		    __func__, sqlite3_errmsg(db));
 	if (sqlite3_finalize(qry_bootstrap_put.stmt))
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_bootstrap_put: %s",
@@ -851,8 +1151,17 @@ certdb_shutdown()
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_cert_get: %s",
 		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_revoke_cert.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_revoke_cert: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_get_revoked_certs.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_get_revoked_certs: %s",
+		    __func__, sqlite3_errmsg(db));
 
 	if (sqlite3_close(db) != SQLITE_OK)
 		xlog(LOG_ERR, NULL,
 		    "%s: sqlite3_close: %s", __func__, sqlite3_errmsg(db));
+	db = NULL;
 }

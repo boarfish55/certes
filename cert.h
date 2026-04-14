@@ -33,5 +33,6 @@ int             cert_new_selfreq(EVP_PKEY *, const X509_NAME *, const char *,
 char           *cert_serial_to_hex(X509 *, struct xerr *);
 char           *cert_subject_oneline(X509 *, struct xerr *);
 int             cert_must_renew(X509 *, struct cert_entry *, struct xerr *);
+int             cert_gen_crl(struct xerr *);
 
 #endif
