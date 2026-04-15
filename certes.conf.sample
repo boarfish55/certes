@@ -7,7 +7,7 @@ authority_port = 9790
 agent_bootstrap_port = 9791
 max_cert_size = 4096
 
-ca_file = "/home/plalonde/prog/certes/testdata/ca/root.pem"
+root_cert_file = "/home/plalonde/prog/certes/testdata/ca/root.pem"
 crl_path = "/home/plalonde/prog/certes/testdata/authority1/crl_store"
 
 cert_file = "/home/plalonde/prog/certes/testdata/client3/cert.pem"

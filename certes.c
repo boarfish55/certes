@@ -41,8 +41,7 @@ struct certes_flatconf certes_conf = {
 	60000,
 	"",
 	30,                     /* challenge_timeout */
-	"ca.pem",
-	"",
+	"ca.pem",               /* root_cert_file */
 	"",
 	"key.pem",
 	"cert.pem",
@@ -133,17 +132,10 @@ struct flatconf certes_config_vars[] = {
 		sizeof(certes_conf.challenge_timeout_seconds)
 	},
 	{
-		// TODO: rename to root_ca_file
-		"ca_file",
+		"root_cert_file",
 		FLATCONF_STRING,
-		certes_conf.ca_file,
-		sizeof(certes_conf.ca_file)
-	},
-	{
-		"crl_file",
-		FLATCONF_STRING,
-		certes_conf.crl_file,
-		sizeof(certes_conf.crl_file)
+		certes_conf.root_cert_file,
+		sizeof(certes_conf.root_cert_file)
 	},
 	{
 		"crl_path",

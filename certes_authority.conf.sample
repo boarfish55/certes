@@ -3,7 +3,7 @@ authority_fqdn = "localhost"
 authority_port = 9791
 certdb_path = "/home/plalonde/prog/certes/testdata/authority1/certdb.sqlite"
 
-ca_file = "/home/plalonde/prog/certes/testdata/ca/root.pem"
+root_cert_file = "/home/plalonde/prog/certes/testdata/ca/root.pem"
 crl_path = "/home/plalonde/prog/certes/testdata/authority1/crl_store"
 
 cert_file = "/home/plalonde/prog/certes/testdata/authority1/cert.pem"

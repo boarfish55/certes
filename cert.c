@@ -1271,6 +1271,9 @@ cert_gen_crl(struct xerr *e)
 	X509_CRL  *crl = NULL;
 	ASN1_TIME *tmptm = NULL;
 	FILE      *f = NULL;
+	char       cn[256];
+	X509_NAME *subject;
+	char       crl_path[PATH_MAX];
 
 	if ((crl = X509_CRL_new()) == NULL) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_CRL_new");
@@ -1316,8 +1319,22 @@ cert_gen_crl(struct xerr *e)
 		goto fail;
 	}
 
-	if ((f = fopen(certes_conf.crl_file, "w")) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", certes_conf.crl_file);
+	subject =  X509_get_subject_name(agent_cert());
+	if (X509_NAME_get_text_by_NID(subject, NID_commonName,
+	    cn, sizeof(cn)) < 0) {
+		XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "X509_NAME_get_text_by_NID");
+		goto fail;
+	}
+	if (snprintf(crl_path, sizeof(crl_path), "%s/%s.crl",
+	    certes_conf.crl_path, cn) >= sizeof(crl_path)) {
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "resulting CRL path too long");
+		goto fail;
+	}
+
+	if ((f = fopen(crl_path, "w")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
 		goto fail;
 	}
 	if (!PEM_write_X509_CRL(f, crl)) {

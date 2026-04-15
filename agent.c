@@ -1281,7 +1281,7 @@ agent_load_keys(struct xerr *e)
 	struct dirent *de;
 	int            de_len;
 	char           crl_path[PATH_MAX + NAME_MAX + 1];
-	X509          *ca_crt;
+	X509          *root_crt;
 #ifndef __OpenBSD__
 	int            pkey_sz;
 #endif
@@ -1310,22 +1310,22 @@ agent_load_keys(struct xerr *e)
 		goto fail;
 	}
 
-	if ((f = fopen(certes_conf.ca_file, "r")) == NULL) {
+	if ((f = fopen(certes_conf.root_cert_file, "r")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen");
 		goto fail;
 	}
 
-	if ((ca_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
+	if ((root_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
 		fclose(f);
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509");
 		goto fail;
 	}
 	fclose(f);
-	if (!X509_STORE_add_cert(store, ca_crt)) {
+	if (!X509_STORE_add_cert(store, root_crt)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_add_cert");
 		goto fail;
 	}
-	X509_free(ca_crt);
+	X509_free(root_crt);
 
 	if ((f = fopen(certes_conf.cert_file, "r")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
