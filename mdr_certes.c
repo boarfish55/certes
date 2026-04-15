@@ -44,6 +44,16 @@ struct mdr_def msgdef_bootstrap_setup = {
 };
 const struct mdr_spec *msg_bootstrap_setup;
 
+struct mdr_def msgdef_revoke = {
+	MDR_DCV_CERTES_REVOKE,
+	"certes.revoke",
+	{
+		MDR_S,   /* cert serial */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_revoke;
+
 struct mdr_def msgdef_bootstrap_dialin = {
 	MDR_DCV_CERTES_BOOTSTRAP_DIALIN,
 	"certes.bootstrap_dialin",
@@ -132,6 +142,35 @@ struct mdr_def msgdef_cert_renew_answer = {
 };
 const struct mdr_spec *msg_cert_renew_answer;
 
+struct mdr_def msgdef_reload_crls = {
+	MDR_DCV_CERTES_RELOAD_CRLS,
+	"certes.reload_crls",
+	{
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_reload_crls;
+
+struct mdr_def msgdef_poll_crls_gen = {
+	MDR_DCV_CERTES_POLL_CRLS_GEN,
+	"certes.poll_crls_gen",
+	{
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_poll_crls_gen;
+
+struct mdr_def msgdef_crls_gen = {
+	MDR_DCV_CERTES_CRLS_GEN,
+	"certes.crls_gen",
+	{
+		MDR_U64,  /* CRLs generation (i.e. how many times did we
+			     reload them */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_crls_gen;
+
 int
 beout_ok(struct mdrd_besession *sess, const char *op_id, uint32_t beout_flags)
 {
@@ -188,6 +227,8 @@ load_mdr_defs()
 	if ((msg_bootstrap_setup =
 	    mdr_register_spec(&msgdef_bootstrap_setup)) == NULL)
 		errx(1, "mdr_register_spec");
+	if ((msg_revoke = mdr_register_spec(&msgdef_revoke)) == NULL)
+		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_dialin =
 	    mdr_register_spec(&msgdef_bootstrap_dialin)) == NULL)
 		errx(1, "mdr_register_spec");
@@ -211,5 +252,14 @@ load_mdr_defs()
 		errx(1, "mdr_register_spec");
 	if ((msg_cert_renew_answer =
 	    mdr_register_spec(&msgdef_cert_renew_answer)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_reload_crls =
+	    mdr_register_spec(&msgdef_reload_crls)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_poll_crls_gen =
+	    mdr_register_spec(&msgdef_poll_crls_gen)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_crls_gen =
+	    mdr_register_spec(&msgdef_crls_gen)) == NULL)
 		errx(1, "mdr_register_spec");
 }

@@ -34,6 +34,7 @@ static int          is_authority = 0;
 static X509_STORE  *store = NULL;
 static SSL_CTX     *ssl_ctx = NULL;
 static uint64_t     next_authop_id = 1;
+static uint64_t     crls_gen = 1;
 
 static struct timespec last_authop_purge = {0, 0};
 static struct timespec last_certdb_purge = {0, 0};
@@ -47,7 +48,8 @@ extern struct certes_flatconf certes_conf;
 enum authop_type {
 	AUTHOP_BOOTSTRAP_SETUP = 1,
 	AUTHOP_BOOTSTRAP,
-	AUTHOP_CERT_RENEW
+	AUTHOP_CERT_RENEW,
+	AUTHOP_CERT_REVOKE
 };
 
 struct authop {
@@ -120,7 +122,9 @@ static int            authop_recv(struct authop *, char *, size_t,
 static int            load_crl(const char *, struct xerr *);
 static void           bootstrap_setup_usage();
 static int            agent_error(struct umdr *, struct xerr *);
-
+static int            load_crls(struct xerr *);
+static int            agent_init_ctx(struct xerr *);
+static int            agent_poll_crls_gen(int, struct xerr *);
 
 static void
 purge_authops()
@@ -426,6 +430,20 @@ agent_run(int lsock, struct xerr *e)
 				break;
 			case MDR_DCV_CERTES_CERT_RENEW_DIALBACK:
 				if (agent_cert_renew_dialback(&um, xerrz(e))
+				    == MDR_FAIL)
+					xlog(LOG_ERR, e, "%s", __func__);
+				break;
+			case MDR_DCV_CERTES_RELOAD_CRLS:
+				xlog(LOG_INFO, NULL,
+				    "%s: received CRLs reload request",
+				    __func__);
+				if (agent_reload_crls(xerrz(e)) == MDR_FAIL)
+					xlog(LOG_ERR, e, "%s", __func__);
+				else
+					crls_gen++;
+				break;
+			case MDR_DCV_CERTES_POLL_CRLS_GEN:
+				if (agent_poll_crls_gen(c->fd, xerrz(e))
 				    == MDR_FAIL)
 					xlog(LOG_ERR, e, "%s", __func__);
 				break;
@@ -855,6 +873,27 @@ fail:
 	return -1;
 }
 
+static int
+agent_poll_crls_gen(int cfd, struct xerr *e)
+{
+	struct pmdr     pm;
+	struct pmdr_vec pv[1];
+	char            pbuf[mdr_spec_base_sz(msg_crls_gen, 0)];
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_U64;
+	pv[0].v.u64 = crls_gen;
+	if (pmdr_pack(&pm, msg_crls_gen, pv, PMDRVECLEN(pv)) == MDR_FAIL) {
+		xlog_strerror(LOG_ERR, errno, __func__);
+		abort();
+	}
+
+	if (writeall(cfd, pmdr_buf(&pm), pmdr_size(&pm)) == -1)
+		return XERRF(e, XLOG_ERRNO, errno, "writeall");
+
+	return 0;
+}
+
 /*
  * Process a dialback from the authority
  */
@@ -1112,6 +1151,38 @@ fail:
 	return -1;
 }
 
+/*
+ * Reload CRLs after reinitiating our store/ctx
+ */
+int
+agent_reload_crls(struct xerr *e)
+{
+	if (cert != NULL) {
+		X509_free(cert);
+		cert = NULL;
+	}
+	if (ssl_ctx != NULL) {
+		SSL_CTX_free(ssl_ctx);
+		ssl_ctx = NULL;
+	}
+
+	if (agent_init_ctx(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
+
+	if (is_authority) {
+		if (!certdb_initialized())
+			return XERRF(e, XLOG_APP, XLOG_FAIL,
+			    "certdb not initialized");
+		if (cert_gen_crl(xerrz(e)) == -1)
+			return XERR_PREPENDFN(e);
+	}
+
+	if (load_crls(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
+
+	return 0;
+}
+
 static void
 bootstrap_setup_usage()
 {
@@ -1129,7 +1200,7 @@ bootstrap_setup_usage()
 }
 
 void
-agent_bootstrap_setup_cli(int argc, char **argv)
+agent_cli_bootstrap_setup(int argc, char **argv)
 {
 	int               opt, r;
 	uint32_t          timeout = 600;
@@ -1276,6 +1347,97 @@ agent_bootstrap_setup_cli(int argc, char **argv)
 	free(roles);
 }
 
+static void
+revoke_usage()
+{
+	printf("Usage: %s revoke -serial <serial>\n",
+	    CERTES_PROGNAME);
+	printf("\t-help        Prints this help\n");
+	printf("\t-serial      Serial of the certificate to revoke\n");
+}
+
+void
+agent_cli_revoke(int argc, char **argv)
+{
+	int               opt, r;
+	char             *serial = NULL;
+	struct pmdr       pm;
+	struct pmdr_vec   pv[1];
+	char              pbuf[1024];
+	struct umdr       um;
+	struct umdr_vec   uv[2];
+	char              ubuf[1024];
+	struct xerr       e;
+	struct authop    *op;
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			revoke_usage();
+			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-serial") == 0) {
+			opt++;
+			if (opt > argc) {
+				revoke_usage();
+				exit(1);
+			}
+			serial = argv[opt];
+			continue;
+		}
+	}
+
+	if (agent_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((op = authop_new(AUTHOP_CERT_REVOKE, xerrz(&e))) == NULL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = serial;
+	if (pmdr_pack(&pm, msg_revoke, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		err(1, "pmdr_pack");
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(&e))) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_MDR_OK:
+		break;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "revoke failed: %s (%u)", uv[1].v.s.bytes, uv[0].v.u32);
+	case MDR_DCV_CERTES_ERROR:
+		if (umdr_unpack(&um, msg_error, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "revoke failed: %s (%u)", uv[2].v.s.bytes, uv[1].v.u32);
+	default:
+		errx(1, "bad response from authority");
+	}
+}
+
 static int
 agent_load_key(struct xerr *e)
 {
@@ -1348,10 +1510,6 @@ agent_init_ctx(struct xerr *e)
 {
 	FILE          *f = NULL;
 	X509          *root_crt;
-	DIR           *d;
-	struct dirent *de;
-	size_t         de_len;
-	char           crl_path[PATH_MAX];
 
 	if ((store = X509_STORE_new()) == NULL)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_new");
@@ -1413,38 +1571,6 @@ agent_init_ctx(struct xerr *e)
 		}
 	}
 
-	if (*certes_conf.crl_path != '\0') {
-		if ((d = opendir(certes_conf.crl_path)) == NULL) {
-			XERRF(e, XLOG_ERRNO, errno, "opendir");
-			goto fail;
-		}
-		for (;;) {
-			errno = 0;
-			de = readdir(d);
-			if (de == NULL) {
-				if (errno == 0)
-					break;
-				XERRF(e, XLOG_ERRNO, errno, "readdir");
-				closedir(d);
-				goto fail;
-			}
-			if (de->d_type != DT_REG)
-				continue;
-			de_len = strlen(de->d_name);
-			if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
-				continue;
-
-			snprintf(crl_path, sizeof(crl_path), "%s/%s",
-			    certes_conf.crl_path, de->d_name);
-			if (load_crl(crl_path, xerrz(e)) == -1) {
-				XERR_PREPENDFN(e);
-				closedir(d);
-				goto fail;
-			}
-		}
-		closedir(d);
-	}
-
 	if ((ssl_ctx = SSL_CTX_new(TLS_client_method())) == NULL) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_CTX_new");
 		goto fail;
@@ -1486,9 +1612,51 @@ fail:
 	return -1;
 }
 
+static int
+load_crls(struct xerr *e)
+{
+	DIR           *d;
+	struct dirent *de;
+	size_t         de_len;
+	char           crl_path[PATH_MAX];
+
+	if (*certes_conf.crl_path != '\0') {
+		if ((d = opendir(certes_conf.crl_path)) == NULL)
+			return XERRF(e, XLOG_ERRNO, errno, "opendir");
+
+		for (;;) {
+			errno = 0;
+			de = readdir(d);
+			if (de == NULL) {
+				if (errno == 0)
+					break;
+				XERRF(e, XLOG_ERRNO, errno, "readdir");
+				closedir(d);
+				return -1;
+			}
+			if (de->d_type != DT_REG)
+				continue;
+			de_len = strlen(de->d_name);
+			if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
+				continue;
+
+			snprintf(crl_path, sizeof(crl_path), "%s/%s",
+			    certes_conf.crl_path, de->d_name);
+			if (load_crl(crl_path, xerrz(e)) == -1) {
+				XERR_PREPENDFN(e);
+				closedir(d);
+				return -1;
+			}
+		}
+		closedir(d);
+	}
+	return 0;
+}
+
 int
 agent_init(struct xerr *e)
 {
+
 	if (cert_init(xerrz(e)) == -1)
 		return XERR_PREPENDFN(e);
 
@@ -1496,6 +1664,19 @@ agent_init(struct xerr *e)
 	next_certdb_backup.tv_sec +=
 	    certes_conf.certdb_backup_interval_seconds;
 
+	/*
+	 * In order we must:
+	 *   1) Load our private key, which is needed to sign a CRL if we
+	 *      are an authority
+	 *   2.a) Create the store and load the root cert and our own cert,
+	 *        which is needed to determine if we are an authority
+	 *   2.b) Create our SSL_CTX and transfer ownership of the store to
+	 *        it for proper cleanup (not double-freeing the store)
+	 *   3) Initialize the certdb if we are an authority
+	 *   4) Generate the CRL with the help of the certdb, which also
+	 *      needs the private key to sign the CRL
+	 *   5) Load any CRLs
+	 */
 	if (agent_load_key(e) == -1)
 		return XERR_PREPENDFN(e);
 
@@ -1513,6 +1694,9 @@ agent_init(struct xerr *e)
 		if (cert_gen_crl(xerrz(e)) == -1)
 			return XERR_PREPENDFN(e);
 	}
+
+	if (load_crls(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
 
 	return 0;
 }
@@ -1532,11 +1716,8 @@ agent_send(const void *buf, size_t sz, struct xerr *e)
 		if (agent_connect(xerrz(e)) == -1)
 			return XERR_PREPENDFN(e);
 
-	if ((r = write(agent_fd, buf, sz)) == -1)
+	if ((r = writeall(agent_fd, buf, sz)) == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "write on fd %d", agent_fd);
-	else if (r < sz)
-		return XERRF(e, XLOG_APP, XLOG_SHORTIO,
-		    "write on fd %d", agent_fd);
 
 	return 0;
 }

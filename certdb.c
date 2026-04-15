@@ -66,14 +66,6 @@ struct {
 struct {
 	sqlite3_stmt *stmt;
 	char         *sql;
-} qry_commit_txn = {
-	NULL,
-	"commit"
-};
-
-struct {
-	sqlite3_stmt *stmt;
-	char         *sql;
 } qry_rollback_txn = {
 	NULL,
 	"rollback"
@@ -170,13 +162,15 @@ struct {
 };
 
 struct {
-        sqlite3_stmt *stmt;
-        char         *sql;
-        int           i_serial;
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_serial;
+	int           i_flags;
 } qry_revoke_cert = {
-        NULL,
-        "update certs set flags = (flags | 1) where serial = ?1",
-        1
+	NULL,
+	"update certs set flags = (flags | ?2), revoked_at_sec = unixepoch() "
+	    "where serial = ?1",
+	1, 2
 };
 
 struct {
@@ -657,10 +651,16 @@ certdb_revoke_cert(const char *serial, struct xerr *e)
 	int         r;
 	struct xerr e2;
 
-	if ((r = sqlite3_bind_blob(qry_revoke_cert.stmt,
-	    qry_revoke_cert.i_serial, serial, sizeof(strlen(serial)),
-	    SQLITE_STATIC))) {
+	if ((r = sqlite3_bind_text(qry_revoke_cert.stmt,
+	    qry_revoke_cert.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	if ((r = sqlite3_bind_int(qry_revoke_cert.stmt,
+	    qry_revoke_cert.i_flags, CERTDB_FLAG_REVOKED))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_int: %s",
 		    sqlite3_errmsg(db));
 		goto fail;
 	}
@@ -1018,12 +1018,6 @@ certdb_init(const char *path, struct xerr *e)
 		    "qry_begin_txn: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
-	if ((r = sqlite3_prepare_v2(db, qry_commit_txn.sql, -1,
-	    &qry_commit_txn.stmt, NULL))) {
-		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
-		    "qry_commit_txn: %s", sqlite3_errmsg(db));
-		goto fail;
-	}
 	if ((r = sqlite3_prepare_v2(db, qry_rollback_txn.sql, -1,
 	    &qry_rollback_txn.stmt, NULL))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
@@ -1087,10 +1081,6 @@ certdb_shutdown()
 	if (sqlite3_finalize(qry_begin_txn.stmt))
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_begin_txn: %s",
-		    __func__, sqlite3_errmsg(db));
-	if (sqlite3_finalize(qry_commit_txn.stmt))
-		xlog(LOG_WARNING, NULL,
-		    "%s: sqlite3_finalize: qry_commit_txn: %s",
 		    __func__, sqlite3_errmsg(db));
 	if (sqlite3_finalize(qry_rollback_txn.stmt))
 		xlog(LOG_WARNING, NULL,

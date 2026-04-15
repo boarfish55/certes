@@ -25,8 +25,9 @@
 #include "certdb.h"
 #include "mdr_certes.h"
 
-int  debug = 0;
-char config_file_path[PATH_MAX] = "/etc/certes.conf";
+static int      debug = 0;
+static char     config_file_path[PATH_MAX] = "/etc/certes.conf";
+static uint64_t crls_gen = 1;
 
 struct certes_flatconf certes_conf = {
 	0,
@@ -233,6 +234,7 @@ usage()
 	printf("\tinit-db          Create the cert DB then exit\n");
 	printf("\tbootstrap-setup  Create a bootstrap entry on the "
 	    "authority\n");
+	printf("\trevoke           Revoke a certificate\n");
 }
 
 static void
@@ -285,6 +287,62 @@ certes_client_name(struct mdrd_besession *s, char *dst, size_t sz,
 	return buf;
 }
 
+static void
+task_reload_crls()
+{
+	struct xerr     e;
+	int             r;
+	struct pmdr     pm;
+	char            pbuf[mdr_spec_base_sz(msg_poll_crls_gen, 0)];
+	struct umdr     um;
+	struct umdr_vec uv[1];
+	char            ubuf[mdr_spec_base_sz(msg_crls_gen, 0)];
+
+	// TODO: don't poll every single time, have a delay in-between
+	// each poll.
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	if (pmdr_pack(&pm, msg_poll_crls_gen, NULL, 0) == MDR_FAIL)
+		abort();
+
+	if (agent_send(pmdr_buf(&pm), pmdr_size(&pm), &e) == -1) {
+		xlog(LOG_ERR, &e, "%s: agent_send", __func__);
+		return;
+	}
+	if ((r = agent_recv(ubuf, sizeof(ubuf), &e)) == -1) {
+		xlog(LOG_ERR, &e, "%s: agent_recv", __func__);
+		return;
+	}
+
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		xlog_strerror(LOG_ERR, errno, "%s: umdr_init", __func__);
+		return;
+	}
+
+	if (umdr_dcv(&um) != MDR_DCV_CERTES_CRLS_GEN) {
+		xlog(LOG_ERR, NULL, "%s: unexpected response from agent (%llu)",
+		    __func__, umdr_dcv(&um));
+		return;
+	}
+
+	if (umdr_unpack(&um, msg_crls_gen, uv, UMDRVECLEN(uv)) == MDR_FAIL) {
+		xlog_strerror(LOG_ERR, errno,
+		    "%s: umdr_unpack/msg_crls_gen", __func__);
+		return;
+	}
+
+	if (uv[0].v.u64 <= crls_gen)
+		return;
+
+	xlog(LOG_NOTICE, NULL, "reloading CRLs");
+	if (agent_reload_crls(xerrz(&e)) == -1) {
+		xlog(LOG_ERR, &e, __func__);
+		return;
+	}
+
+	crls_gen = uv[0].v.u64;
+}
+
 int
 mdrd_backend()
 {
@@ -331,6 +389,10 @@ mdrd_backend()
 	    &sess)) > 0) {
 		if ((r = mdrd_purge_sessions(300)) > 0)
 			xlog(LOG_NOTICE, NULL, "purged %d idle sessions", r);
+
+		// TODO: once mdr supports it, this should be part of
+		// scheduled tasks
+		task_reload_crls();
 
 		/*
 		 * Verify the client's cert
@@ -381,6 +443,10 @@ mdrd_backend()
 		case MDR_DCV_CERTES_BOOTSTRAP_SETUP:
 			if (authority_bootstrap_setup(sess, &msg, &e)
 			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
+		case MDR_DCV_CERTES_REVOKE:
+			if (authority_revoke(sess, &msg, &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTES_BOOTSTRAP_ANSWER:
@@ -512,7 +578,9 @@ main(int argc, char **argv)
 	if (strcmp(command, "mdrd-backend") == 0) {
 		status = mdrd_backend();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
-		agent_bootstrap_setup_cli(argc - opt, argv + opt);
+		agent_cli_bootstrap_setup(argc - opt, argv + opt);
+	} else if (strcmp(command, "revoke") == 0) {
+		agent_cli_revoke(argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
 		/*
 		 * Do a standalone run to get our initial key/cert,

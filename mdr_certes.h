@@ -75,6 +75,30 @@ extern const struct mdr_spec *msg_cert_renew_dialback;
     MDR_DCV(0x00000002, 0x000B, 0x0000)
 extern const struct mdr_spec *msg_cert_renew_answer;
 
+/*
+ * Revoke a certificate
+ */
+#define MDR_DCV_CERTES_REVOKE \
+    MDR_DCV(0x00000002, 0x000C, 0x0000)
+extern const struct mdr_spec *msg_revoke;
+
+/*
+ * Tell the agent to reload all CRLs
+ */
+#define MDR_DCV_CERTES_RELOAD_CRLS \
+    MDR_DCV(0x00000002, 0x000D, 0x0000)
+extern const struct mdr_spec *msg_reload_crls;
+
+/*
+ * Poll and respond about our CRLs generation
+ */
+#define MDR_DCV_CERTES_POLL_CRLS_GEN \
+    MDR_DCV(0x00000002, 0x000E, 0x0000)
+extern const struct mdr_spec *msg_poll_crls_gen;
+#define MDR_DCV_CERTES_CRLS_GEN \
+    MDR_DCV(0x00000002, 0x000F, 0x0000)
+extern const struct mdr_spec *msg_crls_gen;
+
 /* Built-ins */
 extern const struct mdr_spec *msg_pack_beout;
 

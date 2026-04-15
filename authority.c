@@ -156,6 +156,59 @@ fail:
 	return -1;
 }
 
+int
+authority_revoke(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
+{
+	struct umdr_vec uv[1];
+	struct pmdr     pm;
+	char            pbuf[mdr_spec_base_sz(msg_reload_crls, 0)];
+
+	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
+	    certes_client_name(sess, NULL, 0, xerrz(e)));
+
+	if (!agent_is_authority()) {
+		mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_NOTSUPP,
+		    "we are not an authority");
+		return XERRF(e, XLOG_APP, XLOG_NOTSUP,
+		    "we are not an authority");
+	}
+
+	if (!cert_has_role(sess->cert, ROLE_CERTADMIN, xerrz(e))) {
+		mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+		    MDR_ERR_DENIED, ROLE_CERTADMIN " role required");
+		return XERRF(e, XLOG_APP, XLOG_DENIED,
+		    ROLE_CERTADMIN " role required");
+	}
+
+	if (umdr_unpack(m, msg_revoke, uv, UMDRVECLEN(uv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
+		goto fail;
+	}
+
+	if (certdb_revoke_cert(uv[0].v.s.bytes, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	if (pmdr_pack(&pm, msg_reload_crls, NULL, 0) == MDR_FAIL)
+		abort();
+
+	if (agent_send(pmdr_buf(&pm), pmdr_size(&pm), xerrz(e)) == -1)
+		xlog(LOG_ERR, e, "%s", __func__);
+
+	if (mdrd_beout_ok(sess, MDRD_BEOUT_FNONE) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout_ok");
+		return -1;
+	}
+
+	return 0;
+fail:
+	mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+	    "backend failure");
+	return -1;
+}
+
 /*
  * We establish a connection to the commonName in the bootstrap
  * entry to send a challenge. The agent currently connected to us

@@ -13,6 +13,7 @@
 
 int  authority_bootstrap_setup(struct mdrd_besession *, struct umdr *,
          struct xerr *);
+int  authority_revoke(struct mdrd_besession *, struct umdr *, struct xerr *);
 int  authority_bootstrap_dialin(struct mdrd_besession *, struct umdr *,
          struct xerr *);
 int  authority_bootstrap_answer(struct mdrd_besession *, struct umdr *,

@@ -35,11 +35,13 @@
 #define CERTES_SHM "/certes"
 
 /* Built-in roles */
-#define ROLE_AUTHORITY "authority"
-#define ROLE_CAPROXY   "caproxy"
-#define ROLE_BOOTSTRAP "bootstrap"
-#define ROLE_ADMIN     "admin"
-#define ROLE_AGENT     "agent"
+#define ROLE_AUTHORITY "authority"  /* Can issue certs */
+#define ROLE_CAPROXY   "caproxy"    /* Can be trusted to be a frontend for
+				       an authority */
+#define ROLE_BOOTSTRAP "bootstrap"  /* Can create bootstrap entries */
+#define ROLE_CERTADMIN "certadmin"  /* Can lookup and revoke certs */
+#define ROLE_AGENT     "agent"      /* Agent that handles automatic cert
+				       renewals */
 
 struct certes_flatconf {
 	int      enable_coredumps;

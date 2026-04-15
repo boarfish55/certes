@@ -67,6 +67,7 @@ certesRoles             = ASN1:SEQUENCE:intermediate_ca_roles
 certesRoles.0           = IA5:agent
 certesRoles.1           = IA5:authority
 certesRoles.2           = IA5:bootstrap
+certesRoles.3           = IA5:certadmin
 
 [intermediate_proxy_crt_ext]
 basicConstraints        = critical,CA:false
