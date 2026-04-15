@@ -1365,7 +1365,7 @@ agent_cli_revoke(int argc, char **argv)
 	struct pmdr_vec   pv[1];
 	char              pbuf[1024];
 	struct umdr       um;
-	struct umdr_vec   uv[2];
+	struct umdr_vec   uv[3];
 	char              ubuf[1024];
 	struct xerr       e;
 	struct authop    *op;
