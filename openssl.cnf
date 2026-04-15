@@ -5,6 +5,9 @@ oid_section             = certes_oids
 [certes_oids]
 certesRoles             = 1.3.6.1.4.1.35910.3.1
 
+[ca]
+default_ca              = root_ca
+
 [root_ca]
 certificate             = $dir/ca/root.pem
 database                = $dir/ca/index.txt

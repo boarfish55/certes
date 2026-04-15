@@ -117,12 +117,12 @@ setup_root()
 	# should be kept on a secure machine or even offline storage. The
 	# certificate and CRL will need to be deployed on all agents in the
 	# fleet.
-	openssl req -x509 -nodes -config $CERTES_SSL_CONFIG -section root_ca \
+	openssl req -x509 -nodes -config $CERTES_SSL_CONFIG -reqexts root_ext \
 		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 		-keyout $CERTES_DIR/ca/key.pem \
-		-out $CERTES_DIR/ca/root.pem -outform PEM -days $expiry \
+		-out $CERTES_DIR/ca/root.pem -outform pem -days $expiry \
 		-subj "/emailAddress=certes@$CERTES_DOMAIN/O=$CERTES_ORG/CN=$CERTES_ORG CA"
-	openssl ca -config $CERTES_SSL_CONFIG -section root_ca \
+	openssl ca -config $CERTES_SSL_CONFIG \
 		-gencrl -out $CERTES_DIR/ca/root.crl
 	openssl x509 -in $CERTES_DIR/ca/root.pem -text -noout
 }
@@ -152,7 +152,7 @@ ca_reqs()
 	local certes_gid=$(egrep -o '^backend_gid *= *[a-zA-Z0-9\._-]+ *' \
 		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' ')
 
-	openssl req -config $CERTES_SSL_CONFIG -noenc \
+	openssl req -config $CERTES_SSL_CONFIG -nodes \
 		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 		-keyout $CERTES_DIR/ca_key.pem -keyform PEM \
 		-out $CERTES_DIR/ca_req.pem -outform PEM \
@@ -160,7 +160,7 @@ ca_reqs()
 	[ ! -z "$certes_uid" ] && chown "$certes_uid" $CERTES_DIR/ca_key.pem
 	[ ! -z "$certes_gid" ] && chown "$certes_gid" $CERTES_DIR/ca_key.pem
 
-	openssl req -config $CERTES_SSL_CONFIG -noenc \
+	openssl req -config $CERTES_SSL_CONFIG -nodes \
 		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 		-keyout $CERTES_DIR/proxy_key.pem -keyform PEM \
 		-out $CERTES_DIR/proxy_req.pem -outform PEM \
