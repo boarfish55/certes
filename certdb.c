@@ -247,40 +247,6 @@ fail:
 }
 
 static int
-certdb_commit_txn(struct xerr *e)
-{
-	int         r;
-	struct xerr e2;
-	time_t      delta_ns;
-
-	switch ((r = sqlite3_step(qry_commit_txn.stmt))) {
-	case SQLITE_DONE:
-		/* Nothing */
-		break;
-	case SQLITE_BUSY:
-		XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
-		goto fail;
-	case SQLITE_MISUSE:
-	case SQLITE_ERROR:
-	default:
-		XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
-		    sqlite3_errmsg(db), r);
-		goto fail;
-	}
-
-	delta_ns = txn_duration();
-	xlog(LOG_DEBUG, NULL, "%s: transaction held the lock for %ld.%09ld "
-	    "seconds", __func__, delta_ns / 1000000000, delta_ns % 1000000000);
-
-	return certdb_qry_cleanup(qry_commit_txn.stmt, e);
-fail:
-	// TODO: rollback?
-	if (certdb_qry_cleanup(qry_commit_txn.stmt, xerrz(&e2)) == -1)
-		xlog(LOG_ERR, &e2, "%s", __func__);
-	return -1;
-}
-
-static int
 certdb_rollback_txn(struct xerr *e)
 {
 	int         r;
