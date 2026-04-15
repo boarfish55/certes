@@ -510,14 +510,7 @@ main(int argc, char **argv)
 	load_mdr_defs();
 
 	if (strcmp(command, "mdrd-backend") == 0) {
-		// TODO: move this in agent_start() maybe?
-		if (*certes_conf.certdb_path != '\0' &&
-		    certdb_init(certes_conf.certdb_path, xerrz(&e)) == -1) {
-			xlog(LOG_ERR, &e, __func__);
-			exit(1);
-		}
 		status = mdrd_backend();
-		certdb_shutdown();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
 		agent_bootstrap_setup_cli(argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
@@ -525,11 +518,6 @@ main(int argc, char **argv)
 		 * Do a standalone run to get our initial key/cert,
 		 * without mdrd.
 		 */
-		if (*certes_conf.certdb_path != '\0' &&
-		    certdb_init(certes_conf.certdb_path, xerrz(&e)) == -1) {
-			xlog(LOG_ERR, &e, __func__);
-			exit(1);
-		}
 		if (cert_new_privkey(xerrz(&e))) {
 			xlog(LOG_ERR, &e, __func__);
 			exit(1);
@@ -537,7 +525,6 @@ main(int argc, char **argv)
 		if (mkdir(certes_conf.crl_path, 0755) == -1)
 			if (errno != EEXIST)
 				err(1, "mkdir: %s", certes_conf.crl_path);
-		certdb_shutdown();
 	} else if (strcmp(command, "init-db") == 0) {
 		if (*certes_conf.certdb_path == '\0')
 			errx(1, "certdb_path is unset");

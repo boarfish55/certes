@@ -232,6 +232,8 @@ agent_tasks()
 		}
 
 		// TODO: need to sync CRLs from other authorities
+		// When we have CRL updates, need to recreate our ctx with
+		// agent_init_ctx
 
 		return;
 	}
@@ -253,7 +255,8 @@ agent_tasks()
 	}
 
 	// TODO: need to refresh CRLs from our authority
-	// Meaning we also need to recreate the store; see agent_load_keys.
+	// When we have CRL updates, need to recreate our ctx with
+	// agent_init_ctx
 }
 
 static int
@@ -1273,15 +1276,10 @@ agent_bootstrap_setup_cli(int argc, char **argv)
 	free(roles);
 }
 
-int
-agent_load_keys(struct xerr *e)
+static int
+agent_load_key(struct xerr *e)
 {
 	FILE          *f;
-	DIR           *d;
-	struct dirent *de;
-	int            de_len;
-	char           crl_path[PATH_MAX + NAME_MAX + 1];
-	X509          *root_crt;
 #ifndef __OpenBSD__
 	int            pkey_sz;
 #endif
@@ -1295,14 +1293,69 @@ agent_load_keys(struct xerr *e)
 	fclose(f);
 #ifndef __OpenBSD__
 	if (!(pkey_sz = EVP_PKEY_size(key))) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_size");
-		goto fail;
+		EVP_PKEY_free(key);
+		key = NULL;
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_size");
 	}
 
 	/* pledge() doesn't allow mlock() */
-	if (mlock(key, pkey_sz) == -1)
+	if (mlock(key, pkey_sz) == -1) {
+		EVP_PKEY_free(key);
+		key = NULL;
 		return XERRF(e, XLOG_ERRNO, errno, "mlock");
+	}
 #endif
+	return 0;
+}
+
+void
+agent_cleanup()
+{
+	if (cert != NULL) {
+		X509_free(cert);
+		cert = NULL;
+	}
+	if (key != NULL) {
+		EVP_PKEY_free(key);
+		key = NULL;
+	}
+	if (ssl_ctx != NULL) {
+		SSL_CTX_free(ssl_ctx);
+		ssl_ctx = NULL;
+	}
+}
+
+X509 *
+agent_cert()
+{
+	return cert;
+}
+
+EVP_PKEY *
+agent_key()
+{
+	return key;
+}
+
+X509_STORE *
+agent_cert_store()
+{
+	return store;
+}
+
+static int
+agent_init_ctx(struct xerr *e)
+{
+	FILE          *f = NULL;
+	X509          *root_crt;
+	DIR           *d;
+	struct dirent *de;
+	size_t         de_len;
+	char           crl_path[PATH_MAX];
+
+	if ((store = X509_STORE_new()) == NULL)
+		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_new");
+
 	if (!X509_STORE_set_flags(store, X509_V_FLAG_X509_STRICT|
 	    X509_V_FLAG_CRL_CHECK|X509_V_FLAG_CRL_CHECK_ALL)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
@@ -1311,17 +1364,19 @@ agent_load_keys(struct xerr *e)
 	}
 
 	if ((f = fopen(certes_conf.root_cert_file, "r")) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "fopen");
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+		    certes_conf.root_cert_file);
 		goto fail;
 	}
-
 	if ((root_crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
-		fclose(f);
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509");
 		goto fail;
 	}
 	fclose(f);
+	f = NULL;
+
 	if (!X509_STORE_add_cert(store, root_crt)) {
+		X509_free(root_crt);
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_add_cert");
 		goto fail;
 	}
@@ -1333,11 +1388,11 @@ agent_load_keys(struct xerr *e)
 		goto fail;
 	}
 	if ((cert = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
-		fclose(f);
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509");
 		goto fail;
 	}
 	fclose(f);
+	f = NULL;
 
 	is_authority = cert_has_role(cert, ROLE_AUTHORITY, xerrz(e));
 	if (is_authority == -1) {
@@ -1350,10 +1405,6 @@ agent_load_keys(struct xerr *e)
 	 * other authorities, so they can validate the clients they signed.
 	 */
 	if (is_authority) {
-		if (certdb_initialized() && cert_gen_crl(xerrz(e)) == -1) {
-			XERR_PREPENDFN(e);
-			goto fail;
-		}
 		// TODO: need to add other authorities too...
 		if (!X509_STORE_add_cert(store, cert)) {
 			XERRF(e, XLOG_SSL, ERR_get_error(),
@@ -1395,7 +1446,7 @@ agent_load_keys(struct xerr *e)
 	}
 
 	if ((ssl_ctx = SSL_CTX_new(TLS_client_method())) == NULL) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_CTX_new");
 		goto fail;
 	}
 
@@ -1403,61 +1454,36 @@ agent_load_keys(struct xerr *e)
 	SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, NULL);
 	SSL_CTX_set_cert_store(ssl_ctx, store);
 
+	/* Ownership of store now passed to ssl_ctx. */
+
 	if (SSL_CTX_use_PrivateKey(ssl_ctx, key) != 1) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_CTX_use_PrivateKey");
-		goto fail;
+		X509_free(cert);
+		cert = NULL;
+		SSL_CTX_free(ssl_ctx);
+		ssl_ctx = NULL;
+		return XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "SSL_CTX_use_PrivateKey");
 	}
 
 	if (SSL_CTX_use_certificate_chain_file(ssl_ctx,
 	    certes_conf.cert_file) != 1) {
-		XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "SSL_CTX_use_certificate_chain_file");
-		goto fail;
-	}
-
-	/*
-	 * We're not calling X509_LOOKUP_free() as this causes a segfault
-	 * if we try reusing X509_LOOKUP_file().
-	 */
-	return 0;
-fail:
-	agent_cleanup();
-	return -1;
-}
-
-void
-agent_cleanup()
-{
-	if (cert != NULL) {
 		X509_free(cert);
 		cert = NULL;
-	}
-	if (key != NULL) {
-		EVP_PKEY_free(key);
-		key = NULL;
-	}
-	if (ssl_ctx != NULL) {
 		SSL_CTX_free(ssl_ctx);
 		ssl_ctx = NULL;
+		return XERRF(e, XLOG_SSL, ERR_get_error(),
+		    "SSL_CTX_use_certificate_chain_file");
 	}
-}
 
-X509 *
-agent_cert()
-{
-	return cert;
-}
-
-EVP_PKEY *
-agent_key()
-{
-	return key;
-}
-
-X509_STORE *
-agent_cert_store()
-{
-	return store;
+	return 0;
+fail:
+	if (f != NULL)
+		fclose(f);
+	if (cert != NULL)
+		X509_free(cert);
+	if (store != NULL)
+		X509_STORE_free(store);
+	return -1;
 }
 
 int
@@ -1470,10 +1496,24 @@ agent_init(struct xerr *e)
 	next_certdb_backup.tv_sec +=
 	    certes_conf.certdb_backup_interval_seconds;
 
-	if ((store = X509_STORE_new()) == NULL)
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_new");
-	if (agent_load_keys(e) == -1)
+	if (agent_load_key(e) == -1)
 		return XERR_PREPENDFN(e);
+
+	if (agent_init_ctx(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
+
+	if (is_authority) {
+		if (*certes_conf.certdb_path == '\0')
+			return XERRF(e, XLOG_APP, XLOG_FAIL,
+			    "certdb_path is not set and we are an authority");
+
+		if (certdb_init(certes_conf.certdb_path, xerrz(e)) == -1)
+			return XERR_PREPENDFN(e);
+
+		if (cert_gen_crl(xerrz(e)) == -1)
+			return XERR_PREPENDFN(e);
+	}
+
 	return 0;
 }
 
