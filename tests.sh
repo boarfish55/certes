@@ -4,6 +4,7 @@ set -e
 
 export PATH=$PATH:.
 
+mkdir -p testdata
 valgrind=no
 basedir=`realpath testdata`
 rm -rf "$basedir"
