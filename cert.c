@@ -607,7 +607,7 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 	BIGNUM         *serial;
 	X509_EXTENSION *ex;
 	X509V3_CTX      ctx;
-	char           *sans;
+	char           *sans = NULL;
 
 	X509V3_set_ctx(&ctx, issuer, crt, NULL, NULL, 0);
 
