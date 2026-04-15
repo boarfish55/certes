@@ -155,12 +155,13 @@ done
 echo "* Authority running with pid `cat $basedir/authority1/mdrd.pid`"
 
 #
-# Agent setup; make the cert expiry short to force a refresh, for testing
+# Agent setup; make the cert expiry short to force a refresh as well
+# as a purge from certs table, for testing
 #
 
 ./certes -config $basedir/authority1/certes.conf \
 	bootstrap-setup -role agent -san DNS:certes.example.com \
-	-cert_expiry 86400
+	-cert_expiry 300
 echo "* Bootstrap setup done"
 
 bootstrap_key=$(sqlite3 $basedir/authority1/certdb.sqlite \
