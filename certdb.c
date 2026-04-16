@@ -651,6 +651,8 @@ certdb_revoke_cert(const char *serial, struct xerr *e)
 	int         r;
 	struct xerr e2;
 
+	// TODO: start a transaction to see if the cert serial exists,
+	// so we can return an error if not
 	if ((r = sqlite3_bind_text(qry_revoke_cert.stmt,
 	    qry_revoke_cert.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",

@@ -32,13 +32,13 @@ trap cleanup TERM INT EXIT
 #
 # Authority setup
 #
-mkdir -p $basedir/authority1
+mkdir -p $basedir/authority1/certdb
 cat << EOF > $basedir/authority1/certes.conf
 enable_coredumps = true
 authority_fqdn = "localhost"
 authority_port = 9791
-certdb_path = "$basedir/authority1/certdb.sqlite"
-certdb_backup_path = "$basedir/authority1/certdb.sqlite.bk"
+certdb_path = "$basedir/authority1/certdb/certdb.sqlite"
+certdb_backup_path = "$basedir/authority1/certdb/certdb.sqlite.bk"
 certdb_backup_interval_seconds = 60
 root_cert_file = "$basedir/authority1/root.pem"
 crl_path = "$basedir/authority1/crls"
@@ -59,6 +59,7 @@ gid = $uid
 enable_coredumps = true
 ca_file = "$basedir/authority1/root.pem"
 crl_path = "$basedir/authority1/crls"
+crl_file = "$basedir/authority1/crls/root.crl"
 cert_file = "$basedir/authority1/proxy_cert.pem"
 key_file = "$basedir/authority1/proxy_key.pem"
 require_client_cert = false
@@ -115,17 +116,19 @@ fi
 cat << EOF >> $basedir/authority1/mdrd.conf
 backend_uid = $uid
 backend_gid = $uid
-backend_promises = "stdio rpath"
+backend_promises = "stdio rpath wpath cpath inet flock unix dns proc error"
 backend_unveils = [
 	"x=$(realpath certes)"
+	"r=$basedir/authority1/certes.conf"
 	"r=$basedir/authority1/root.pem"
-	"r=$basedir/authority1/key.pem"
-	"rw=$basedir/authority1/cert.pem"
-	"rw=$basedir/authority1/agent.lock"
-	"rw=$basedir/authority1/agent.sock"
-	"rw=$basedir/authority1/serial"
-	"rw=$basedir/authority1/certdb.sqlite"
-	"rw=$basedir/authority1/crls"
+	"r=$basedir/authority1/ca_key.pem"
+	"rw=$basedir/authority1/ca_cert.pem"
+	"rwc=$basedir/authority1/agent.lock"
+	"rwc=$basedir/authority1/agent.sock"
+	"rwc=$basedir/authority1/serial"
+	"rwc=$basedir/authority1/serial.new"
+	"rwc=$basedir/authority1/certdb"
+	"rwc=$basedir/authority1/crls"
 ]
 EOF
 
@@ -147,7 +150,7 @@ serial=`cat $basedir/ca/serial`
 cp $basedir/ca/certs/$serial.pem $basedir/authority1/proxy_cert.pem
 
 ulimit -c unlimited
-mdrd -c $basedir/authority1/mdrd.conf
+ktrace -i ../mdr/mdrd -c $basedir/authority1/mdrd.conf
 
 for i in 1 2 3 4 5; do
 	nc -vz localhost 9791 >/dev/null 2>&1 && break
@@ -165,7 +168,7 @@ echo "* Authority running with pid `cat $basedir/authority1/mdrd.pid`"
 	-cert_expiry 300
 echo "* Bootstrap setup done"
 
-bootstrap_key=$(sqlite3 $basedir/authority1/certdb.sqlite \
+bootstrap_key=$(sqlite3 $basedir/authority1/certdb/certdb.sqlite \
 	"select base64(bootstrap_key) from bootstrap where
 	subject = '';")
 [ -z "$bootstrap_key" ] && fail "bootstrap key not found"
@@ -232,17 +235,20 @@ backend_argv = [
 ]
 backend_uid = $uid
 backend_gid = $uid
+backend_promises = "stdio rpath wpath cpath inet flock unix dns proc error"
 backend_unveils = [
 	"x=$(realpath certes)"
 	"r=$basedir/client3"
-	"rw=$basedir/client3/counters.sock"
-	"rw=$basedir/client3/mdrd.pid"
-	"rw=$basedir/client3/agent.lock"
-	"rw=$basedir/client3/agent.sock"
+	"rwc=$basedir/client3/cert.pem"
+	"rwc=$basedir/client3/cert.pem.new"
+	"rwc=$basedir/client3/agent.lock"
+	"rwc=$basedir/client3/agent.sock"
+	"rwc=$basedir/client3/crls"
 ]
 EOF
 
-mdrd -c $basedir/client3/mdrd.conf
+../mdr/mdrd -c $basedir/client3/mdrd.conf
 echo "* Agent running with pid `cat $basedir/client3/mdrd.pid`"
 
-read -p "Press any key to terminate daemon..." PAUSE
+echo -n "Press any key to terminate daemon..."
+read PAUSE

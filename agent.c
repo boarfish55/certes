@@ -1390,6 +1390,12 @@ agent_cli_revoke(int argc, char **argv)
 		}
 	}
 
+	if (serial == NULL) {
+		warn("no serial provided");
+		revoke_usage();
+		exit(1);
+	}
+
 	if (agent_init(xerrz(&e)) == -1) {
 		xerr_print(&e);
 		exit(1);

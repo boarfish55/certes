@@ -585,7 +585,7 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 	}
 	X509_EXTENSION_free(ex);
 
-	if (!X509_sign(newcrt, agent_key(), NULL)) {
+	if (!X509_sign(newcrt, agent_key(), EVP_sha256())) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
 		goto fail;
 	}
@@ -697,7 +697,7 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 	}
 	X509_EXTENSION_free(ex);
 
-	if (!X509_sign(newcrt, agent_key(), NULL)) {
+	if (!X509_sign(newcrt, agent_key(), EVP_sha256())) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
 		goto fail;
 	}
@@ -727,7 +727,7 @@ cert_self(char *name, size_t name_sz, struct xerr *e)
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 	if ((r = getaddrinfo(p, NULL, &hints, &addrs)) != 0)
-		return XERRF(e, XLOG_EAI, r, "getaddrinfo");
+		return XERRF(e, XLOG_EAI, r, "getaddrinfo: %s", p);
 
 	for (ai = addrs; ai != NULL; ai = ai->ai_next) {
 		if (getnameinfo(ai->ai_addr, ai->ai_addrlen,
@@ -857,7 +857,7 @@ cert_selfsign(EVP_PKEY *pkey, struct xerr *e)
 		goto fail;
 	}
 
-	if (!X509_sign(newcrt, pkey, NULL)) {
+	if (!X509_sign(newcrt, pkey, EVP_sha256())) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
 		goto fail;
 	}
@@ -973,6 +973,7 @@ cert_new_privkey(struct xerr *e)
 		XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_assign_EC_KEY");
 		goto fail;
 	}
+	ec_key = NULL;
 #if 0
 	/*
 	 * Should ED25519 support come to LibreSSL, we can use this.
