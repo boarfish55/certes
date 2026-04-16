@@ -150,7 +150,7 @@ serial=`cat $basedir/ca/serial`
 cp $basedir/ca/certs/$serial.pem $basedir/authority1/proxy_cert.pem
 
 ulimit -c unlimited
-ktrace -i ../mdr/mdrd -c $basedir/authority1/mdrd.conf
+mdrd -c $basedir/authority1/mdrd.conf
 
 for i in 1 2 3 4 5; do
 	nc -vz localhost 9791 >/dev/null 2>&1 && break
@@ -247,7 +247,7 @@ backend_unveils = [
 ]
 EOF
 
-../mdr/mdrd -c $basedir/client3/mdrd.conf
+mdrd -c $basedir/client3/mdrd.conf
 echo "* Agent running with pid `cat $basedir/client3/mdrd.pid`"
 
 echo -n "Press any key to terminate daemon..."
