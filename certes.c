@@ -25,9 +25,10 @@
 #include "certdb.h"
 #include "mdr_certes.h"
 
-static int      debug = 0;
-static char     config_file_path[PATH_MAX] = "/etc/certes.conf";
-static uint64_t crls_gen = 1;
+static int             debug = 0;
+static char            config_file_path[PATH_MAX] = "/etc/certes.conf";
+static uint64_t        crls_gen = 1;
+static struct timespec next_crl_reload;
 
 struct certes_flatconf certes_conf = {
 	0,
@@ -297,9 +298,13 @@ task_reload_crls()
 	struct umdr     um;
 	struct umdr_vec uv[1];
 	char            ubuf[mdr_spec_base_sz(msg_crls_gen, 0)];
+	struct timespec now;
 
-	// TODO: don't poll every single time, have a delay in-between
-	// each poll.
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	if (now.tv_sec < next_crl_reload.tv_sec)
+		return;
+	memcpy(&next_crl_reload, &now, sizeof(next_crl_reload));
+	next_crl_reload.tv_sec += 300;
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	if (pmdr_pack(&pm, msg_poll_crls_gen, NULL, 0) == MDR_FAIL)
@@ -347,15 +352,16 @@ int
 mdrd_backend()
 {
 	struct pmdr            pm;
-	char                   pbuf[32768];
-	struct umdr            msg;
-	char                   msgbuf[16384];
+	char                   pbuf[CERTES_MAX_MSG_SIZE * 2];
 	X509_STORE_CTX        *ctx;
 	struct sigaction       act;
 	struct xerr            e;
-	struct mdrd_besession *sess;
 	struct certes_session *cs;
 	ptrdiff_t              r;
+	struct mdrd_recvhdl    mrh;
+	char                   msgbuf[mdr_spec_base_sz(mdr_msg_mdrd_bein,
+	    CERTES_MAX_MSG_SIZE + certes_conf.max_cert_size +
+	    sizeof(struct sockaddr_in6))];
 
 	xlog_init(CERTES_PROGNAME, NULL, NULL, 1);
 
@@ -383,49 +389,62 @@ mdrd_backend()
 		return 1;
 	}
 
-	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	while ((r = mdrd_recv(&msg, msgbuf, sizeof(msgbuf),
-	    certes_conf.max_cert_size, MDR_DOMAIN_CERTES, MDR_FNONE,
-	    &sess)) > 0) {
-		if ((r = mdrd_purge_sessions(300)) > 0)
-			xlog(LOG_NOTICE, NULL, "purged %d idle sessions", r);
+	clock_gettime(CLOCK_MONOTONIC, &next_crl_reload);
+	next_crl_reload.tv_sec += 300;
 
-		// TODO: once mdr supports it, this should be part of
-		// scheduled tasks
-		task_reload_crls();
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	bzero(&mrh, sizeof(mrh));
+	mrh.buf = msgbuf;
+	mrh.bufsz = sizeof(msgbuf);
+	while ((r = mdrd_recv(&mrh, 1000))) {
+		if (r == MDR_FAIL) {
+			if (errno == ETIMEDOUT) {
+				if ((r = mdrd_purge_sessions(
+				    certes_conf.agent_recv_timeout_ms / 1000))
+				    > 0)
+					xlog(LOG_NOTICE, NULL,
+					    "purged %d idle sessions", r);
+				task_reload_crls();
+				continue;
+			}
+			xlog_strerror(LOG_ERR, errno,
+			    "%s: mdrd_recv", __func__);
+			X509_STORE_CTX_free(ctx);
+			return 1;
+		}
 
 		/*
 		 * Verify the client's cert
 		 */
-		if (sess->is_new) {
+		if (mrh.session->is_new) {
 			cs = malloc(sizeof(struct certes_session));
 			if (cs == NULL) {
 				xlog_strerror(LOG_ERR, errno,
 				    "%s: malloc", __func__);
-				mdrd_beout_error(sess, MDRD_BEOUT_FCLOSE,
+				mdrd_beout_error(mrh.session, MDRD_BEOUT_FCLOSE,
 				    MDR_ERR_BEFAIL, "backend failed");
 				continue;
 			}
 			bzero(cs, sizeof(struct certes_session));
-			mdrd_besession_set_data(sess, cs,
+			mdrd_besession_set_data(mrh.session, cs,
 			    free_certes_session);
 
-			if (cert_verify(ctx, sess->cert, 0) == 0)
+			if (cert_verify(ctx, mrh.session->cert, 0) == 0)
 				cs->verified = 1;
 		} else
-			cs = (struct certes_session *)sess->data;
+			cs = (struct certes_session *)mrh.session->data;
 
 		/*
 		 * The only message we can accept with an invalid cert
 		 * is a bootstrap dialin or bootstrap req request.
 		 */
 		if (!cs->verified &&
-		    umdr_dcv(&msg) != MDR_DCV_CERTES_BOOTSTRAP_DIALIN &&
-		    umdr_dcv(&msg) != MDR_DCV_CERTES_BOOTSTRAP_ANSWER) {
+		    umdr_dcv(mrh.msg) != MDR_DCV_CERTES_BOOTSTRAP_DIALIN &&
+		    umdr_dcv(mrh.msg) != MDR_DCV_CERTES_BOOTSTRAP_ANSWER) {
 			xlog(LOG_NOTICE, NULL, "%s: no certificate "
 			    "provided, or verification failed",
 			    __func__);
-			mdrd_beout_error(sess, MDRD_BEOUT_FCLOSE,
+			mdrd_beout_error(mrh.session, MDRD_BEOUT_FCLOSE,
 			    MDR_ERR_CERTFAIL, "no certificate provided,"
 			    " or verification failed");
 			continue;
@@ -434,33 +453,35 @@ mdrd_backend()
 		/*
 		 * Client is now verified; let's process their request.
 		 */
-		switch (umdr_dcv(&msg)) {
+		switch (umdr_dcv(mrh.msg)) {
 		case MDR_DCV_CERTES_BOOTSTRAP_DIALIN:
-			if (authority_bootstrap_dialin(sess, &msg, &e)
+			if (authority_bootstrap_dialin(mrh.session, mrh.msg, &e)
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTES_BOOTSTRAP_SETUP:
-			if (authority_bootstrap_setup(sess, &msg, &e)
+			if (authority_bootstrap_setup(mrh.session, mrh.msg, &e)
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTES_REVOKE:
-			if (authority_revoke(sess, &msg, &e) == MDR_FAIL)
+			if (authority_revoke(mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTES_BOOTSTRAP_ANSWER:
-			if (authority_bootstrap_answer(sess, &msg, &e) == MDR_FAIL)
+			if (authority_bootstrap_answer(mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTES_CERT_RENEW_ANSWER:
-			if (authority_cert_renew_answer(sess, &msg,
+			if (authority_cert_renew_answer(mrh.session, mrh.msg,
 			    &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTES_CERT_RENEWAL_INQUIRY:
-			if (authority_cert_renewal_inquiry(sess, &msg, &e)
-			    == MDR_FAIL)
+			if (authority_cert_renewal_inquiry(mrh.session, mrh.msg,
+			    &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTES_BOOTSTRAP_DIALBACK:
@@ -469,9 +490,9 @@ mdrd_backend()
 			 * For these messages we only need to forward to
 			 * the agent, if they come from an authority.
 			 */
-			if (!cert_has_role(sess->cert, ROLE_AUTHORITY,
+			if (!cert_has_role(mrh.session->cert, ROLE_AUTHORITY,
 			    xerrz(&e))) {
-				mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+				mdrd_beout_error(mrh.session, MDRD_BEOUT_FNONE,
 				    MDR_ERR_DENIED,
 				    ROLE_AUTHORITY " role required");
 				continue;
@@ -479,22 +500,21 @@ mdrd_backend()
 			/* Fallthrough */
 		case MDR_DCV_CERTES_ERROR:
 		case MDR_DCV_MDR_ERROR:
-			if (agent_send(umdr_buf(&msg), umdr_size(&msg),
+			if (agent_send(umdr_buf(mrh.msg), umdr_size(mrh.msg),
 			    &e) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		default:
 			xlog(LOG_ERR, NULL, "%s: message not supported (%x)",
-			    __func__, umdr_dcv(&msg));
+			    __func__, umdr_dcv(mrh.msg));
 			if (agent_is_authority())
-				mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+				mdrd_beout_error(mrh.session, MDRD_BEOUT_FNONE,
 				    MDR_ERR_NOTSUPP, "not supported");
 		}
+		task_reload_crls();
 	}
-	if ((r = mdrd_purge_sessions(300)) > 0)
+	if ((r = mdrd_purge_sessions(0)) > 0)
 		xlog(LOG_NOTICE, NULL, "purging %d sessions before exit", r);
-	if (r != 0)
-		xlog_strerror(LOG_ERR, errno, "%s: mdrd_recv", __func__);
 	X509_STORE_CTX_free(ctx);
 	return 0;
 }
