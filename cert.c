@@ -333,7 +333,7 @@ cert_new_serial(struct xerr *e)
 	// TODO: we can probably get rid of the serial since we have the
 	// certdb, with a few changes.
 	if ((fd = open_wflock(certes_conf.serial_file,
-	    O_RDWR|O_CREAT, 0666, LOCK_EX)) == -1) {
+	    O_RDWR|O_CREAT|O_TRUNC, 0666, LOCK_EX)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "open_wflock");
 		goto fail;
 	}
