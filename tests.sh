@@ -4,12 +4,13 @@ set -e
 
 export PATH=$PATH:.
 
-mkdir -p testdata
 valgrind=no
+if [ -d testdata ]; then
+	rm -rf testdata
+fi
+mkdir -p testdata
 basedir=`realpath testdata`
-rm -rf "$basedir"
-
-export CERTES_DIR=$basedir
+cnf=`realpath openssl.cnf`
 
 uid=`whoami`
 
@@ -29,7 +30,7 @@ cleanup()
 
 trap cleanup TERM INT EXIT
 
-./setup_ca.sh -s openssl.cnf -d $basedir -O Example -D example.com setup-root
+./setup_ca.sh -s $cnf -d $basedir -O Example -D example.com setup-root
 
 #
 # Authority setup
@@ -134,11 +135,11 @@ backend_unveils = [
 EOF
 
 serial=`cat $basedir/ca/serial`
-./setup_ca.sh -s openssl.cnf -c $basedir/authority1/certes.conf \
+./setup_ca.sh -s $cnf -c $basedir/authority1/certes.conf \
 	-d $basedir/authority1 -O Example \
 	ca-reqs Authority1 authority1.example.com DNS:authority1.example.com
 
-./setup_ca.sh -y -s openssl.cnf -d $basedir \
+./setup_ca.sh -y -s $cnf -d $basedir \
 	sign-ca-req < $basedir/authority1/ca_req.pem
 cp $basedir/ca/root.pem $basedir/authority1/
 cp $basedir/ca/certs/$serial.pem $basedir/authority1/ca_cert.pem
@@ -146,7 +147,7 @@ mkdir -p $basedir/authority1/crls/
 cp $basedir/ca/root.crl $basedir/authority1/crls/
 
 serial=`cat $basedir/ca/serial`
-./setup_ca.sh -y -s openssl.cnf -d $basedir \
+./setup_ca.sh -y -s $cnf -d $basedir \
 	sign-proxy-req < $basedir/authority1/proxy_req.pem
 cp $basedir/ca/certs/$serial.pem $basedir/authority1/proxy_cert.pem
 

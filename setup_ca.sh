@@ -29,13 +29,10 @@ setup_vars()
 {
 	[ -z "$CERTES_SSL_CONFIG" ] && \
 		CERTES_SSL_CONFIG=$CERTES_DIR/openssl.cnf
-	[ -z "$CERTES_CONFIG" ] && CERTES_CONFIG=$CERTES_DIR/certes.conf
+	[ -z "$CERTES_CONFIG" ] && \
+		CERTES_CONFIG=$CERTES_DIR/certes.conf
 	[ -z "$CERTES_MDRD_CONFIG" ] && \
 		CERTES_MDRD_CONFIG=$CERTES_DIR/mdrd.conf
-
-	export CERTES_DIR
-	export CERTES_DOMAIN
-	export CERTES_ORG
 }
 
 CERTES_DIR=/etc/certes
@@ -103,7 +100,13 @@ while [ $# -ne 0 ]; do
 	esac
 done
 
+export CERTES_DIR
+export CERTES_DOMAIN
+export CERTES_ORG
+
 setup_vars
+
+cd $CERTES_DIR
 
 command="$1"
 if [ -z "$command" ]; then
