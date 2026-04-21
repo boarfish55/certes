@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
