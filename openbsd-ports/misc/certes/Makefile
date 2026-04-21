@@ -29,6 +29,6 @@ do-install:
 
 	${INSTALL_DATA_DIR} ${PREFIX}/share/certes/
 	${INSTALL_DATA} ${WRKBUILD}/openssl.cnf ${PREFIX}/share/certes/
-	${INSTALL_DATA} ${WRKBUILD}/setup_ca.sh ${PREFIX}/share/certes/setup_ca.sh
+	${INSTALL_DATA} ${WRKBUILD}/setup_ca.sh ${PREFIX}/share/certes/
 
 .include <bsd.port.mk>
