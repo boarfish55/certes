@@ -1,6 +1,6 @@
 COMMENT =	Certificate authority and role designation service
 CATEGORIES =	misc
-VERSION =	0.1.0
+VERSION =	0.2.0
 DISTNAME =	certes-${VERSION}
 HOMEPAGE =	https://www.overnet.ca
 MAINTAINER =	Pascal Lalonde <plalonde@overnet.ca>
@@ -11,7 +11,7 @@ GH_TAGNAME =    ${VERSION}
 
 PERMIT_PACKAGE =	Yes
 
-WANTLIB +=      sqlite3 mdr>=0.5 flatconf>=0.5
+WANTLIB +=      sqlite3 mdr flatconf
 
 LIB_DEPENDS =   databases/sqlite3 \
                 devel/libmdr
@@ -28,7 +28,7 @@ do-install:
 	${INSTALL_DATA} ${WRKBUILD}/certes_authority.conf.sample ${PREFIX}/share/doc/certes/
 
 	${INSTALL_DATA_DIR} ${PREFIX}/share/certes/
-	${INSTALL_DATA} ${WRKBUILD}/certes.cnf ${PREFIX}/share/certes/
-	${INSTALL_DATA} ${WRKBUILD}/setup_ca.sh ${PREFIX}/share/setup_ca.sh
+	${INSTALL_DATA} ${WRKBUILD}/openssl.cnf ${PREFIX}/share/certes/
+	${INSTALL_DATA} ${WRKBUILD}/setup_ca.sh ${PREFIX}/share/certes/setup_ca.sh
 
 .include <bsd.port.mk>

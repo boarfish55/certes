@@ -1,25 +1,26 @@
-enable_coredumps = true
+enable_coredumps = false
 authority_fqdn = "localhost"
-authority_port = 9791
-certdb_path = "/home/plalonde/prog/certes/testdata/authority1/certdb.sqlite"
+authority_port = 9790
 
-root_cert_file = "/home/plalonde/prog/certes/testdata/ca/root.pem"
-crl_path = "/home/plalonde/prog/certes/testdata/authority1/crl_store"
+key_file = "/etc/certes/ca_key.pem"
+cert_file = "/etc/certes/ca_cert.pem"
+root_cert_file = "/etc/certes/root.pem"
+crl_path = "/var/certes/crls"
 
-cert_file = "/home/plalonde/prog/certes/testdata/authority1/cert.pem"
-key_file = "/home/plalonde/prog/certes/testdata/authority1/key.pem"
-
-lock_file = "/home/plalonde/prog/certes/testdata/authority1/coordinator.lock"
-coordinator_socket_path = "/home/plalonde/prog/certes/testdata/authority1/coordinator.sock"
+lock_file = "/var/certes/agent.lock"
+agent_socket_path = "/var/certes/agent.sock"
 
 #
 # This section is for certes authorities. It sets default parameters
 # for certificate generation and renewals.
 #
 
-serial_file = "/home/plalonde/prog/certes/testdata/authority1/serial"
+serial_file = "/var/certes/serial"
 cert_org = "Example"
 cert_email = "cert@example.com"
+certdb_path = "/var/certes/certdb.sqlite"
+certdb_backup_path = "/var/certes/certdb.sqlite.bk"
+certdb_backup_interval_seconds = 60
 
 # This supports OpenSSL's bignum integers, we can shard amongst authorities
 # to avoid serial collisions.

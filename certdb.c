@@ -29,30 +29,30 @@ const int qry_busy_timeout = 1000;
  * validity to the client, which they will include in their CSR.
  */
 const char *qry_create_bootstrap_table = "create table if not exists bootstrap("
-                "bootstrap_key blob not null, "
-		"valid_until_sec int not null, "
-		"subject text not null, "
-		"sans blob, "
-		"roles blob, "
-		"flags int not null, "
-		"not_before_sec int not null, "
-		"not_after_sec int not null, "
-                "primary key(bootstrap_key))";
+	"bootstrap_key blob not null, "
+	"valid_until_sec int not null, "
+	"subject text not null, "
+	"sans blob, "
+	"roles blob, "
+	"flags int not null, "
+	"not_before_sec int not null, "
+	"not_after_sec int not null, "
+	"primary key(bootstrap_key))";
 
 const char *qry_create_certs_table = "create table if not exists certs("
-                "serial text not null, "
-		"subject text not null, "
-		"sans blob, "
-		"roles blob, "
-		"not_before_sec int not null, "
-		"not_after_sec int not null, "
-		"revoked_at_sec int not null default 0, "
-		"flags int not null, "
-		"der blob not null, "
-                "primary key(serial))";
+	"serial text not null, "
+	"subject text not null, "
+	"sans blob, "
+	"roles blob, "
+	"not_before_sec int not null, "
+	"not_after_sec int not null, "
+	"revoked_at_sec int not null default 0, "
+	"flags int not null, "
+	"der blob not null, "
+	"primary key(serial))";
 
 const char *qry_create_certs_index = "create index if not exists "
-                "by_serial_flags on certs (flags, serial desc)";
+	"by_serial_flags on certs (flags, serial desc)";
 
 struct {
 	sqlite3_stmt    *stmt;

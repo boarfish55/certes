@@ -13,6 +13,8 @@ usage() {
 	echo "       -s <config>     SSL config (default: $CERTES_SSL_CONFIG)"
 	echo "       -c <config>     certes config (default: $CERTES_CONFIG)"
 	echo "       -x <days>       Expiry (default: $expiry)"
+	echo "       -O <org>        Set Organization name"
+	echo "       -D <domain>     Set DNS domain name"
 	echo "       -y              Don't ask for openssl commands"
 	echo ""
 	echo "Commands:"
@@ -21,6 +23,19 @@ usage() {
 	echo "        ca-reqs <ca cn> <proxy cn> <sans>  Create CA & proxy REQ"
 	echo "        sign-ca-req                        Sign a CA REQ from STDIN"
 	echo "        sign-proxy-req <sans>              Sign a proxy REQ from STDIN"
+}
+
+setup_vars()
+{
+	[ -z "$CERTES_SSL_CONFIG" ] && \
+		CERTES_SSL_CONFIG=$CERTES_DIR/openssl.cnf
+	[ -z "$CERTES_CONFIG" ] && CERTES_CONFIG=$CERTES_DIR/certes.conf
+	[ -z "$CERTES_MDRD_CONFIG" ] && \
+		CERTES_MDRD_CONFIG=$CERTES_DIR/mdrd.conf
+
+	export CERTES_DIR
+	export CERTES_DOMAIN
+	export CERTES_ORG
 }
 
 CERTES_DIR=/etc/certes
@@ -43,6 +58,7 @@ set -- $args
 while [ $# -ne 0 ]; do
 	case "$1" in
 		-h)
+			setup_vars
 			usage
 			exit 0
 			;;
@@ -87,13 +103,7 @@ while [ $# -ne 0 ]; do
 	esac
 done
 
-[ -z "$CERTES_SSL_CONFIG" ] && CERTES_SSL_CONFIG=$CERTES_DIR/openssl.cnf
-[ -z "$CERTES_CONFIG" ] && CERTES_CONFIG=$CERTES_DIR/certes.conf
-[ -z "$CERTES_MDRD_CONFIG" ] && CERTES_MDRD_CONFIG=$CERTES_DIR/mdrd.conf
-
-export CERTES_DIR
-export CERTES_DOMAIN
-export CERTES_ORG
+setup_vars
 
 command="$1"
 if [ -z "$command" ]; then
@@ -117,7 +127,8 @@ setup_root()
 	# should be kept on a secure machine or even offline storage. The
 	# certificate and CRL will need to be deployed on all agents in the
 	# fleet.
-	openssl req -x509 -nodes -config $CERTES_SSL_CONFIG -reqexts root_ext \
+	openssl req -x509 -nodes -config $CERTES_SSL_CONFIG \
+		-extensions root_ext \
 		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 		-keyout $CERTES_DIR/ca/key.pem \
 		-out $CERTES_DIR/ca/root.pem -outform pem -days $expiry \
@@ -141,24 +152,26 @@ ca_reqs()
 	if [ -z "$sans" ]; then
 		sans="DNS:`hostname -f`"
 	fi
+	[ "$CERTES_ORG" = "" ] && fail "CERTES_ORG must be set"
 
-	local mdrd_uid=$(egrep -o '^uid *= *[a-zA-Z0-9\._-]+ *' \
-		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' ')
-	local mdrd_gid=$(egrep -o '^gid *= *[a-zA-Z0-9\._-]+ *' \
-		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' ')
+	local mdrd_uid=$(egrep -o '^uid *= "*[a-zA-Z0-9\._-]+" *' \
+		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' "')
+	local mdrd_gid=$(egrep -o '^gid *= "*[a-zA-Z0-9\._-]+" *' \
+		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' "')
 
-	local certes_uid=$(egrep -o '^backend_uid *= *[a-zA-Z0-9\._-]+ *' \
-		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' ')
-	local certes_gid=$(egrep -o '^backend_gid *= *[a-zA-Z0-9\._-]+ *' \
-		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' ')
+	local certes_uid=$(egrep -o '^backend_uid *= "*[a-zA-Z0-9\._-]+" *' \
+		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' "')
+	local certes_gid=$(egrep -o '^backend_gid *= "*[a-zA-Z0-9\._-]+" *' \
+		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' "')
 
+	umask 077
 	openssl req -config $CERTES_SSL_CONFIG -nodes \
 		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 		-keyout $CERTES_DIR/ca_key.pem -keyform PEM \
 		-out $CERTES_DIR/ca_req.pem -outform PEM \
 		-subj "/O=$CERTES_ORG/CN=$ca_cn"
 	[ ! -z "$certes_uid" ] && chown "$certes_uid" $CERTES_DIR/ca_key.pem
-	[ ! -z "$certes_gid" ] && chown "$certes_gid" $CERTES_DIR/ca_key.pem
+	[ ! -z "$certes_gid" ] && chgrp "$certes_gid" $CERTES_DIR/ca_key.pem
 
 	openssl req -config $CERTES_SSL_CONFIG -nodes \
 		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
@@ -167,7 +180,8 @@ ca_reqs()
 		-subj "/O=$CERTES_ORG/CN=$proxy_cn" \
 		-addext "subjectAltName = $sans"
 	[ ! -z "$mdrd_uid" ] && chown "$mdrd_uid" $CERTES_DIR/proxy_key.pem
-	[ ! -z "$mdrd_gid" ] && chown "$mdrd_gid" $CERTES_DIR/proxy_key.pem
+	[ ! -z "$mdrd_gid" ] && chgrp "$mdrd_gid" $CERTES_DIR/proxy_key.pem
+	umask 022
 
 	echo "Sign CA REQ:"
 	openssl req -in $CERTES_DIR/ca_req.pem
@@ -180,6 +194,7 @@ sign_ca_req()
 {
 	local last_serial=`cat $CERTES_DIR/ca/serial`
 	local req=`mktemp -t setup_ca.XXXXXX`
+	echo "* Paste CA REQ here (end with Ctrl-D):"
 	cat > $req
 	openssl req -in $req -text
 	if $do_yes; then
@@ -200,6 +215,7 @@ sign_proxy_req()
 {
 	local last_serial=`cat $CERTES_DIR/ca/serial`
 	local req=`mktemp -t setup_ca.XXXXXX`
+	echo "* Paste proxy REQ here (end with Ctrl-D):"
 	cat > $req
 	openssl req -in $req -text
 	if $do_yes; then

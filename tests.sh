@@ -9,6 +9,8 @@ valgrind=no
 basedir=`realpath testdata`
 rm -rf "$basedir"
 
+export CERTES_DIR=/etc/certes
+
 uid=`whoami`
 
 fail()
@@ -36,7 +38,7 @@ mkdir -p $basedir/authority1/certdb
 cat << EOF > $basedir/authority1/certes.conf
 enable_coredumps = true
 authority_fqdn = "localhost"
-authority_port = 9791
+authority_port = 9792
 certdb_path = "$basedir/authority1/certdb/certdb.sqlite"
 certdb_backup_path = "$basedir/authority1/certdb/certdb.sqlite.bk"
 certdb_backup_interval_seconds = 60
@@ -64,7 +66,7 @@ cert_file = "$basedir/authority1/proxy_cert.pem"
 key_file = "$basedir/authority1/proxy_key.pem"
 require_client_cert = false
 
-port = 9791
+port = 9792
 listen_backlog = 1024
 prefork = 1
 pid_file = "$basedir/authority1/mdrd.pid"
@@ -126,7 +128,6 @@ backend_unveils = [
 	"rwc=$basedir/authority1/agent.lock"
 	"rwc=$basedir/authority1/agent.sock"
 	"rwc=$basedir/authority1/serial"
-	"rwc=$basedir/authority1/serial.new"
 	"rwc=$basedir/authority1/certdb"
 	"rwc=$basedir/authority1/crls"
 ]
@@ -153,7 +154,7 @@ ulimit -c unlimited
 mdrd -c $basedir/authority1/mdrd.conf
 
 for i in 1 2 3 4 5; do
-	nc -vz localhost 9791 >/dev/null 2>&1 && break
+	nc -vz localhost 9792 >/dev/null 2>&1 && break
 	sleep 1
 done
 echo "* Authority running with pid `cat $basedir/authority1/mdrd.pid`"
@@ -183,7 +184,7 @@ cat << EOF > $basedir/client3/certes.conf
 enable_coredumps = true
 bootstrap_key = "$bootstrap_key"
 authority_fqdn = "localhost"
-authority_port = 9791
+authority_port = 9792
 root_cert_file = "$basedir/client3/root.pem"
 crl_path = "$basedir/client3/crls"
 cert_file = "$basedir/client3/cert.pem"

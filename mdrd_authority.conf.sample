@@ -1,26 +1,23 @@
-uid = plalonde
-gid = plalonde
+uid = "_mdrd"
+gid = "_mdrd"
 enable_coredumps = true
+cert_file = "/etc/certes/proxy_cert.pem"
+key_file = "/etc/certes/proxy_key.pem"
+ca_file = "/etc/certes/root.pem"
+crl_path = "/var/certes/crls"
+require_client_cert = false
 
-ca_file = "/home/plalonde/prog/certes/testdata/ca/root.pem"
-crl_path = "/home/plalonde/prog/certes/testdata/authority1/crl_store"
-
-# We ue a certificate specifically made for mdrd which is
-# different than the one used to issue certs; clients will
-# expect this cert to have the "caproxy" role
-cert_file = "/home/plalonde/prog/certes/testdata/proxy1/cert.pem"
-key_file = "/home/plalonde/prog/certes/testdata/proxy1/key.pem"
-
-port = 9791
+port = 9790
 listen_backlog = 1024
-prefork = 4
-pid_file = "/home/plalonde/prog/certes/testdata/authority1/mdrd.pid"
-counters_sock = "/home/plalonde/prog/certes/testdata/authority1/counters.sock"
+prefork = 2
+pid_file = "/var/mdrd/mdrd.pid"
+counters_sock = "/var/mdrd/counters.sock"
+dbg_delay_to_backend_seconds = 0
 
 # Maximum number of concurrent client connections per fork
 max_clients = 10000
 
-# Maximum number of concurrent client connections some the same IP address,
+# Maximum number of concurrent client connections with the same IP address
 # per fork. This can be useful to prevent abusive clients from using up
 # all connection slots from max_clients.
 max_conn_per_ip = 25
@@ -47,7 +44,7 @@ socket_timeout_max = 300
 # size under this amount and break down messages. Moreover, pipe size on
 # OpenBSD is 16KiB so going above this will require a blocking write.
 # Keep in mind that mdrd will also pass the client's cert along with the
-# message so the backend can receive message over this size.
+# message meaning the backend can receive message over this size.
 max_payload_size = 16384
 
 # Put an upper bound to avoid clients sending absurd certs.
@@ -56,24 +53,19 @@ max_cert_size = 4096
 allowed_mdr_domains = [ 0x00000002 ]
 
 backend_argv = [
-	"/home/plalonde/prog/certes/certes"
+	"/usr/local/sbin/certes"
 	"-config"
-	"/home/plalonde/prog/certes/certes_authority.conf.sample"
+	"/etc/certes/certes.conf"
 	"mdrd-backend"
 ]
-backend_uid = plalonde
-backend_gid = plalonde
-
-# The following only affect OpenBSD's pledge() and unveil() calls
-backend_promises = "stdio rpath"
+backend_uid = "_certes"
+backend_gid = "_certes"
+backend_promises = "stdio rpath wpath cpath inet flock unix dns proc error"
 backend_unveils = [
-	"x=/home/plalonde/prog/certes/certes"
-	"r=/home/plalonde/prog/certes/testdata/ca/root.pem"
-	"r=/home/plalonde/prog/certes/testdata/ca/root.crl"
-	"r=/home/plalonde/prog/certes/testdata/authority1/key.pem"
-	"r=/home/plalonde/prog/certes/testdata/authority1/cert.pem"
-	"r=/home/plalonde/prog/certes/testdata/authority1/agent.lock"
-	"rw=/home/plalonde/prog/certes/testdata/authority1/agent.sock"
-	"rw=/home/plalonde/prog/certes/testdata/authority1/serial"
-	"rw=/home/plalonde/prog/certes/testdata/authority1/certdb.sqlite"
+	"x=/usr/local/sbin/certes"
+	"r=/etc/certes/certes.conf"
+	"r=/etc/certes/root.pem"
+	"r=/etc/certes/ca_key.pem"
+	"r=/etc/certes/ca_cert.pem"
+	"rwc=/var/certes"
 ]

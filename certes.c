@@ -26,7 +26,7 @@
 #include "mdr_certes.h"
 
 static int             debug = 0;
-static char            config_file_path[PATH_MAX] = "/etc/certes.conf";
+static char            config_file_path[PATH_MAX] = "/etc/certes/certes.conf";
 static uint64_t        crls_gen = 1;
 static struct timespec next_crl_reload;
 

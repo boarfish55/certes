@@ -308,12 +308,11 @@ cert_new_serial(struct xerr *e)
 	BIGNUM  *min_bn = NULL;
 	BIGNUM  *max_bn = NULL;
 	BIGNUM  *v = NULL;
-	int      fd = -1, fdtmp;
+	int      fd = -1;
 	char    *p;
 	ssize_t  r;
 	int      l;
 	char     buf[MAX_HEX_SERIAL_LENGTH + 1];
-	char     tmpfile[PATH_MAX];
 
 	if (!BN_hex2bn(&min_bn, certes_conf.min_serial)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
@@ -326,17 +325,13 @@ cert_new_serial(struct xerr *e)
 		return NULL;
 	}
 
-	if (snprintf(tmpfile, sizeof(tmpfile), "%s.new",
-	    certes_conf.serial_file) >= sizeof(tmpfile)) {
-		XERRF(e, XLOG_APP, XLOG_OVERFLOW, "tmpfile name too long");
-		goto fail;
-	}
-
 	/*
 	 * We get an exclusive lock while we write the new serial to a
 	 * tmp file and overwrite the serial file. This way other processes
 	 * may not read or write while we are incrementing the serial.
 	 */
+	// TODO: we can probably get rid of the serial since we have the
+	// certdb, with a few changes.
 	if ((fd = open_wflock(certes_conf.serial_file,
 	    O_RDWR|O_CREAT, 0666, LOCK_EX)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "open_wflock");
@@ -406,32 +401,22 @@ cert_new_serial(struct xerr *e)
 		goto fail;
 	}
 
-	if ((fdtmp = open(tmpfile, O_WRONLY|O_CREAT, 0666)) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "open");
-		goto fail;
-	}
-	r = write(fdtmp, buf, l);
+	r = write(fd, buf, l);
 	if (r == -1) {
-		close(fdtmp);
+		close(fd);
 		XERRF(e, XLOG_ERRNO, errno, "write");
 		goto fail;
 	}
 	if (r < l) {
-		close(fdtmp);
-		XERRF(e, XLOG_APP, XLOG_SHORTIO,
-		    "short write on serial file");
+		close(fd);
+		XERRF(e, XLOG_APP, XLOG_SHORTIO, "short write on serial file");
 		goto fail;
 	}
-	fsync(fdtmp);
-	close(fdtmp);
-	if (rename(tmpfile, certes_conf.serial_file) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "rename");
-		goto fail;
-	}
+	fsync(fd);
+	close(fd);
 
 	BN_free(min_bn);
 	BN_free(max_bn);
-	close(fd);
 
 	return v;
 fail:

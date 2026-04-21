@@ -126,6 +126,25 @@ static int            load_crls(struct xerr *);
 static int            agent_init_ctx(struct xerr *);
 static int            agent_poll_crls_gen(int, struct xerr *);
 
+static int
+verify_callback(int ok, X509_STORE_CTX *ctx)
+{
+	int   e;
+	X509 *err_cert;
+	char  name[256];
+
+	err_cert = X509_STORE_CTX_get_current_cert(ctx);
+
+	if (!ok) {
+		X509_NAME_oneline(X509_get_subject_name(err_cert),
+		    name, sizeof(name));
+		e = X509_STORE_CTX_get_error(ctx);
+		xlog(LOG_NOTICE, NULL, "verify error for %s: %s\n",
+		    name, X509_verify_cert_error_string(e));
+	}
+	return ok;
+}
+
 static void
 purge_authops()
 {
@@ -1583,7 +1602,7 @@ agent_init_ctx(struct xerr *e)
 	}
 
 	SSL_CTX_set_security_level(ssl_ctx, 3);
-	SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, NULL);
+	SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, &verify_callback);
 	SSL_CTX_set_cert_store(ssl_ctx, store);
 
 	/* Ownership of store now passed to ssl_ctx. */
@@ -1627,6 +1646,7 @@ load_crls(struct xerr *e)
 	char           crl_path[PATH_MAX];
 
 	if (*certes_conf.crl_path != '\0') {
+		mkdir(certes_conf.crl_path, 0700);
 		if ((d = opendir(certes_conf.crl_path)) == NULL)
 			return XERRF(e, XLOG_ERRNO, errno, "opendir");
 
