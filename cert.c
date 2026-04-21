@@ -258,7 +258,7 @@ fail:
 }
 
 int
-cert_verify(X509_STORE_CTX *ctx, X509 *crt, int challenge)
+cert_verify(X509_STORE_CTX *ctx, X509 *crt)
 {
 	X509_NAME      *subject;
 	char            common_name[256];

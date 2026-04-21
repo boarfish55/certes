@@ -429,7 +429,7 @@ mdrd_backend()
 			mdrd_besession_set_data(mrh.session, cs,
 			    free_certes_session);
 
-			if (cert_verify(ctx, mrh.session->cert, 0) == 0)
+			if (cert_verify(ctx, mrh.session->cert) == 0)
 				cs->verified = 1;
 		} else
 			cs = (struct certes_session *)mrh.session->data;

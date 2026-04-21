@@ -17,7 +17,7 @@ ssize_t         cert_decode_certes_roles(X509_EXTENSION *, char **, ssize_t);
 X509_EXTENSION *cert_encode_certes_roles(const char **);
 int             cert_has_role(X509 *, const char *, struct xerr *);
 int             cert_has_san(X509 *, const char *, struct xerr *);
-int             cert_verify(X509_STORE_CTX *, X509 *, int);
+int             cert_verify(X509_STORE_CTX *, X509 *);
 BIGNUM         *cert_new_serial(struct xerr *);
 int             cert_add_ext(X509V3_CTX *, X509 *, int, char *);
 X509           *cert_sign(X509 *, X509 *, const struct cert_entry *,
