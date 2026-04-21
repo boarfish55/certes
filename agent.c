@@ -1775,6 +1775,11 @@ agent_start(struct xerr *e)
 	int                lsock, lsock_flags;
 	struct sockaddr_un saddr;
 
+	if (agent_init(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
+	xlog(LOG_NOTICE, NULL, "%s: finished initialization; we are "
+	    "%san authority", __func__, (is_authority) ? "" : "not ");
+
 	if ((lock_fd = open(certes_conf.lock_file,
 	    O_CREAT|O_WRONLY|O_CLOEXEC, 0644)) == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "open: %s",
@@ -1797,15 +1802,8 @@ agent_start(struct xerr *e)
 		return XERRF(e, XLOG_ERRNO, errno, "fork");
 	} else if (pid != 0) {
 		close(lock_fd);
-		if (agent_init(xerrz(e)) == -1)
-			return XERR_PREPENDFN(e);
-		xlog(LOG_NOTICE, NULL, "%s: finished initialization; we are "
-		    "%san authority", __func__, (is_authority) ? "" : "not ");
 		return 0;
 	}
-
-	if (agent_init(xerrz(e)) == -1)
-		return XERR_PREPENDFN(e);
 
 	chdir("/");
 
