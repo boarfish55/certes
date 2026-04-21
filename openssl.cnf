@@ -1,4 +1,4 @@
-CERTES_DIR              = testdata
+CERTES_DIR              = /etc/certes
 dir                     = $ENV::CERTES_DIR
 oid_section             = certes_oids
 

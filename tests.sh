@@ -9,7 +9,7 @@ valgrind=no
 basedir=`realpath testdata`
 rm -rf "$basedir"
 
-export CERTES_DIR=/etc/certes
+export CERTES_DIR=$basedir
 
 uid=`whoami`
 
