@@ -1,0 +1,17 @@
+Source: certes
+Section: misc
+Priority: optional
+Maintainer: Pascal Lalonde <plalonde@overnet.ca>
+Build-Depends: debhelper-compat (= 13), libmdr-dev, libsqlite3-dev, libbsd, libssl-dev
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+ 
+Package: certes
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libmdr0, libsqlite3-0, libbsd0, libssl3t64
+Recommends: openssl
+Description: Certificate authority and role designation service
+ Certes is an MDR (Minimal Data Representation) backend service acting as a
+ certificate authority and role attributor. It issue X.509 certificates with
+ a "role" extension, allowing services to grant privileges based on the
+ client certificate's roles.
