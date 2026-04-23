@@ -28,6 +28,6 @@ clean:
 	rm -f certes *.o certes.core core
 
 install: certes
-	install -D -m 0755 -s certes $(DESTDIR)$(prefix)/bin/certes
+	install -D -m 0755 -s certes $(DESTDIR)$(prefix)/sbin/certes
 
 -include $(DEPDIR)/*
