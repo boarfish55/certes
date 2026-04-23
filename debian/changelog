@@ -1,3 +1,9 @@
+certes (0.3.1-1) unstable; urgency=medium
+
+  * 0.3.1
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Thu, 23 Apr 2026 10:04:09 -0400
+
 certes (0.3.0-2) unstable; urgency=medium
 
   * Adjust makefile for debian packaging
