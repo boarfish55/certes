@@ -1,3 +1,11 @@
+certes (0.3.0-2) unstable; urgency=medium
+
+  * Adjust makefile for debian packaging
+  * pkgconf is a build dep
+  * certes should be in sbin
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Thu, 23 Apr 2026 10:01:51 -0400
+
 certes (0.3.0-1) unstable; urgency=medium
 
   * Initial release
