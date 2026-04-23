@@ -8,6 +8,8 @@ LDFLAGS := $(shell pkg-config --libs libbsd-overlay libbsd-ctor \
 	   libcrypto libssl sqlite3 mdr flatconf) \
 	   -Wl,-z,relro -Wl,-z,now
 DEPFLAGS = -MMD -MP -MF $(DEPDIR)/$@.d
+DESTDIR =
+prefix = ~
 
 SRCS = certes.c util.c certdb.c mdr_certes.c authority.c cert.c agent.c
 OBJS = $(SRCS:.c=.o)
@@ -24,5 +26,8 @@ certes: $(OBJS)
 .PHONY: clean
 clean:
 	rm -f certes *.o certes.core core
+
+install: certes
+	install -D -m 0755 -s certes $(DESTDIR)$(prefix)/bin/certes
 
 -include $(DEPDIR)/*
