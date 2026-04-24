@@ -350,16 +350,17 @@ certdb_get_bootstrap(const uint8_t *bootstrap_key, size_t bootstrap_key_sz,
 
 	subject_len = sqlite3_column_bytes(
 	    qry_bootstrap_get.stmt,
-	    qry_bootstrap_get.o_subject) + 1;
-	if ((be->subject = malloc(subject_len)) == NULL) {
+	    qry_bootstrap_get.o_subject);
+	if ((be->subject = malloc(subject_len + 1)) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
 	}
 	b = sqlite3_column_blob(qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.o_subject);
-	if (b != NULL)
-		strlcpy(be->subject, b, subject_len);
-	else
+	if (b != NULL) {
+		memcpy(be->subject, b, subject_len);
+		be->subject[subject_len] = '\0';
+	} else
 		be->subject[0] = '\0';
 
 	sans_len = sqlite3_column_bytes(
@@ -516,7 +517,7 @@ certdb_get_cert(const char *serial, struct xerr *e)
 	struct cert_entry *dst = NULL;
 
 	if ((r = sqlite3_bind_text(qry_cert_get.stmt,
-	    qry_cert_put.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
+	    qry_cert_get.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
 		    sqlite3_errmsg(db));
 		goto fail;
@@ -553,15 +554,16 @@ certdb_get_cert(const char *serial, struct xerr *e)
 	subject_len = sqlite3_column_bytes(
 	    qry_cert_get.stmt,
 	    qry_cert_get.o_subject);
-	if ((dst->subject = malloc(subject_len)) == NULL) {
+	if ((dst->subject = malloc(subject_len + 1)) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
 	}
 	b = sqlite3_column_blob(qry_cert_get.stmt,
 	    qry_cert_get.o_subject);
-	if (b != NULL)
-		strlcpy(dst->subject, b, subject_len);
-	else
+	if (b != NULL) {
+		memcpy(dst->subject, b, subject_len);
+		dst->subject[subject_len] = '\0';
+	} else
 		dst->subject[0] = '\0';
 
 	dst->der_sz = sqlite3_column_bytes(
