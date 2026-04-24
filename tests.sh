@@ -11,6 +11,9 @@ fi
 mkdir -p testdata
 basedir=`realpath testdata`
 cnf=`realpath openssl.cnf`
+if [ -z "$MDRD" ]; then
+	MDRD=mdrd
+fi
 
 uid=`whoami`
 
@@ -66,6 +69,7 @@ crl_file = "$basedir/authority1/crls/root.crl"
 cert_file = "$basedir/authority1/proxy_cert.pem"
 key_file = "$basedir/authority1/proxy_key.pem"
 require_client_cert = false
+crl_scan_interval_sec = 30
 
 port = 9792
 listen_backlog = 1024
@@ -152,7 +156,7 @@ serial=`cat $basedir/ca/serial`
 cp $basedir/ca/certs/$serial.pem $basedir/authority1/proxy_cert.pem
 
 ulimit -c unlimited
-mdrd -c $basedir/authority1/mdrd.conf
+$MDRD -c $basedir/authority1/mdrd.conf
 
 for i in 1 2 3 4 5; do
 	nc -vz localhost 9792 >/dev/null 2>&1 && break
@@ -194,6 +198,7 @@ lock_file = "$basedir/client3/agent.lock"
 agent_socket_path = "$basedir/client3/agent.sock"
 cert_org = "Example"
 cert_email = "cert@example.com"
+cert_check_interval_seconds = 30
 EOF
 
 ./certes -config $basedir/client3/certes.conf init
@@ -208,6 +213,7 @@ crl_path = "$basedir/client3/crls"
 cert_file = "$basedir/client3/cert.pem"
 key_file = "$basedir/client3/key.pem"
 require_client_cert = true
+crl_scan_interval_sec = 30
 
 port = 9790
 listen_backlog = 1024
@@ -249,7 +255,7 @@ backend_unveils = [
 ]
 EOF
 
-mdrd -c $basedir/client3/mdrd.conf
+$MDRD -c $basedir/client3/mdrd.conf
 echo "* Agent running with pid `cat $basedir/client3/mdrd.pid`"
 
 echo -n "Press any key to terminate daemon..."

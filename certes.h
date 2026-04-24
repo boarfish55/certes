@@ -65,6 +65,7 @@ struct certes_flatconf {
 	uint64_t max_cert_size;
 	uint64_t cert_min_lifetime_seconds;
 	uint64_t cert_renew_lifetime_seconds;
+	uint64_t cert_check_interval_seconds;
 	char     serial_file[PATH_MAX];
 	char     cert_org[256];
 	char     cert_email[512];

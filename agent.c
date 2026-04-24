@@ -265,8 +265,8 @@ agent_tasks()
 	/*
 	 * Non-authority tasks only from this point on.
 	 */
-	//if (now.tv_sec < last_cert_check.tv_sec + 600)
-	if (now.tv_sec < last_cert_check.tv_sec + 30)
+	if (now.tv_sec < last_cert_check.tv_sec +
+	    certes_conf.cert_check_interval_seconds)
 		return;
 	memcpy(&last_cert_check, &now, sizeof(now));
 
@@ -1307,6 +1307,11 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 		}
 	}
 
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
 	if (agent_init(xerrz(&e)) == -1) {
 		xerr_print(&e);
 		exit(1);
@@ -1413,6 +1418,11 @@ agent_cli_revoke(int argc, char **argv)
 	if (serial == NULL) {
 		warn("no serial provided");
 		revoke_usage();
+		exit(1);
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
 		exit(1);
 	}
 
@@ -1683,10 +1693,6 @@ load_crls(struct xerr *e)
 int
 agent_init(struct xerr *e)
 {
-
-	if (cert_init(xerrz(e)) == -1)
-		return XERR_PREPENDFN(e);
-
 	clock_gettime(CLOCK_MONOTONIC, &next_certdb_backup);
 	next_certdb_backup.tv_sec +=
 	    certes_conf.certdb_backup_interval_seconds;

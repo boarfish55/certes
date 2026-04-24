@@ -52,6 +52,7 @@ struct certes_flatconf certes_conf = {
 	4096,                   /* max_cert_size */
 	345600,
 	864000,
+	600,
 	"serial",
 	"",
 	"",
@@ -186,6 +187,12 @@ struct flatconf certes_config_vars[] = {
 		FLATCONF_ULONG,
 		&certes_conf.cert_renew_lifetime_seconds,
 		sizeof(certes_conf.cert_renew_lifetime_seconds)
+	},
+	{
+		"cert_check_interval_seconds",
+		FLATCONF_ULONG,
+		&certes_conf.cert_check_interval_seconds,
+		sizeof(certes_conf.cert_check_interval_seconds)
 	},
 	{
 		"serial_file",
@@ -371,8 +378,14 @@ mdrd_backend()
 	act.sa_flags = 0;
 	act.sa_handler = SIG_IGN;
 	if (sigaction(SIGINT, &act, NULL) == -1 ||
+	    sigaction(SIGPIPE, &act, NULL) == -1 ||
 	    sigaction(SIGTERM, &act, NULL) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: sigaction", __func__);
+		return 1;
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xlog(LOG_ERR, &e, __func__);
 		return 1;
 	}
 
