@@ -41,6 +41,7 @@ static struct timespec last_authop_purge = {0, 0};
 static struct timespec last_certdb_purge = {0, 0};
 static struct timespec next_certdb_backup = {0, 0};
 static struct timespec last_cert_check = {0, 0};
+static time_t          latest_crl = 0;
 static int             agent_fd = -1;
 static int             cert_fetch_in_progress = 0;
 
@@ -50,7 +51,8 @@ enum authop_type {
 	AUTHOP_BOOTSTRAP_SETUP = 1,
 	AUTHOP_BOOTSTRAP,
 	AUTHOP_CERT_RENEW,
-	AUTHOP_CERT_REVOKE
+	AUTHOP_CERT_REVOKE,
+	AUTHOP_REFRESH_CRLS
 };
 
 struct authop {
@@ -107,6 +109,7 @@ client_free(struct client *c)
 
 static int            agent_bootstrap(struct xerr *);
 static int            agent_cert_renew_inquiry(struct xerr *);
+static int            agent_refresh_crls(struct xerr *);
 static int            agent_bootstrap_dialback(struct umdr *, struct xerr *);
 static int            agent_cert_renew_dialback(struct umdr *, struct xerr *);
 static int            agent_recv_cert(struct authop *, struct xerr *);
@@ -276,11 +279,11 @@ agent_tasks()
 	} else {
 		if (agent_cert_renew_inquiry(xerrz(&e)) == -1)
 			xlog(LOG_ERR, &e, "%s", __func__);
+
+		if (agent_refresh_crls(xerrz(&e)) == -1)
+			xlog(LOG_ERR, &e, "%s", __func__);
 	}
 
-	// TODO: need to refresh CRLs from our authority
-	// When we have CRL updates, need to recreate our ctx with
-	// agent_init_ctx
 }
 
 static int
@@ -813,14 +816,14 @@ fail:
 static int
 agent_cert_renew_inquiry(struct xerr *e)
 {
-	struct pmdr          pm;
-	struct pmdr_vec      pv[1];
-	char                 pbuf[CERTES_MAX_MSG_SIZE];
-	struct authop       *op;
-	struct umdr          um;
-	char                 ubuf[256];
-	struct umdr_vec      uv[3];
-	int                  r;
+	struct pmdr      pm;
+	struct pmdr_vec  pv[1];
+	char             pbuf[CERTES_MAX_MSG_SIZE];
+	struct authop   *op;
+	struct umdr      um;
+	char             ubuf[256];
+	struct umdr_vec  uv[3];
+	int              r;
 
 	if (cert_fetch_in_progress)
 		return 0;
@@ -889,6 +892,169 @@ agent_cert_renew_inquiry(struct xerr *e)
 
 	return 0;
 fail:
+	authop_free(op);
+	return -1;
+}
+
+static int
+agent_refresh_crls(struct xerr *e)
+{
+	struct pmdr      pm;
+	struct pmdr_vec  pv[1];
+	char             pbuf[CERTES_MAX_MSG_SIZE];
+	struct authop   *op;
+	struct umdr      um;
+	char             ubuf[256];
+	struct umdr_vec  uv[3];
+	int              r, i;
+	uint32_t         crl_count;
+	uint32_t        *crl_sizes = NULL;
+	const uint8_t   *p;
+	X509_CRL        *crl = NULL;
+	X509_NAME       *issuer;
+	char             issuer_cn[256];
+	char             crl_path[PATH_MAX];
+	FILE            *f;
+	const ASN1_TIME *last_update;
+	struct tm        tm;
+	time_t           last = latest_crl;
+
+	if ((op = authop_new(AUTHOP_REFRESH_CRLS, xerrz(e))) == NULL)
+		return XERR_PREPENDFN(e);
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_U64;
+	pv[0].v.u64 = last;
+	if (pmdr_pack(&pm,  msg_fetch_crls_updated_after, pv,
+	    PMDRVECLEN(pv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno,
+		    "pmdr_pack/msg_fetch_crls_updated_after");
+		goto fail;
+	}
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(e))) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_CERTES_SEND_UPDATED_CRLS:
+		/* Success */
+		break;
+	case MDR_DCV_CERTES_ERROR:
+		if (umdr_unpack(&um, msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
+		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
+		    op->id, uv[2].v.s.bytes, uv[1].v.u32);
+		goto fail;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
+		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
+		    op->id, uv[1].v.s.bytes, uv[0].v.u32);
+		goto fail;
+	default:
+		XERRF(e, XLOG_APP, XLOG_BADMSG, "bad response from authority");
+		goto fail;
+	}
+
+	crl_count = umdr_vec_alen(&uv[0].v.au32);
+	if (crl_count == 0) {
+		authop_free(op);
+		return 0;
+	}
+
+	xlog(LOG_NOTICE, NULL, "%s: %u CRLs to update",
+	    __func__, crl_count);
+
+	crl_sizes = malloc(sizeof(uint32_t) * crl_count);
+	if (crl_sizes == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+
+	if (umdr_vec_au32(&uv[0].v.au32, crl_sizes, crl_count) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_au32");
+		goto fail;
+	}
+
+	for (i = 0, p = uv[1].v.b.bytes;
+	    i < crl_count && (p - (uint8_t *)uv[1].v.b.bytes) < uv[1].v.b.sz;
+	    i++) {
+		crl = d2i_X509_CRL(NULL, &p, crl_sizes[i]);
+		/* p is incremented */
+		if (crl == NULL) {
+			XERRF(e, XLOG_APP, XLOG_BADMSG,
+			    "reply did not contain a valid "
+			    "DER-encoded X.509 CRL, or alloc failed");
+			goto fail;
+		}
+
+		issuer = X509_CRL_get_issuer(crl);
+		if (X509_NAME_get_text_by_NID(issuer, NID_commonName,
+		    issuer_cn, sizeof(issuer_cn)) < 0) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_NAME_get_text_by_NID");
+			goto fail;
+		}
+		if ((last_update = X509_CRL_get0_lastUpdate(crl)) == NULL) {
+			xlog(LOG_ERR, NULL, "%s: crl for issuer %s has no "
+			    "lastUpdate field; skipping", __func__, issuer_cn);
+			X509_CRL_free(crl);
+			continue;
+		}
+		ASN1_TIME_to_tm(last_update, &tm);
+
+		if (snprintf(crl_path, sizeof(crl_path), "%s/%s.crl",
+		    certes_conf.crl_path, issuer_cn) >= sizeof(crl_path)) {
+			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+			    "crl path too long");
+			goto fail;
+		}
+
+		if ((f = fopen(crl_path, "w")) == NULL) {
+			XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
+			goto fail;
+		}
+		if (PEM_write_X509_CRL(f, crl) == 0) {
+			fclose(f);
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "PEM_write_X509_CRL");
+			goto fail;
+		}
+		fclose(f);
+		X509_CRL_free(crl);
+		crl = NULL;
+		if (timegm(&tm) > last)
+			last = timegm(&tm);
+		xlog(LOG_NOTICE, NULL, "%s: wrote updated CRL from %s",
+		    __func__, issuer_cn);
+	}
+	free(crl_sizes);
+	authop_free(op);
+	latest_crl = last;
+
+	return 0;
+fail:
+	if (crl != NULL)
+		X509_CRL_free(crl);
+	if (crl_sizes != NULL)
+		free(crl_sizes);
 	authop_free(op);
 	return -1;
 }
@@ -1065,7 +1231,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 		der_sz = *(uint32_t *)dp;
 		dp += sizeof(uint32_t);
 		icrt = d2i_X509(NULL, &dp, der_sz);
-		dp += der_sz;
+		/* dp is incremented */
 		if (icrt == NULL) {
 			XERRF(e, XLOG_APP, XLOG_BADMSG,
 			    "bootstrap reply did not contain a valid "

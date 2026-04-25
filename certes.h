@@ -25,7 +25,6 @@
 #define CERTES_CHALLENGE_LENGTH         32
 #define CERTES_AUTHOP_ID_LENGTH         64 /* 3x 64-bit uints to string, so ~50 */
 
-
 #define CERTES_MAX_SUBJET_LENGTH 1024
 #define CERTES_MAX_SAN_LENGTH    512
 #define CERTES_MAX_SANS          16

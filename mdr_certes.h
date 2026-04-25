@@ -99,6 +99,17 @@ extern const struct mdr_spec *msg_poll_crls_gen;
     MDR_DCV(0x00000002, 0x000F, 0x0000)
 extern const struct mdr_spec *msg_crls_gen;
 
+/*
+ * Poll for updated CRLs (after a specific time).
+ * Client can then update the new CRLs locally, distinguishing by issuer.
+ */
+#define MDR_DCV_CERTES_FETCH_CRLS_UPDATED_AFTER \
+    MDR_DCV(0x00000002, 0x0010, 0x0000)
+extern const struct mdr_spec *msg_fetch_crls_updated_after;
+#define MDR_DCV_CERTES_SEND_UPDATED_CRLS \
+    MDR_DCV(0x00000002, 0x0011, 0x0000)
+extern const struct mdr_spec *msg_send_updated_crls;
+
 /* Built-ins */
 extern const struct mdr_spec *msg_pack_beout;
 
