@@ -171,21 +171,23 @@ struct mdr_def msgdef_crls_gen = {
 };
 const struct mdr_spec *msg_crls_gen;
 
-struct mdr_def msgdef_fetch_crls_updated_after = {
-	MDR_DCV_CERTES_FETCH_CRLS_UPDATED_AFTER,
-	"certes.fetch_crls_updated_after",
+struct mdr_def msgdef_fetch_outdated_crls = {
+	MDR_DCV_CERTES_FETCH_OUTDATED_CRLS,
+	"certes.fetch_outdated_crls",
 	{
-		MDR_U64,  /* Fetch CRLs if updated after this time
-			     (unix epoch) */
+		MDR_S,    /* Operation identifier */
+		MDR_AS,   /* Authorities (CN) for which we have a CRL */
+		MDR_AU64, /* Last update field for each CRL (same order) */
 		MDR_LAST
 	}
 };
-const struct mdr_spec *msg_fetch_crls_updated_after;
+const struct mdr_spec *msg_fetch_outdated_crls;
 
 struct mdr_def msgdef_send_updated_crls = {
 	MDR_DCV_CERTES_SEND_UPDATED_CRLS,
 	"certes.send_updated_crls",
 	{
+		MDR_S,     /* Operation identifier */
 		MDR_AU32,  /* How many CRLs are in the payload and how
 			      many bytes for each */
 		MDR_B,     /* The DER-encoded CRLs */
@@ -285,8 +287,8 @@ load_mdr_defs()
 	if ((msg_crls_gen =
 	    mdr_register_spec(&msgdef_crls_gen)) == NULL)
 		errx(1, "mdr_register_spec");
-	if ((msg_fetch_crls_updated_after =
-	    mdr_register_spec(&msgdef_fetch_crls_updated_after)) == NULL)
+	if ((msg_fetch_outdated_crls =
+	    mdr_register_spec(&msgdef_fetch_outdated_crls)) == NULL)
 		errx(1, "mdr_register_spec");
 	if ((msg_send_updated_crls =
 	    mdr_register_spec(&msgdef_send_updated_crls)) == NULL)

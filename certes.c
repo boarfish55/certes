@@ -497,6 +497,11 @@ mdrd_backend()
 			    &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
+		case MDR_DCV_CERTES_FETCH_OUTDATED_CRLS:
+			if (authority_fetch_outdated_crls(mrh.session, mrh.msg,
+			    &e) == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
 		case MDR_DCV_CERTES_BOOTSTRAP_DIALBACK:
 		case MDR_DCV_CERTES_CERT_RENEW_DIALBACK:
 			/*

@@ -41,11 +41,17 @@ static struct timespec last_authop_purge = {0, 0};
 static struct timespec last_certdb_purge = {0, 0};
 static struct timespec next_certdb_backup = {0, 0};
 static struct timespec last_cert_check = {0, 0};
-static time_t          latest_crl = 0;
 static int             agent_fd = -1;
 static int             cert_fetch_in_progress = 0;
 
 extern struct certes_flatconf certes_conf;
+
+static struct loaded_crls {
+	uint32_t   count;
+	char     **issuers;
+	uint64_t  *last_updates;
+	X509_CRL **crls;
+} loaded_crls = { 0, NULL, NULL, NULL };
 
 enum authop_type {
 	AUTHOP_BOOTSTRAP_SETUP = 1,
@@ -123,7 +129,7 @@ static int            authop_send(struct authop *, const void *, size_t,
                           struct xerr *);
 static int            authop_recv(struct authop *, char *, size_t,
                           struct xerr *);
-static int            load_crl(const char *, struct xerr *);
+static X509_CRL      *load_crl(const char *, struct xerr *);
 static void           bootstrap_setup_usage();
 static int            agent_error(struct umdr *, struct xerr *);
 static int            load_crls(struct xerr *);
@@ -645,27 +651,28 @@ authop_recv(struct authop *op, char *buf, size_t buf_sz, struct xerr *e)
 	return r;
 }
 
-static int
+static X509_CRL *
 load_crl(const char *crl_path, struct xerr *e)
 {
 	X509_CRL *crl;
 	FILE     *f;
 
-	if ((f = fopen(crl_path, "r")) == NULL)
-		return XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
-
+	if ((f = fopen(crl_path, "r")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
+		return NULL;
+	}
 	if ((crl = PEM_read_X509_CRL(f, NULL, NULL, NULL)) == NULL) {
 		fclose(f);
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509_CRL");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509_CRL");
+		return NULL;
 	}
-
 	fclose(f);
 
-	if (!X509_STORE_add_crl(store, crl))
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "X509_STORE_add_crl");
-	X509_CRL_free(crl);
-	return 0;
+	if (!X509_STORE_add_crl(store, crl)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_add_crl");
+		return NULL;
+	}
+	return crl;
 }
 
 /*
@@ -900,7 +907,7 @@ static int
 agent_refresh_crls(struct xerr *e)
 {
 	struct pmdr      pm;
-	struct pmdr_vec  pv[1];
+	struct pmdr_vec  pv[2];
 	char             pbuf[CERTES_MAX_MSG_SIZE];
 	struct authop   *op;
 	struct umdr      um;
@@ -915,20 +922,23 @@ agent_refresh_crls(struct xerr *e)
 	char             issuer_cn[256];
 	char             crl_path[PATH_MAX];
 	FILE            *f;
-	const ASN1_TIME *last_update;
-	struct tm        tm;
-	time_t           last = latest_crl;
 
 	if ((op = authop_new(AUTHOP_REFRESH_CRLS, xerrz(e))) == NULL)
 		return XERR_PREPENDFN(e);
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	pv[0].type = MDR_U64;
-	pv[0].v.u64 = last;
-	if (pmdr_pack(&pm,  msg_fetch_crls_updated_after, pv,
+	pv[0].type = MDR_S;
+	pv[0].v.s = op->id;
+	pv[1].type = MDR_AS;
+	pv[1].v.as.items = (const char **)loaded_crls.issuers;
+	pv[1].v.as.length = loaded_crls.count;
+	pv[2].type = MDR_AU64;
+	pv[2].v.au64.items = loaded_crls.last_updates;
+	pv[2].v.au64.length = loaded_crls.count;
+	if (pmdr_pack(&pm, msg_fetch_outdated_crls, pv,
 	    PMDRVECLEN(pv)) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno,
-		    "pmdr_pack/msg_fetch_crls_updated_after");
+		    "pmdr_pack/msg_fetch_outdated_crls");
 		goto fail;
 	}
 
@@ -973,7 +983,7 @@ agent_refresh_crls(struct xerr *e)
 		goto fail;
 	}
 
-	crl_count = umdr_vec_alen(&uv[0].v.au32);
+	crl_count = umdr_vec_alen(&uv[1].v.au32);
 	if (crl_count == 0) {
 		authop_free(op);
 		return 0;
@@ -988,13 +998,13 @@ agent_refresh_crls(struct xerr *e)
 		goto fail;
 	}
 
-	if (umdr_vec_au32(&uv[0].v.au32, crl_sizes, crl_count) == MDR_FAIL) {
+	if (umdr_vec_au32(&uv[1].v.au32, crl_sizes, crl_count) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_au32");
 		goto fail;
 	}
 
-	for (i = 0, p = uv[1].v.b.bytes;
-	    i < crl_count && (p - (uint8_t *)uv[1].v.b.bytes) < uv[1].v.b.sz;
+	for (i = 0, p = uv[2].v.b.bytes;
+	    i < crl_count && (p - (uint8_t *)uv[2].v.b.bytes) < uv[2].v.b.sz;
 	    i++) {
 		crl = d2i_X509_CRL(NULL, &p, crl_sizes[i]);
 		/* p is incremented */
@@ -1012,13 +1022,6 @@ agent_refresh_crls(struct xerr *e)
 			    "X509_NAME_get_text_by_NID");
 			goto fail;
 		}
-		if ((last_update = X509_CRL_get0_lastUpdate(crl)) == NULL) {
-			xlog(LOG_ERR, NULL, "%s: crl for issuer %s has no "
-			    "lastUpdate field; skipping", __func__, issuer_cn);
-			X509_CRL_free(crl);
-			continue;
-		}
-		ASN1_TIME_to_tm(last_update, &tm);
 
 		if (snprintf(crl_path, sizeof(crl_path), "%s/%s.crl",
 		    certes_conf.crl_path, issuer_cn) >= sizeof(crl_path)) {
@@ -1040,14 +1043,14 @@ agent_refresh_crls(struct xerr *e)
 		fclose(f);
 		X509_CRL_free(crl);
 		crl = NULL;
-		if (timegm(&tm) > last)
-			last = timegm(&tm);
 		xlog(LOG_NOTICE, NULL, "%s: wrote updated CRL from %s",
 		    __func__, issuer_cn);
 	}
 	free(crl_sizes);
 	authop_free(op);
-	latest_crl = last;
+
+	if (load_crls(xerrz(e)) == -1)
+		xlog(LOG_ERR, e, "%s");
 
 	return 0;
 fail:
@@ -1707,6 +1710,23 @@ agent_cert_store()
 	return store;
 }
 
+int
+agent_get_crl(const char *issuer_cn, const X509_CRL **crl,
+    uint64_t *last_update)
+{
+	int i;
+	for (i = 0; i < loaded_crls.count; i++) {
+		if (strcmp(issuer_cn, loaded_crls.issuers[i]) == 0) {
+			if (last_update != NULL)
+				*last_update = loaded_crls.last_updates[i];
+			if (crl != NULL)
+				*crl = loaded_crls.crls[i];
+			return i;
+		}
+	}
+	return -1;
+}
+
 static int
 agent_init_ctx(struct xerr *e)
 {
@@ -1817,43 +1837,137 @@ fail:
 static int
 load_crls(struct xerr *e)
 {
-	DIR           *d;
-	struct dirent *de;
-	size_t         de_len;
-	char           crl_path[PATH_MAX];
+	DIR              *d = NULL;
+	struct dirent    *de;
+	size_t            de_len;
+	char              crl_path[PATH_MAX];
+	uint32_t          count = 0, i;
+	char            **issuers = NULL;
+	uint64_t         *last_updates = NULL;
+	X509_CRL         *crl = NULL, **crls = NULL;
+	const ASN1_TIME  *lu;
+	struct tm         tm;
+	X509_NAME        *issuer;
 
-	if (*certes_conf.crl_path != '\0') {
-		mkdir(certes_conf.crl_path, 0700);
-		if ((d = opendir(certes_conf.crl_path)) == NULL)
-			return XERRF(e, XLOG_ERRNO, errno, "opendir");
+	if (*certes_conf.crl_path == '\0')
+		return 0;
 
-		for (;;) {
-			errno = 0;
-			de = readdir(d);
-			if (de == NULL) {
-				if (errno == 0)
-					break;
-				XERRF(e, XLOG_ERRNO, errno, "readdir");
-				closedir(d);
-				return -1;
-			}
-			if (de->d_type != DT_REG)
-				continue;
-			de_len = strlen(de->d_name);
-			if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
-				continue;
+	mkdir(certes_conf.crl_path, 0700);
+	if ((d = opendir(certes_conf.crl_path)) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "opendir");
 
-			snprintf(crl_path, sizeof(crl_path), "%s/%s",
-			    certes_conf.crl_path, de->d_name);
-			if (load_crl(crl_path, xerrz(e)) == -1) {
-				XERR_PREPENDFN(e);
-				closedir(d);
-				return -1;
-			}
+	for (;;) {
+		errno = 0;
+		de = readdir(d);
+		if (de == NULL) {
+			if (errno == 0)
+				break;
+			XERRF(e, XLOG_ERRNO, errno, "readdir");
+			goto fail;
 		}
-		closedir(d);
+		if (de->d_type != DT_REG)
+			continue;
+		de_len = strlen(de->d_name);
+		if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
+			continue;
+
+		count++;
 	}
+	rewinddir(d);
+
+	last_updates = malloc(count * sizeof(time_t));
+	if (last_updates == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+	issuers = malloc(count * (sizeof(char *) + 256));
+	if (issuers == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+	for (i = 0; i < count; i++)
+		issuers[i] = ((char *)issuers + (count * sizeof(char *))) +
+		    (i * 256);
+	crls = malloc(count * sizeof(X509_CRL *));
+	if (crls == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+
+	for (i = 0; i < count;) {
+		errno = 0;
+		de = readdir(d);
+		if (de == NULL) {
+			if (errno == 0)
+				break;
+			XERRF(e, XLOG_ERRNO, errno, "readdir");
+			goto fail;
+		}
+		if (de->d_type != DT_REG)
+			continue;
+		de_len = strlen(de->d_name);
+		if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
+			continue;
+
+		snprintf(crl_path, sizeof(crl_path), "%s/%s",
+		    certes_conf.crl_path, de->d_name);
+		if ((crl = load_crl(crl_path, xerrz(e))) == NULL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
+
+		issuer = X509_CRL_get_issuer(crl);
+		if (X509_NAME_get_text_by_NID(issuer, NID_commonName,
+		    issuers[i], 256) < 0) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_NAME_get_text_by_NID");
+			X509_CRL_free(crl);
+			goto fail;
+		}
+		if ((lu = X509_CRL_get0_lastUpdate(crl)) == NULL) {
+			xlog(LOG_ERR, NULL, "%s: crl for issuer %s has no "
+			    "lastUpdate field; skipping", __func__,
+			    issuers[i]);
+			X509_CRL_free(crl);
+			crl = NULL;
+			continue;
+		}
+		ASN1_TIME_to_tm(lu, &tm);
+		last_updates[i] = timegm(&tm);
+		crls[i] = crl;
+		i++;
+	}
+	closedir(d);
+	d = NULL;
+
+	if (loaded_crls.count > 0) {
+		free(loaded_crls.issuers);
+		free(loaded_crls.last_updates);
+		for (i = 0; i < loaded_crls.count; i++)
+			X509_CRL_free(loaded_crls.crls[i]);
+		free(loaded_crls.crls);
+	}
+
+	loaded_crls.count = count;
+	loaded_crls.issuers = issuers;
+	loaded_crls.last_updates = last_updates;
+	loaded_crls.crls = crls;
+
 	return 0;
+fail:
+	if (d != NULL)
+		closedir(d);
+	if (issuers != NULL)
+		free(issuers);
+	if (last_updates != NULL)
+		free(last_updates);
+	if (crls != NULL) {
+		count = i;
+		for (i = 0; i < count; i++)
+			X509_CRL_free(crls[i]);
+		free(crls);
+	}
+	return -1;
 }
 
 int

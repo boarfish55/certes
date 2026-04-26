@@ -22,5 +22,7 @@ int  authority_cert_renewal_inquiry(struct mdrd_besession *, struct umdr *,
          struct xerr *);
 int  authority_cert_renew_answer(struct mdrd_besession *, struct umdr *,
          struct xerr *);
+int  authority_fetch_outdated_crls(struct mdrd_besession *, struct umdr *,
+         struct xerr *);
 
 #endif

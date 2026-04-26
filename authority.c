@@ -957,3 +957,145 @@ fail:
 	    "backend failed");
 	return -1;
 }
+
+int
+authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
+    struct xerr *e)
+{
+	struct umdr_vec    uv[3];
+	const char        *op_id;
+	struct pmdr        pm;
+	char               pbuf[CERTES_MAX_MSG_SIZE];
+	uint8_t            crl_buf[CERTES_MAX_MSG_SIZE];
+	uint8_t           *p;
+	int                der_sz;
+	struct pmdr_vec    pv[3];
+	uint32_t           crl_count;
+	const char       **issuers = NULL;
+	uint64_t          *last_updates = NULL;
+	const char       **upd_issuers = NULL;
+	uint32_t          *upd_crl_sizes = NULL;
+	uint64_t           lu;
+	const X509_CRL    *crl;
+	int                i, j;
+
+	if (umdr_unpack(msg, msg_fetch_outdated_crls, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL)
+                return XERRF(e, XLOG_ERRNO, errno,
+                    "umdr_unpack/msg_fetch_crls_updated_after");
+
+	op_id = uv[0].v.s.bytes;
+
+	xlog(LOG_NOTICE, NULL, "%s: handling for %s, op_id=%s", __func__,
+	    certes_client_name(sess, NULL, 0, xerrz(e)), op_id);
+
+	if (!agent_is_authority()) {
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
+		    "we are not an authority");
+		return XERRF(e, XLOG_APP, XLOG_NOTSUP,
+		    "we are not an authority");
+	}
+
+	if (umdr_unpack(msg, msg_fetch_outdated_crls, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
+		goto fail;
+	}
+	crl_count = umdr_vec_alen(&uv[1].v.as);
+	if (umdr_vec_alen(&uv[2].v.au64) != crl_count) {
+		XERRF(e, XLOG_APP, XLOG_BADMSG,
+		    "count of issuers and last update is not the same");
+		goto fail;
+	}
+	if (crl_count > INT_MAX) {
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW, "too many CRLs in payload");
+		goto fail;
+	}
+
+	if ((issuers = malloc(sizeof(char *) * crl_count)) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+	if ((last_updates = malloc(sizeof(uint64_t) * crl_count)) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+
+	if ((upd_issuers = malloc(sizeof(char *) * crl_count)) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+	if ((upd_crl_sizes = malloc(sizeof(uint32_t) * crl_count)) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+
+	if (umdr_vec_as(&uv[1].v.as, issuers, crl_count) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
+		goto fail;
+	}
+	if (umdr_vec_au64(&uv[2].v.au64, last_updates, crl_count) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
+		goto fail;
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = op_id;
+	pv[1].type = MDR_AU32; /* CRL byte sizes */
+	pv[1].v.au32.items = upd_crl_sizes;
+	pv[2].type = MDR_B;    /* CRL bytes */
+	pv[2].v.b.bytes = crl_buf;
+	pv[2].v.b.sz = 0;
+	for (p = crl_buf, i = 0, j = 0; i < crl_count; i++) {
+		if (agent_get_crl(issuers[i], &crl, &lu) == -1)
+			continue;
+
+		if (last_updates[i] >= lu)
+			continue;
+
+		der_sz = i2d_X509_CRL(crl, NULL);
+		if (der_sz > p - crl_buf) {
+			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+			    "CRL data too large to fit in MDR");
+			goto fail;
+		}
+		if (der_sz < i2d_X509_CRL(crl, &p)) {
+			XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509_CRL");
+			goto fail;
+		}
+
+		upd_issuers[j] = issuers[i];
+		upd_crl_sizes[j] = der_sz;
+		pv[2].v.b.sz += der_sz;
+		j++;
+	}
+	pv[1].v.au32.length = j;
+
+	if (pmdr_pack(&pm, msg_cert_renewal_required,
+	    pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		abort();
+	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
+		goto fail;
+	}
+
+	free(issuers);
+	free(upd_issuers);
+	free(upd_crl_sizes);
+	free(last_updates);
+
+	return 0;
+fail:
+	if (last_updates != NULL)
+		free(last_updates);
+	if (issuers != NULL)
+		free(issuers);
+	if (upd_issuers != NULL)
+		free(upd_issuers);
+	if (upd_crl_sizes != NULL)
+		free(upd_crl_sizes);
+	beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+	    "backend failed");
+	return -1;
+}
