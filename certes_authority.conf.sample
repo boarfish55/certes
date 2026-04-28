@@ -15,7 +15,6 @@ agent_socket_path = "/var/certes/agent.sock"
 # for certificate generation and renewals.
 #
 
-serial_file = "/var/certes/serial"
 cert_org = "Example"
 cert_email = "cert@example.com"
 certdb_path = "/var/certes/certdb.sqlite"

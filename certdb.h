@@ -50,7 +50,13 @@ int  certdb_init(const char *, struct xerr *);
 void certdb_shutdown();
 int  certdb_backup(const char *, int, struct xerr *);
 int  certdb_initialized();
+int  certdb_begin_txn(struct xerr *);
+int  certdb_commit_txn(struct xerr *);
+int  certdb_rollback_txn(struct xerr *);
 
+int                     certdb_init_serial(const char *, struct xerr *);
+int                     certdb_update_serial(const char *, struct xerr *);
+int                     certdb_last_serial(char *, size_t, struct xerr *);
 struct bootstrap_entry *certdb_get_bootstrap(const uint8_t *, size_t,
                             struct xerr *);
 void                    certdb_bootstrap_free(struct bootstrap_entry *);

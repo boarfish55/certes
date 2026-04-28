@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include "agent.h"
 #include "certes.h"
+#include "certdb.h"
 #include "cert.h"
 #include "util.h"
 
@@ -305,14 +306,12 @@ cert_verify(X509_STORE_CTX *ctx, X509 *crt)
 BIGNUM *
 cert_new_serial(struct xerr *e)
 {
-	BIGNUM  *min_bn = NULL;
-	BIGNUM  *max_bn = NULL;
-	BIGNUM  *v = NULL;
-	int      fd = -1;
-	char    *p;
-	ssize_t  r;
-	int      l;
-	char     buf[MAX_HEX_SERIAL_LENGTH + 1];
+	BIGNUM      *min_bn = NULL;
+	BIGNUM      *max_bn = NULL;
+	BIGNUM      *v = NULL;
+	char        *p;
+	char         buf[MAX_HEX_SERIAL_LENGTH + 1];
+	struct xerr  e2;
 
 	if (!BN_hex2bn(&min_bn, certes_conf.min_serial)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
@@ -325,110 +324,111 @@ cert_new_serial(struct xerr *e)
 		return NULL;
 	}
 
-	/*
-	 * We get an exclusive lock while we write the new serial to a
-	 * tmp file and overwrite the serial file. This way other processes
-	 * may not read or write while we are incrementing the serial.
-	 */
-	// TODO: we can probably get rid of the serial since we have the
-	// certdb, with a few changes.
-	if ((fd = open_wflock(certes_conf.serial_file,
-	    O_RDWR|O_CREAT, 0666, LOCK_EX)) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "open_wflock");
-		goto fail;
+	if (certdb_begin_txn(xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return NULL;
 	}
 
-	r = read(fd, buf, sizeof(buf));
-	if (r == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "read");
-		goto fail;
-	}
-
-	if (r > 0) {
-		if (buf[r - 1] != '\n') {
-			XERRF(e, XLOG_APP, XLOG_INVALID,
-			    "serial file does not end in newline, "
-			    "or the value is too large");
-			goto fail;
+	if (certdb_last_serial(buf, sizeof(buf), xerrz(e)) == -1) {
+		if (!xerr_is(e, XLOG_APP, XLOG_NOTFOUND)) {
+			if (certdb_rollback_txn(xerrz(&e2)) == -1)
+				xlog(LOG_ERR, &e2, __func__);
+			XERR_PREPENDFN(e);
+			return NULL;
 		}
-		buf[r - 1] = '\0';
-		for (p = buf; *p; p++) {
-			if (!((*p >= '0' && *p <= '9') ||
-			    (*p >= 'a' && *p <= 'f') ||
-			    (*p >= 'A' && *p <= 'F'))) {
-				XERRF(e, XLOG_APP, XLOG_INVALID,
-				    "serial is not a valid hex integer");
-				goto fail;
-			}
+		if (certdb_init_serial(certes_conf.min_serial,
+		    xerrz(e)) == -1) {
+			if (certdb_rollback_txn(xerrz(&e2)) == -1)
+				xlog(LOG_ERR, &e2, __func__);
+			XERR_PREPENDFN(e);
+			return NULL;
 		}
+		strlcpy(buf, certes_conf.min_serial, sizeof(buf));
 		if (!BN_hex2bn(&v, buf)) {
 			XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
 			goto fail;
 		}
+		if (certdb_commit_txn(xerrz(e)) == -1) {
+			XERR_PREPENDFN(e);
+			return NULL;
+		}
+		return v;
+	}
 
-		if (BN_cmp(v, min_bn) == -1) {
+	for (p = buf; *p; p++) {
+		if (!((*p >= '0' && *p <= '9') ||
+		    (*p >= 'a' && *p <= 'f') ||
+		    (*p >= 'A' && *p <= 'F'))) {
 			XERRF(e, XLOG_APP, XLOG_INVALID,
-			    "saved serial is less than min_serial");
+			    "serial is not a valid hex integer");
 			goto fail;
 		}
+	}
 
-		if (!BN_add_word(v, 1)) {
-			XERRF(e, XLOG_SSL, ERR_get_error(), "BN_add_word");
-			goto fail;
-		}
+	if (!BN_hex2bn(&v, buf)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
+		goto fail;
+	}
 
-		if (BN_cmp(v, max_bn) > 0) {
-			XERRF(e, XLOG_APP, XLOG_LIMITED, "max_serial exceeded");
-			goto fail;
-		}
-	} else {
+	/*
+	 * Set our serial to min_serial if the previously stored value
+	 * was less than this. This could happen if we update the
+	 * configuration to set a new range for our serials.
+	 */
+	if (BN_cmp(v, min_bn) < 0) {
+		BN_free(v);
+		v = NULL;
 		if ((v = BN_dup(min_bn)) == NULL) {
 			XERRF(e, XLOG_SSL, ERR_get_error(), "BN_dup");
 			goto fail;
 		}
+	} else {
+		if (!BN_add_word(v, 1)) {
+			XERRF(e, XLOG_SSL, ERR_get_error(), "BN_add_word");
+			goto fail;
+		}
+	}
+
+	if (BN_cmp(v, max_bn) > 0) {
+		XERRF(e, XLOG_APP, XLOG_LIMITED, "max_serial exceeded");
+		goto fail;
 	}
 
 	if ((p = BN_bn2hex(v)) == NULL) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_bn2hex");
 		goto fail;
 	}
-
-	l = snprintf(buf, sizeof(buf), "%s\n", p);
-	OPENSSL_free(p);
-	if (l >= sizeof(buf)) {
+	if (snprintf(buf, sizeof(buf), "%s\n", p) >= sizeof(buf)) {
+		free(p);
 		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 		    "computed serial is too large");
 		goto fail;
 	}
+	if (certdb_update_serial(p, xerrz(e)) == -1) {
+		free(p);
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	free(p);
 
-	if (lseek(fd, 0, SEEK_SET) == -1) {
-		close(fd);
-		XERRF(e, XLOG_ERRNO, errno, "write");
-		goto fail;
+	if (certdb_commit_txn(xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return NULL;
 	}
-	r = write(fd, buf, l);
-	if (r == -1) {
-		close(fd);
-		XERRF(e, XLOG_ERRNO, errno, "write");
-		goto fail;
-	}
-	if (r < l) {
-		close(fd);
-		XERRF(e, XLOG_APP, XLOG_SHORTIO, "short write on serial file");
-		goto fail;
-	}
-	fsync(fd);
-	close(fd);
 
 	BN_free(min_bn);
 	BN_free(max_bn);
 
 	return v;
 fail:
-	BN_free(min_bn);
-	BN_free(max_bn);
-	if (fd > -1)
-		close(fd);
+	if (certdb_rollback_txn(xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, __func__);
+	if (v != NULL)
+		BN_free(v);
+	if (min_bn != NULL)
+		BN_free(min_bn);
+	if (max_bn != NULL)
+		BN_free(max_bn);
 	return NULL;
 }
 

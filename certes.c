@@ -53,7 +53,6 @@ struct certes_flatconf certes_conf = {
 	345600,
 	864000,
 	600,
-	"serial",
 	"",
 	"",
 
@@ -193,12 +192,6 @@ struct flatconf certes_config_vars[] = {
 		FLATCONF_ULONG,
 		&certes_conf.cert_check_interval_seconds,
 		sizeof(certes_conf.cert_check_interval_seconds)
-	},
-	{
-		"serial_file",
-		FLATCONF_STRING,
-		certes_conf.serial_file,
-		sizeof(certes_conf.serial_file)
 	},
 	{
 		"cert_org",
