@@ -732,6 +732,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	xlog(LOG_NOTICE, NULL, "%s: cert serial %s issued for subject %s",
+	    __func__, ce.serial, ce.subject);
 	free(ce.serial);
 	free(ce.subject);
 
@@ -772,7 +774,7 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 	char                  *serial;
 	int                    der_sz;
 
-	if (umdr_unpack(msg, msg_bootstrap_answer, uv,
+	if (umdr_unpack(msg, msg_cert_renew_answer, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
                 return XERRF(e, XLOG_ERRNO, errno,
                     "umdr_unpack/msg_bootstrap_answer");
@@ -867,6 +869,8 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 		goto fail;
 	}
 
+	xlog(LOG_NOTICE, NULL, "%s: cert serial %s issued for subject %s",
+	    __func__, ce->serial, ce->subject);
 	xlog(LOG_NOTICE, NULL, "%s: op_id %s completed", __func__, op_id);
 
 	certdb_cert_free(ce);
@@ -1064,6 +1068,8 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 	pv[2].type = MDR_B;    /* CRL bytes */
 	pv[2].v.b.bytes = crl_buf;
 	pv[2].v.b.sz = 0;
+	// TODO: we need to get all CRLs we have on the authority,
+	// not just compare what we have in the request.
 	for (p = crl_buf, i = 0, j = 0; i < crl_count; i++) {
 		if (agent_get_crl(issuers[i], &crl, &lu) == -1)
 			continue;
@@ -1089,7 +1095,7 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 	}
 	pv[1].v.au32.length = j;
 
-	if (pmdr_pack(&pm, msg_cert_renewal_required,
+	if (pmdr_pack(&pm, msg_send_updated_crls,
 	    pv, PMDRVECLEN(pv)) == MDR_FAIL)
 		abort();
 	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {

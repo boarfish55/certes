@@ -909,7 +909,7 @@ static int
 agent_refresh_crls(struct xerr *e)
 {
 	struct pmdr      pm;
-	struct pmdr_vec  pv[2];
+	struct pmdr_vec  pv[3];
 	char             pbuf[CERTES_MAX_MSG_SIZE];
 	struct authop   *op;
 	struct umdr      um;
@@ -982,6 +982,12 @@ agent_refresh_crls(struct xerr *e)
 		goto fail;
 	default:
 		XERRF(e, XLOG_APP, XLOG_BADMSG, "bad response from authority");
+		goto fail;
+	}
+
+	if (umdr_unpack(&um, msg_send_updated_crls, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL) {
+		XERR_PREPENDFN(e);
 		goto fail;
 	}
 
