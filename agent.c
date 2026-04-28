@@ -239,7 +239,9 @@ agent_tasks()
 			xlog(LOG_INFO, NULL, "%s: purging expired certs and "
 			    "bootstrap entries", __func__);
 			memcpy(&last_certdb_purge, &now, sizeof(now));
-			if (certdb_clean_expired_certs(xerrz(&e)) == -1)
+			if (certdb_clean_expired_certs(
+			    certes_conf.cert_expired_retention_seconds,
+			    xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			if (certdb_clean_expired_bootstraps(xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);

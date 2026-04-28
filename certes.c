@@ -53,6 +53,7 @@ struct certes_flatconf certes_conf = {
 	345600,
 	864000,
 	600,
+	86400,
 	"",
 	"",
 
@@ -192,6 +193,12 @@ struct flatconf certes_config_vars[] = {
 		FLATCONF_ULONG,
 		&certes_conf.cert_check_interval_seconds,
 		sizeof(certes_conf.cert_check_interval_seconds)
+	},
+	{
+		"cert_expired_retention_seconds",
+		FLATCONF_ULONG,
+		&certes_conf.cert_expired_retention_seconds,
+		sizeof(certes_conf.cert_expired_retention_seconds)
 	},
 	{
 		"cert_org",

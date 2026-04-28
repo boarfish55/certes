@@ -70,7 +70,7 @@ struct cert_entry *certdb_get_cert(const char *, struct xerr *);
 int                certdb_revoke_cert(const char *, struct xerr *);
 void               certdb_cert_free(struct cert_entry *);
 int                certdb_put_cert(const struct cert_entry *, struct xerr *);
-int                certdb_clean_expired_certs(struct xerr *);
+int                certdb_clean_expired_certs(time_t, struct xerr *);
 int                certdb_get_revoked_certs(
                        int(*cb)(const struct cert_entry *, void *),
                        void *, struct xerr *);

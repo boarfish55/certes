@@ -143,8 +143,16 @@ struct {
 
 const char *qry_bootstrap_del_expired =
     "delete from bootstrap where valid_until_sec < unixepoch()";
-const char *qry_cert_del_expired =
-    "delete from certs where not_after_sec < unixepoch()";
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_retention_sec;
+} qry_cert_del_expired = {
+	NULL,
+	"delete from certs where not_after_sec < unixepoch() + ?1",
+	1
+};
 
 struct {
 	sqlite3_stmt *stmt;
@@ -1130,15 +1138,36 @@ fail:
 	return -1;
 }
 
-// TODO: add a number of days before expiring cert entries
 int
-certdb_clean_expired_certs(struct xerr *e)
+certdb_clean_expired_certs(time_t retention, struct xerr *e)
 {
-	int r;
-	if ((r = sqlite3_exec(db, qry_cert_del_expired, NULL, NULL, NULL)))
-		return XERRF(e, XLOG_DB, r, "sqlite3_exec: %s",
+	int         r;
+	struct xerr e2;
+
+	if ((r = sqlite3_bind_int64(qry_cert_del_expired.stmt,
+	    qry_cert_del_expired.i_retention_sec, retention))) {
+		XERRF(e, XLOG_DB, r,
+		    "sqlite3_bind_int64: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	switch (sqlite3_step(qry_cert_del_expired.stmt)) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s",
 		    sqlite3_errmsg(db));
-	return 0;
+		goto fail;
+	}
+	return certdb_qry_cleanup(qry_cert_del_expired.stmt, e);
+fail:
+	if (certdb_qry_cleanup(qry_cert_del_expired.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
 }
 
 int
@@ -1253,6 +1282,12 @@ certdb_init(const char *path, struct xerr *e)
 		    "qry_bootstrap_del: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
+	if ((r = sqlite3_prepare_v2(db, qry_cert_del_expired.sql, -1,
+	    &qry_cert_del_expired.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_cert_del_expired: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
 
 	if ((r = sqlite3_prepare_v2(db, qry_cert_put.sql, -1,
 	    &qry_cert_put.stmt, NULL))) {
@@ -1311,6 +1346,10 @@ certdb_shutdown()
 	if (sqlite3_finalize(qry_bootstrap_del.stmt))
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_bootstrap_del: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_cert_del_expired.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_cert_del_expired: %s",
 		    __func__, sqlite3_errmsg(db));
 
 	if (sqlite3_finalize(qry_cert_put.stmt))
