@@ -162,6 +162,7 @@ authority_revoke(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	struct umdr_vec uv[1];
 	struct pmdr     pm;
 	char            pbuf[mdr_spec_base_sz(msg_reload_crls, 0)];
+	struct xerr     e2;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
@@ -185,7 +186,28 @@ authority_revoke(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		goto fail;
 	}
 
+	if (certdb_begin_txn(xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	if (certdb_get_cert(uv[0].v.s.bytes, xerrz(e)) == NULL) {
+		if (certdb_rollback_txn(xerrz(&e2)) == -1)
+			xlog(LOG_ERR, &e2, __func__);
+		if (xerr_is(e, XLOG_APP, XLOG_NOTFOUND)) {
+			mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+			    MDR_ERR_FAIL, "no such serial");
+			return XERR_PREPENDFN(e);
+		}
+		goto fail;
+	}
 	if (certdb_revoke_cert(uv[0].v.s.bytes, xerrz(e)) == -1) {
+		if (certdb_rollback_txn(xerrz(&e2)) == -1)
+			xlog(LOG_ERR, &e2, __func__);
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	if (certdb_commit_txn(xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
