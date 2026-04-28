@@ -1132,6 +1132,7 @@ fail:
 	return -1;
 }
 
+// TODO: add a number of days before expiring cert entries
 int
 certdb_clean_expired_certs(struct xerr *e)
 {

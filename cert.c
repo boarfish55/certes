@@ -324,22 +324,13 @@ cert_new_serial(struct xerr *e)
 		return NULL;
 	}
 
-	if (certdb_begin_txn(xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-
 	if (certdb_last_serial(buf, sizeof(buf), xerrz(e)) == -1) {
 		if (!xerr_is(e, XLOG_APP, XLOG_NOTFOUND)) {
-			if (certdb_rollback_txn(xerrz(&e2)) == -1)
-				xlog(LOG_ERR, &e2, __func__);
 			XERR_PREPENDFN(e);
 			return NULL;
 		}
 		if (certdb_init_serial(certes_conf.min_serial,
 		    xerrz(e)) == -1) {
-			if (certdb_rollback_txn(xerrz(&e2)) == -1)
-				xlog(LOG_ERR, &e2, __func__);
 			XERR_PREPENDFN(e);
 			return NULL;
 		}
@@ -347,10 +338,6 @@ cert_new_serial(struct xerr *e)
 		if (!BN_hex2bn(&v, buf)) {
 			XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
 			goto fail;
-		}
-		if (certdb_commit_txn(xerrz(e)) == -1) {
-			XERR_PREPENDFN(e);
-			return NULL;
 		}
 		return v;
 	}
@@ -411,11 +398,6 @@ cert_new_serial(struct xerr *e)
 	}
 	free(p);
 
-	if (certdb_commit_txn(xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		return NULL;
-	}
-
 	BN_free(min_bn);
 	BN_free(max_bn);
 
@@ -459,12 +441,13 @@ X509 *
 cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 {
 	X509           *newcrt = NULL;
-	BIGNUM         *serial;
+	BIGNUM         *serial = NULL;
 	X509_EXTENSION *ex;
 	X509V3_CTX      ctx;
 	X509_NAME      *name;
 	char           *sans = NULL;
 	time_t          in_tm;
+	struct xerr     e2;
 
 	X509V3_set_ctx(&ctx, agent_cert(), NULL, req, NULL, 0);
 
@@ -477,6 +460,11 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 		goto fail;
 	}
 
+	if (certdb_begin_txn(xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
 	serial = cert_new_serial(xerrz(e));
 	if (serial == NULL) {
 		XERR_PREPENDFN(e);
@@ -484,11 +472,9 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 	}
 
 	if (BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(newcrt)) == NULL) {
-		BN_free(serial);
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_to_ASN1_INTEGER");
 		goto fail;
 	}
-	BN_free(serial);
 
 	if (!X509_set_issuer_name(newcrt,
 	    X509_get_subject_name(agent_cert()))) {
@@ -580,9 +566,20 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 		goto fail;
 	}
 
+	if (certdb_commit_txn(xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
 	free(sans);
+	BN_free(serial);
 	return newcrt;
 fail:
+	if (serial != NULL) {
+		if (certdb_rollback_txn(xerrz(&e2)) == -1)
+			xlog(LOG_ERR, &e2, __func__);
+		BN_free(serial);
+	}
 	if (newcrt != NULL)
 		X509_free(newcrt);
 	free(sans);
@@ -594,10 +591,11 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
     struct xerr *e)
 {
 	X509           *newcrt = NULL;
-	BIGNUM         *serial;
+	BIGNUM         *serial = NULL;
 	X509_EXTENSION *ex;
 	X509V3_CTX      ctx;
 	char           *sans = NULL;
+	struct xerr     e2;
 
 	X509V3_set_ctx(&ctx, issuer, crt, NULL, NULL, 0);
 
@@ -610,16 +608,19 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 		goto fail;
 	}
 
+	if (certdb_begin_txn(xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
 	serial = cert_new_serial(xerrz(e));
 	if (serial == NULL)
 		goto fail;
 
 	if (BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(newcrt)) == NULL) {
-		BN_free(serial);
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_to_ASN1_INTEGER");
 		goto fail;
 	}
-	BN_free(serial);
 
 	if (!X509_set_issuer_name(newcrt, X509_get_subject_name(issuer))) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_issuer_name");
@@ -692,9 +693,20 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 		goto fail;
 	}
 
+	if (certdb_commit_txn(xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	BN_free(serial);
 	free(sans);
 	return newcrt;
 fail:
+	if (serial != NULL) {
+		if (certdb_rollback_txn(xerrz(&e2)) == -1)
+			xlog(LOG_ERR, &e2, __func__);
+		BN_free(serial);
+	}
 	if (newcrt != NULL)
 		X509_free(newcrt);
 	free(sans);
