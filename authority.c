@@ -1018,11 +1018,6 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 		    "we are not an authority");
 	}
 
-	if (umdr_unpack(msg, msg_fetch_outdated_crls, uv,
-	    UMDRVECLEN(uv)) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
-		goto fail;
-	}
 	crl_count = umdr_vec_alen(&uv[1].v.as);
 	if (umdr_vec_alen(&uv[2].v.au64) != crl_count) {
 		XERRF(e, XLOG_APP, XLOG_BADMSG,

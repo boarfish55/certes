@@ -1240,6 +1240,11 @@ certdb_init(const char *path, struct xerr *e)
 		goto fail;
 	}
 
+	if ((r = sqlite3_exec(db, qry_create_serial_table, NULL, NULL, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_exec: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+
 	if ((r = sqlite3_exec(db, qry_create_certs_index, NULL, NULL, NULL))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_exec: %s", sqlite3_errmsg(db));
 		goto fail;
@@ -1313,6 +1318,24 @@ certdb_init(const char *path, struct xerr *e)
 		    "qry_get_revoked_certs: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
+	if ((r = sqlite3_prepare_v2(db, qry_serial_init.sql, -1,
+	    &qry_serial_init.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_serial_init: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_serial_last.sql, -1,
+	    &qry_serial_last.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_serial_last: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_serial_update.sql, -1,
+	    &qry_serial_update.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_serial_update: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
 
 	return 0;
 fail:
@@ -1367,6 +1390,18 @@ certdb_shutdown()
 	if (sqlite3_finalize(qry_get_revoked_certs.stmt))
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_get_revoked_certs: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_serial_init.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_serial_init: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_serial_last.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_serial_last: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_serial_update.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_serial_update: %s",
 		    __func__, sqlite3_errmsg(db));
 
 	if (sqlite3_close(db) != SQLITE_OK)

@@ -64,7 +64,6 @@ gid = $uid
 enable_coredumps = true
 ca_file = "$basedir/authority1/root.pem"
 crl_path = "$basedir/authority1/crls"
-crl_file = "$basedir/authority1/crls/root.crl"
 cert_file = "$basedir/authority1/proxy_cert.pem"
 key_file = "$basedir/authority1/proxy_key.pem"
 require_client_cert = false
