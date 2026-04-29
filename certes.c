@@ -502,6 +502,11 @@ mdrd_backend()
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
+		case MDR_DCV_CERTES_CERT_FIND:
+			if (authority_cert_find(mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
 		case MDR_DCV_CERTES_BOOTSTRAP_ANSWER:
 			if (authority_bootstrap_answer(mrh.session, mrh.msg, &e)
 			    == MDR_FAIL)

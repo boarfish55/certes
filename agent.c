@@ -1847,25 +1847,31 @@ print_str_ext(const char *s, void *args)
 void
 agent_cli_cert(int argc, char **argv)
 {
-	int              opt, r;
-	char            *serial = NULL;
-	char            *find = NULL;
-	struct pmdr      pm;
-	struct pmdr_vec  pv[1];
-	char             pbuf[CERTES_MAX_MSG_SIZE];
-	struct umdr      um;
-	struct umdr_vec  uv[3];
-	char             ubuf[CERTES_MAX_MSG_SIZE];
-	struct xerr      e;
-	struct authop   *op;
-	X509            *crt = NULL;
-	const uint8_t   *der;
-	uint32_t         flags;
-	time_t           revoked_at_sec;
-	char            *subject;
-	struct tm        tm;
-	struct tm       *ptm;
-	char             tstr[80];
+	int               opt, r, i;
+	char             *serial = NULL;
+	char             *find = NULL;
+	struct pmdr       pm;
+	struct pmdr_vec   pv[1];
+	char              pbuf[CERTES_MAX_MSG_SIZE];
+	struct umdr       um;
+	struct umdr_vec   uv[3];
+	char              ubuf[CERTES_MAX_MSG_SIZE];
+	struct xerr       e;
+	struct authop    *op;
+	X509             *crt = NULL;
+	const uint8_t    *der;
+	uint32_t          flags;
+	time_t            revoked_at_sec;
+	char             *subject;
+	struct tm         tm;
+	struct tm        *ptm;
+	char              tstr[80];
+	const char      **serials;
+	size_t            serials_sz;
+	const char      **subjects;
+	size_t            subjects_sz;
+	uint32_t         *find_flags;
+	size_t            find_flags_sz;
 
 	for (opt = 0; opt < argc; opt++) {
 		if (argv[opt][0] != '-')
@@ -1909,20 +1915,26 @@ agent_cli_cert(int argc, char **argv)
 	if (agent_init(xerrz(&e)) == -1)
 		goto fail;
 
-	// TODO:
-	if (serial == NULL)
-		errx(1, "find not implemented");
-
 	if ((op = authop_new(
 	    (serial == NULL) ? AUTHOP_CERT_FIND : AUTHOP_CERT_GET,
 	    NULL, xerrz(&e))) == NULL)
 		goto fail;
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	pv[0].type = MDR_S;
-	pv[0].v.s = serial;
-	if (pmdr_pack(&pm, msg_cert_get, pv, PMDRVECLEN(pv)) == MDR_FAIL)
-		err(1, "pmdr_pack");
+	if (serial == NULL) {
+		pv[0].type = MDR_S;
+		pv[0].v.s = find;
+		if (pmdr_pack(&pm, msg_cert_find, pv,
+		    PMDRVECLEN(pv)) == MDR_FAIL)
+			err(1, "pmdr_pack");
+	} else {
+		pv[0].type = MDR_S;
+		pv[0].v.s = serial;
+		if (pmdr_pack(&pm, msg_cert_get, pv,
+		    PMDRVECLEN(pv)) == MDR_FAIL)
+			err(1, "pmdr_pack");
+	}
+
 
 	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(&e)) == -1)
 		goto fail;
@@ -1934,7 +1946,14 @@ agent_cli_cert(int argc, char **argv)
 		goto fail;
 
 	switch (umdr_dcv(&um)) {
+	case MDR_DCV_CERTES_CERT_FIND_ANSWER:
+		if (find == NULL)
+			errx(1, "bad response from authority");
+		/* Success */
+		break;
 	case MDR_DCV_CERTES_CERT_GET_ANSWER:
+		if (serial == NULL)
+			errx(1, "bad response from authority");
 		/* Success */
 		break;
 	case MDR_DCV_MDR_ERROR:
@@ -1947,6 +1966,40 @@ agent_cli_cert(int argc, char **argv)
 		errx(1, "revoke failed: %s (%u)", uv[2].v.s.bytes, uv[1].v.u32);
 	default:
 		errx(1, "bad response from authority");
+	}
+
+	if (serial == NULL) {
+		if (umdr_unpack(&um, msg_cert_find_answer, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "umdr_unpack/msg_cert_get_answer");
+		serials_sz = umdr_vec_alen(&uv[0].v.as);
+		subjects_sz = umdr_vec_alen(&uv[1].v.as);
+		find_flags_sz = umdr_vec_alen(&uv[2].v.au32);
+
+		if (serials_sz != subjects_sz || serials_sz != find_flags_sz)
+			errx(1, "msg_cert_find_answer: not all arrays "
+			    "are same length; invalid response");
+
+		serials = malloc(sizeof(char *) * serials_sz);
+		subjects = malloc(sizeof(char *) * subjects_sz);
+		find_flags = malloc(sizeof(uint32_t) * find_flags_sz);
+		if (serials == NULL || subjects == NULL || find_flags == NULL)
+			err(1, "malloc");
+
+		if (umdr_vec_as(&uv[0].v.as, serials, serials_sz + 1)
+		    == MDR_FAIL)
+			err(1, "umdr_vec_as");
+		if (umdr_vec_as(&uv[1].v.as, subjects, subjects_sz + 1)
+		    == MDR_FAIL)
+			err(1, "umdr_vec_as");
+		if (umdr_vec_au32(&uv[2].v.au32, find_flags, find_flags_sz + 1)
+		    == MDR_FAIL)
+			err(1, "umdr_vec_au32");
+
+		for (i = 0; i < serials_sz; i++)
+			printf("%s\t%s\t%08x\n",
+			    serials[i], subjects[i], find_flags[i]);
+		return;
 	}
 
 	if (umdr_unpack(&um, msg_cert_get_answer, uv,
@@ -1984,7 +2037,6 @@ agent_cli_cert(int argc, char **argv)
 	if (cert_foreach_san(crt, &print_str_ext, NULL, xerrz(&e)) == -1)
 		printf(" N/A\n");
 
-	printf("Revoked: %s\n", (flags & CERTDB_FLAG_REVOKED) ? "yes" : "no");
 	if (flags & CERTDB_FLAG_REVOKED) {
 		ptm = gmtime(&revoked_at_sec);
 		if (strftime(tstr, sizeof(tstr), "%F %H:%M:%S %z", ptm) == 0)
@@ -2005,7 +2057,7 @@ agent_cli_cert(int argc, char **argv)
 	PEM_write_X509(stdout, crt);
 
 	X509_free(crt);
-	exit(0);
+	return;
 fail:
 	if (crt != NULL)
 		X509_free(crt);

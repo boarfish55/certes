@@ -74,5 +74,8 @@ int                certdb_clean_expired_certs(time_t, struct xerr *);
 int                certdb_get_revoked_certs(
                        int(*cb)(const struct cert_entry *, void *),
                        void *, struct xerr *);
+int                certdb_find_certs(const char *,
+                       int(*cb)(const struct cert_entry *, void *),
+                       void *, struct xerr *);
 
 #endif

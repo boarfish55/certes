@@ -300,6 +300,113 @@ fail:
 	return -1;
 }
 
+struct find_certs_args {
+	char     **serials;
+	char     **subjects;
+	uint32_t  *flags;
+	int        count;
+	int        error;
+};
+
+static int
+find_certs(const struct cert_entry *ce, void *args)
+{
+	struct find_certs_args  *a = (struct find_certs_args *)args;
+	char                   **tmp;
+	uint32_t                *tmpflags;
+
+	if ((tmp = strarray_add(a->serials, ce->serial)) == NULL)
+		goto fail;
+	a->serials = tmp;
+	if ((tmp = strarray_add(a->subjects, ce->subject)) == NULL)
+		goto fail;
+	a->subjects = tmp;
+	if ((tmpflags = realloc(a->flags, a->count + 1)) == NULL)
+		goto fail;
+	a->flags = tmpflags;
+	a->flags[a->count] = ce->flags;
+	a->count++;
+	return 1;
+fail:
+	free(a->serials);
+	free(a->subjects);
+	free(a->flags);
+	a->error = 1;
+	return 0;
+}
+
+int
+authority_cert_find(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
+{
+	struct umdr_vec        uv[1];
+	struct pmdr            pm;
+	struct pmdr_vec        pv[3];
+	char                   pbuf[CERTES_MAX_MSG_SIZE];
+	struct find_certs_args a = { NULL, NULL, NULL, 0, 0 };
+
+	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
+	    certes_client_name(sess, NULL, 0, xerrz(e)));
+
+	if (!agent_is_authority()) {
+		mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_NOTSUPP,
+		    "we are not an authority");
+		return XERRF(e, XLOG_APP, XLOG_NOTSUP,
+		    "we are not an authority");
+	}
+
+	if (!cert_has_role(sess->cert, ROLE_CERTADMIN, xerrz(e))) {
+		mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+		    MDR_ERR_DENIED, ROLE_CERTADMIN " role required");
+		return XERRF(e, XLOG_APP, XLOG_DENIED,
+		    ROLE_CERTADMIN " role required");
+	}
+
+	if (umdr_unpack(m, msg_cert_find, uv, UMDRVECLEN(uv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
+		goto fail;
+	}
+
+	if (certdb_find_certs(uv[0].v.s.bytes, &find_certs, &a,
+	    xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	if (a.error) {
+		XERRF(e, XLOG_ERRNO, ENOMEM, "find_certs");
+		goto fail;
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_AS;   /* matching serials */
+	pv[0].v.as.items = (const char **)a.serials;
+	pv[0].v.as.length = a.count;
+	pv[1].type = MDR_AS;   /* matching subjects */
+	pv[1].v.as.items = (const char **)a.subjects;
+	pv[1].v.as.length = a.count;
+	pv[2].type = MDR_AU32; /* matching flags */
+	pv[2].v.au32.items = a.flags;
+	pv[2].v.au32.length = a.count;
+	if (pmdr_pack(&pm, msg_cert_find_answer, pv,
+	    PMDRVECLEN(pv)) == MDR_FAIL)
+		abort();
+
+	free(a.serials);
+	free(a.subjects);
+	free(a.flags);
+
+	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
+		goto fail;
+	}
+
+	return 0;
+fail:
+	mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+	    "backend failure");
+	return -1;
+}
+
 /*
  * We establish a connection to the commonName in the bootstrap
  * entry to send a challenge. The agent currently connected to us
