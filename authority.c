@@ -1011,7 +1011,7 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 
 	op_id = uv[0].v.s.bytes;
 
-	xlog(LOG_NOTICE, NULL, "%s: handling for %s, op_id=%s", __func__,
+	xlog(LOG_INFO, NULL, "%s: handling for %s, op_id=%s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)), op_id);
 
 	if (!agent_is_authority()) {

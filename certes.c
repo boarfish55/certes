@@ -31,34 +31,35 @@ static uint64_t        crls_gen = 1;
 static struct timespec next_crl_reload;
 
 struct certes_flatconf certes_conf = {
-	0,
-	CERTES_AGENT_PORT,
-	"",
-	CERTES_AGENT_PORT,
-	"",
-	"",
+	0,                      /* enable_coredumps */
+	CERTES_AGENT_PORT,      /* agent_bootstrap_port */
+	"",                     /* authority_fqdn */
+	CERTES_AGENT_PORT,      /* authority_port */
+	"",                     /* certdb_path */
+	"",                     /* certdb_backup_path */
 	86400,                  /* certdb_backup_interval_seconds */
 	0,                      /* certdb_backup_pages_per_steps */
-	60000,
-	60000,
-	"",
+	60000,                  /* agent_send_timeout_ms */
+	60000,                  /* agent_recv_timeout_ms */
+	"",                     /* bootstrap_key */
 	30,                     /* challenge_timeout */
 	"ca.pem",               /* root_cert_file */
-	"",
-	"key.pem",
-	"cert.pem",
-	"agent.lock",
-	"agent.sock",
+	"",                     /* crl_path */
+	300,                    /* crl_reload_interval_seconds */
+	"key.pem",              /* key_file */
+	"cert.pem",             /* cert_file */
+	"agent.lock",           /* lock_file */
+	"agent.sock",           /* agent_sock_path */
 	4096,                   /* max_cert_size */
-	345600,
-	864000,
-	600,
-	86400,
-	"",
-	"",
+	345600,                 /* cert_min_lifetime_seconds */
+	864000,                 /* cert_renew_lifetime_seconds */
+	600,                    /* cert_check_interval_seconds */
+	86400,                  /* cert_expired_retention_seconds */
+	"",                     /* cert_org */
+	"",                     /* cert_email */
 
-	"0x0",
-	"0x0"
+	"0x0",                  /* min_serial */
+	"0x0"                   /* max_serial */
 };
 
 struct flatconf certes_config_vars[] = {
@@ -145,6 +146,12 @@ struct flatconf certes_config_vars[] = {
 		FLATCONF_STRING,
 		certes_conf.crl_path,
 		sizeof(certes_conf.crl_path)
+	},
+	{
+		"crl_reload_interval_seconds",
+		FLATCONF_ULONG,
+		&certes_conf.crl_reload_interval_seconds,
+		sizeof(certes_conf.crl_reload_interval_seconds)
 	},
 	{
 		"key_file",
@@ -311,7 +318,7 @@ task_reload_crls()
 	if (now.tv_sec < next_crl_reload.tv_sec)
 		return;
 	memcpy(&next_crl_reload, &now, sizeof(next_crl_reload));
-	next_crl_reload.tv_sec += 300;
+	next_crl_reload.tv_sec += certes_conf.crl_reload_interval_seconds;
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	if (pmdr_pack(&pm, msg_poll_crls_gen, NULL, 0) == MDR_FAIL)
@@ -403,7 +410,7 @@ mdrd_backend()
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &next_crl_reload);
-	next_crl_reload.tv_sec += 300;
+	next_crl_reload.tv_sec += certes_conf.crl_reload_interval_seconds;
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	bzero(&mrh, sizeof(mrh));

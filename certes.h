@@ -57,6 +57,7 @@ struct certes_flatconf {
 	uint64_t challenge_timeout_seconds;
 	char     root_cert_file[PATH_MAX];
 	char     crl_path[PATH_MAX];
+	uint64_t crl_reload_interval_seconds;
 	char     key_file[PATH_MAX];
 	char     cert_file[PATH_MAX];
 	char     lock_file[PATH_MAX];

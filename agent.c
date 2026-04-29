@@ -1054,6 +1054,7 @@ agent_refresh_crls(struct xerr *e)
 
 	if (load_crls(xerrz(e)) == -1)
 		xlog(LOG_ERR, e, "%s");
+	crls_gen++;
 
 	return 0;
 fail:
