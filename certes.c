@@ -35,6 +35,7 @@ struct certes_flatconf certes_conf = {
 	CERTES_AGENT_PORT,      /* agent_bootstrap_port */
 	"",                     /* authority_fqdn */
 	CERTES_AGENT_PORT,      /* authority_port */
+	NULL,                   /* peer_authorities */
 	"",                     /* certdb_path */
 	"",                     /* certdb_backup_path */
 	86400,                  /* certdb_backup_interval_seconds */
@@ -86,6 +87,12 @@ struct flatconf certes_config_vars[] = {
 		FLATCONF_ULONG,
 		&certes_conf.authority_port,
 		sizeof(certes_conf.authority_port)
+	},
+	{
+		"peer_authorities",
+		FLATCONF_ALLOCSTRINGLIST,
+		&certes_conf.peer_authorities,
+		0
 	},
 	{
 		"certdb_path",
