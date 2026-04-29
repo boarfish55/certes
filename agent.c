@@ -46,12 +46,7 @@ static int             cert_fetch_in_progress = 0;
 
 extern struct certes_flatconf certes_conf;
 
-static struct loaded_crls {
-	uint32_t   count;
-	char     **issuers;
-	uint64_t  *last_updates;
-	X509_CRL **crls;
-} loaded_crls = { 0, NULL, NULL, NULL };
+static struct loaded_crls  loaded_crls = { 0, NULL, NULL, NULL };
 
 enum authop_type {
 	AUTHOP_BOOTSTRAP_SETUP = 1,
@@ -913,7 +908,7 @@ agent_refresh_crls(struct xerr *e)
 	char             pbuf[CERTES_MAX_MSG_SIZE];
 	struct authop   *op;
 	struct umdr      um;
-	char             ubuf[256];
+	char             ubuf[CERTES_MAX_MSG_SIZE];
 	struct umdr_vec  uv[3];
 	int              r, i;
 	uint32_t         crl_count;
@@ -1735,6 +1730,14 @@ agent_get_crl(const char *issuer_cn, const X509_CRL **crl,
 	return -1;
 }
 
+
+const struct loaded_crls *
+agent_get_loaded_crls(const char *issuer_cn, const X509_CRL **crl,
+    uint64_t *last_update)
+{
+	return &loaded_crls;
+}
+
 static int
 agent_init_ctx(struct xerr *e)
 {
@@ -1932,6 +1935,7 @@ load_crls(struct xerr *e)
 			X509_CRL_free(crl);
 			goto fail;
 		}
+		xlog(LOG_INFO, NULL, "loaded CRL with issuer %s", issuers[i]);
 		if ((lu = X509_CRL_get0_lastUpdate(crl)) == NULL) {
 			xlog(LOG_ERR, NULL, "%s: crl for issuer %s has no "
 			    "lastUpdate field; skipping", __func__,

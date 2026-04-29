@@ -988,22 +988,21 @@ int
 authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
     struct xerr *e)
 {
-	struct umdr_vec    uv[3];
-	const char        *op_id;
-	struct pmdr        pm;
-	char               pbuf[CERTES_MAX_MSG_SIZE];
-	uint8_t            crl_buf[CERTES_MAX_MSG_SIZE];
-	uint8_t           *p;
-	int                der_sz;
-	struct pmdr_vec    pv[3];
-	uint32_t           crl_count;
-	const char       **issuers = NULL;
-	uint64_t          *last_updates = NULL;
-	const char       **upd_issuers = NULL;
-	uint32_t          *upd_crl_sizes = NULL;
-	uint64_t           lu;
-	const X509_CRL    *crl;
-	int                i, j;
+	struct umdr_vec           uv[3];
+	const char               *op_id;
+	struct pmdr               pm;
+	char                      pbuf[CERTES_MAX_MSG_SIZE];
+	uint8_t                   crl_buf[CERTES_MAX_MSG_SIZE];
+	uint8_t                  *p;
+	int                       der_sz;
+	struct pmdr_vec           pv[3];
+	uint32_t                  crl_count;
+	const char              **issuers = NULL;
+	uint64_t                 *last_updates = NULL;
+	const char              **upd_issuers = NULL;
+	uint32_t                 *upd_crl_sizes = NULL;
+	int                       i, j, k, update;
+	const struct loaded_crls *loaded_crls = agent_get_loaded_crls();
 
 	if (umdr_unpack(msg, msg_fetch_outdated_crls, uv,
 	    UMDRVECLEN(uv)) == MDR_FAIL)
@@ -1068,32 +1067,40 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 	pv[2].type = MDR_B;    /* CRL bytes */
 	pv[2].v.b.bytes = crl_buf;
 	pv[2].v.b.sz = 0;
-	// TODO: we need to get all CRLs we have on the authority,
-	// not just compare what we have in the request.
-	for (p = crl_buf, i = 0, j = 0; i < crl_count; i++) {
-		if (agent_get_crl(issuers[i], &crl, &lu) == -1)
+	for (p = crl_buf, i = 0, k = 0; i < loaded_crls->count; i++) {
+		update = 1;
+		for (j = 0; j < crl_count; j++) {
+			if (strcmp(loaded_crls->issuers[i], issuers[j]) != 0)
+				continue;
+			if (last_updates[j] < loaded_crls->last_updates[i])
+				continue;
+			update = 0;
+		}
+
+		if (!update)
 			continue;
 
-		if (last_updates[i] >= lu)
-			continue;
-
-		der_sz = i2d_X509_CRL(crl, NULL);
-		if (der_sz > p - crl_buf) {
+		der_sz = i2d_X509_CRL(loaded_crls->crls[i], NULL);
+		if ((p - crl_buf) + der_sz > sizeof(crl_buf)) {
 			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "CRL data too large to fit in MDR");
 			goto fail;
 		}
-		if (der_sz < i2d_X509_CRL(crl, &p)) {
+		if (der_sz < i2d_X509_CRL(loaded_crls->crls[i], &p)) {
 			XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509_CRL");
 			goto fail;
 		}
 
-		upd_issuers[j] = issuers[i];
-		upd_crl_sizes[j] = der_sz;
+		xlog(LOG_INFO, NULL, "%s: sending CRL with issuer %s to "
+		    "client (size=%d)",
+		    __func__, loaded_crls->issuers[i], der_sz);
+
+		upd_issuers[k] = loaded_crls->issuers[i];
+		upd_crl_sizes[k] = der_sz;
 		pv[2].v.b.sz += der_sz;
-		j++;
+		k++;
 	}
-	pv[1].v.au32.length = j;
+	pv[1].v.au32.length = k;
 
 	if (pmdr_pack(&pm, msg_send_updated_crls,
 	    pv, PMDRVECLEN(pv)) == MDR_FAIL)

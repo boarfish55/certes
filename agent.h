@@ -11,6 +11,13 @@
 #include <mdr/mdr.h>
 #include <mdr/xlog.h>
 
+struct loaded_crls {
+	uint32_t   count;
+	char     **issuers;
+	uint64_t  *last_updates;
+	X509_CRL **crls;
+};
+
 int         agent_load_keys(struct xerr *);
 int         agent_is_authority();
 void        agent_cleanup();
@@ -26,5 +33,7 @@ int         agent_send(const void *, size_t, struct xerr *);
 int         agent_recv(void *, size_t, struct xerr *);
 int         agent_reload_crls(struct xerr *);
 int         agent_get_crl(const char *, const X509_CRL **, uint64_t *);
+
+const struct loaded_crls *agent_get_loaded_crls();
 
 #endif
