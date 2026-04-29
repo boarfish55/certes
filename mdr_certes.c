@@ -196,6 +196,75 @@ struct mdr_def msgdef_send_updated_crls = {
 };
 const struct mdr_spec *msg_send_updated_crls;
 
+struct mdr_def msgdef_cert_get = {
+	MDR_DCV_CERTES_CERT_GET,
+	"certes.cert_get",
+	{
+		MDR_S,   /* cert serial */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_get;
+
+struct mdr_def msgdef_cert_get_answer = {
+	MDR_DCV_CERTES_CERT_GET_ANSWER,
+	"certes.cert_get_answer",
+	{
+		MDR_B,    /* DER-encoded cert */
+		MDR_U64,  /* certdb revoked_at_sec */
+		MDR_U32,  /* certdb flags */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_get_answer;
+
+struct mdr_def msgdef_cert_find = {
+	MDR_DCV_CERTES_CERT_FIND,
+	"certes.cert_find",
+	{
+		MDR_S,   /* cert pattern */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_find;
+
+struct mdr_def msgdef_cert_find_answer = {
+	MDR_DCV_CERTES_CERT_FIND_ANSWER,
+	"certes.cert_find_answer",
+	{
+		MDR_AS,   /* matching serials */
+		MDR_AS,   /* matching subjects */
+		MDR_AU32, /* matching flags */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_find_answer;
+
+/*
+ * Edit certificate roles
+ */
+struct mdr_def msgdef_cert_add_role = {
+	MDR_DCV_CERTES_CERT_ADD_ROLE,
+	"certes.cert_add_role",
+	{
+		MDR_S,   /* cert serial */
+		MDR_S,   /* role */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_add_role;
+
+struct mdr_def msgdef_cert_del_role = {
+	MDR_DCV_CERTES_CERT_DEL_ROLE,
+	"certes.cert_del_role",
+	{
+		MDR_S,   /* cert serial */
+		MDR_S,   /* role */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_del_role;
+
 int
 beout_ok(struct mdrd_besession *sess, const char *op_id, uint32_t beout_flags)
 {
@@ -292,5 +361,23 @@ load_mdr_defs()
 		errx(1, "mdr_register_spec");
 	if ((msg_send_updated_crls =
 	    mdr_register_spec(&msgdef_send_updated_crls)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_get =
+	    mdr_register_spec(&msgdef_cert_get)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_get_answer =
+	    mdr_register_spec(&msgdef_cert_get_answer)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_find =
+	    mdr_register_spec(&msgdef_cert_find)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_find_answer =
+	    mdr_register_spec(&msgdef_cert_find_answer)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_add_role =
+	    mdr_register_spec(&msgdef_cert_add_role)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_del_role =
+	    mdr_register_spec(&msgdef_cert_del_role)) == NULL)
 		errx(1, "mdr_register_spec");
 }

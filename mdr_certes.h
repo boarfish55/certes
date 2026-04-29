@@ -110,6 +110,34 @@ extern const struct mdr_spec *msg_fetch_outdated_crls;
     MDR_DCV(0x00000002, 0x0011, 0x0000)
 extern const struct mdr_spec *msg_send_updated_crls;
 
+/*
+ * Find certificates / get a certificate
+ */
+#define MDR_DCV_CERTES_CERT_GET \
+    MDR_DCV(0x00000002, 0x0012, 0x0000)
+extern const struct mdr_spec *msg_cert_get;
+#define MDR_DCV_CERTES_CERT_GET_ANSWER \
+    MDR_DCV(0x00000002, 0x0013, 0x0000)
+extern const struct mdr_spec *msg_cert_get_answer;
+#define MDR_DCV_CERTES_CERT_FIND \
+    MDR_DCV(0x00000002, 0x0014, 0x0000)
+extern const struct mdr_spec *msg_cert_find;
+#define MDR_DCV_CERTES_CERT_FIND_ANSWER \
+    MDR_DCV(0x00000002, 0x0015, 0x0000)
+extern const struct mdr_spec *msg_cert_find_answer;
+
+/*
+ * Edit certificate roles
+ */
+// TODO:
+#define MDR_DCV_CERTES_CERT_ADD_ROLE \
+    MDR_DCV(0x00000002, 0x0016, 0x0000)
+extern const struct mdr_spec *msg_cert_add_role;
+// TODO:
+#define MDR_DCV_CERTES_CERT_DEL_ROLE \
+    MDR_DCV(0x00000002, 0x0017, 0x0000)
+extern const struct mdr_spec *msg_cert_del_role;
+
 /* Built-ins */
 extern const struct mdr_spec *msg_pack_beout;
 

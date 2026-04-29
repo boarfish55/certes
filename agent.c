@@ -54,7 +54,9 @@ enum authop_type {
 	AUTHOP_BOOTSTRAP,
 	AUTHOP_CERT_RENEW,
 	AUTHOP_CERT_REVOKE,
-	AUTHOP_REFRESH_CRLS
+	AUTHOP_REFRESH_CRLS,
+	AUTHOP_CERT_GET,
+	AUTHOP_CERT_FIND
 };
 
 struct authop {
@@ -268,7 +270,8 @@ agent_tasks()
 		    certes_conf.crl_reload_interval_seconds)
 			return;
 		memcpy(&last_crl_check, &now, sizeof(now));
-		for (i = 0; certes_conf.peer_authorities[i] != NULL; i++) {
+		for (i = 0; certes_conf.peer_authorities != NULL &&
+		    certes_conf.peer_authorities[i] != NULL; i++) {
 			if (agent_refresh_peer_crl(
 			    certes_conf.peer_authorities[i], xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, __func__);
@@ -1822,6 +1825,192 @@ agent_cli_revoke(int argc, char **argv)
 	default:
 		errx(1, "bad response from authority");
 	}
+}
+
+static void
+cli_cert_usage()
+{
+	printf("Usage: %s cert [-serial <serial>] [-find <pattern>]\n",
+	    CERTES_PROGNAME);
+	printf("\t-help             Prints this help\n");
+	printf("\t-serial <serial>  Serial of the certificate to display\n");
+	printf("\t-find <pattern>   List serials matching pattern\n");
+}
+
+static int
+print_str_ext(const char *s, void *args)
+{
+	printf("  - %s\n", s);
+	return 1;
+}
+
+void
+agent_cli_cert(int argc, char **argv)
+{
+	int              opt, r;
+	char            *serial = NULL;
+	char            *find = NULL;
+	struct pmdr      pm;
+	struct pmdr_vec  pv[1];
+	char             pbuf[CERTES_MAX_MSG_SIZE];
+	struct umdr      um;
+	struct umdr_vec  uv[3];
+	char             ubuf[CERTES_MAX_MSG_SIZE];
+	struct xerr      e;
+	struct authop   *op;
+	X509            *crt = NULL;
+	const uint8_t   *der;
+	uint32_t         flags;
+	time_t           revoked_at_sec;
+	char            *subject;
+	struct tm        tm;
+	struct tm       *ptm;
+	char             tstr[80];
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			cli_cert_usage();
+			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-serial") == 0) {
+			opt++;
+			if (opt > argc) {
+				cli_cert_usage();
+				exit(1);
+			}
+			serial = argv[opt];
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-find") == 0) {
+			opt++;
+			if (opt > argc) {
+				cli_cert_usage();
+				exit(1);
+			}
+			find = argv[opt];
+			continue;
+		}
+	}
+
+	if (serial == NULL && find == NULL) {
+		warn("no serial or pattern provided");
+		cli_cert_usage();
+		exit(1);
+	}
+
+	if (cert_init(xerrz(&e)) == -1)
+		goto fail;
+
+	if (agent_init(xerrz(&e)) == -1)
+		goto fail;
+
+	// TODO:
+	if (serial == NULL)
+		errx(1, "find not implemented");
+
+	if ((op = authop_new(
+	    (serial == NULL) ? AUTHOP_CERT_FIND : AUTHOP_CERT_GET,
+	    NULL, xerrz(&e))) == NULL)
+		goto fail;
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = serial;
+	if (pmdr_pack(&pm, msg_cert_get, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		err(1, "pmdr_pack");
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(&e)) == -1)
+		goto fail;
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(&e))) == -1)
+		goto fail;
+
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL)
+		goto fail;
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_CERTES_CERT_GET_ANSWER:
+		/* Success */
+		break;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv, 2) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "revoke failed: %s (%u)", uv[1].v.s.bytes, uv[0].v.u32);
+	case MDR_DCV_CERTES_ERROR:
+		if (umdr_unpack(&um, msg_error, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "revoke failed: %s (%u)", uv[2].v.s.bytes, uv[1].v.u32);
+	default:
+		errx(1, "bad response from authority");
+	}
+
+	if (umdr_unpack(&um, msg_cert_get_answer, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL)
+		err(1, "umdr_unpack/msg_cert_get_answer");
+
+	der = uv[0].v.b.bytes;
+	revoked_at_sec = uv[1].v.u64;
+	flags = uv[2].v.u32;
+
+	crt = d2i_X509(NULL, &der, uv[0].v.b.sz);
+	/* der is incremented */
+	if (crt == NULL) {
+		XERRF(&e, XLOG_APP, XLOG_BADMSG,
+		    "cert_get_answer reply did not contain a valid "
+		    "DER-encoded X.509, or alloc failed");
+		goto fail;
+	}
+
+	if ((serial = cert_serial_to_hex(crt, xerrz(&e))) == NULL)
+		goto fail;
+	printf("Serial:  %s\n", serial);
+	free(serial);
+
+	if ((subject = cert_subject_oneline(crt, xerrz(&e))) == NULL)
+		goto fail;
+	printf("Subject: %s\n", subject);
+	free(subject);
+
+	printf("Roles:\n");
+	if (cert_foreach_role(crt, &print_str_ext, NULL, xerrz(&e)) == -1)
+		printf(" N/A\n");
+
+	printf("SANs:\n");
+	if (cert_foreach_san(crt, &print_str_ext, NULL, xerrz(&e)) == -1)
+		printf(" N/A\n");
+
+	printf("Revoked: %s\n", (flags & CERTDB_FLAG_REVOKED) ? "yes" : "no");
+	if (flags & CERTDB_FLAG_REVOKED) {
+		ptm = gmtime(&revoked_at_sec);
+		if (strftime(tstr, sizeof(tstr), "%F %H:%M:%S %z", ptm) == 0)
+			errx(1, "strftime() result too large");
+		printf("Revoked at: %s\n", tstr);
+	}
+
+	ASN1_TIME_to_tm(X509_get_notBefore(crt), &tm);
+	if (strftime(tstr, sizeof(tstr), "%F %H:%M:%S %z", &tm) == 0)
+		errx(1, "strftime() result too large");
+	printf("Not before: %s\n", tstr);
+
+	ASN1_TIME_to_tm(X509_get_notAfter(crt), &tm);
+	if (strftime(tstr, sizeof(tstr), "%F %H:%M:%S %z", &tm) == 0)
+		errx(1, "strftime() result too large");
+	printf("Not after:  %s\n", tstr);
+
+	PEM_write_X509(stdout, crt);
+
+	X509_free(crt);
+	exit(0);
+fail:
+	if (crt != NULL)
+		X509_free(crt);
+	xerr_print(&e);
+	exit(1);
 }
 
 static int

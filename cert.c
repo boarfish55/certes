@@ -34,41 +34,6 @@ cert_init(struct xerr *e)
 	return 0;
 }
 
-ssize_t
-cert_decode_certes_roles(X509_EXTENSION *ext, char **roles, ssize_t roles_len)
-{
-	ASN1_OCTET_STRING   *asn1str;
-	STACK_OF(ASN1_TYPE) *seq;
-	ASN1_TYPE           *v;
-	ssize_t              i;
-	const unsigned char *p;
-
-	asn1str = X509_EXTENSION_get_data(ext);
-	p = asn1str->data;
-
-	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
-	    (const unsigned char **)&p, asn1str->length);
-
-	if (roles == NULL) {
-		/*
-		 * If roles is NULL, we just return how many roles
-		 * we would need to fill in.
-		 */
-		i = sk_ASN1_TYPE_num(seq);
-		sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
-		return i;
-	}
-
-	for (i = 0; i < roles_len && sk_ASN1_TYPE_num(seq) > 0; i++) {
-		v = sk_ASN1_TYPE_shift(seq);
-		strlcpy(roles[i], (const char *)v->value.ia5string->data,
-		    CERTES_MAX_ROLE_LENGTH);
-		ASN1_TYPE_free(v);
-	}
-	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
-	return i;
-}
-
 X509_EXTENSION *
 cert_encode_certes_roles(const char **roles)
 {
@@ -134,7 +99,8 @@ fail:
 }
 
 int
-cert_has_role(X509 *crt, const char *role, struct xerr *e)
+cert_foreach_role(X509 *crt, int(*cb)(const char *, void *), void *args,
+    struct xerr *e)
 {
 	int                  roles_idx;
 	X509_EXTENSION      *ext;
@@ -143,11 +109,11 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 	ASN1_TYPE           *v;
 	ssize_t              i;
 	const unsigned char *p;
-	int                  found = 0;
 
 	roles_idx = X509_get_ext_by_NID(crt, NID_certes_roles, -1);
 	if (roles_idx == -1)
-		return 0;
+		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
+		    "%s: certesRoles extension not found", __func__);
 
 	if ((ext = X509_get_ext(crt, roles_idx)) == NULL)
 		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
@@ -159,22 +125,54 @@ cert_has_role(X509 *crt, const char *role, struct xerr *e)
 	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
 	    (const unsigned char **)&p, asn1str->length);
 
-	for (i = 0; !found && i < sk_ASN1_TYPE_num(seq); i++) {
+	for (i = 0; i < sk_ASN1_TYPE_num(seq); i++) {
 		v = sk_ASN1_TYPE_value(seq, i);
-		if (strcmp(role, (const char *)v->value.ia5string->data) == 0)
-			found = 1;
+		if (!cb((const char *)v->value.ia5string->data, args))
+			break;
 	}
 	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
-	return found;
+	return 0;
+}
+
+struct has_role_args
+{
+	const char *role;
+	int         found;
+};
+
+static int
+has_role(const char *role, void *args)
+{
+	struct has_role_args *a = (struct has_role_args *)args;
+
+	if (strcmp(role, a->role) == 0) {
+		a->found = 1;
+		return 0;
+	}
+
+	return 1;
 }
 
 int
-cert_has_san(X509 *crt, const char *san, struct xerr *e)
+cert_has_role(X509 *crt, const char *role, struct xerr *e)
+{
+	int                  r;
+	struct has_role_args a = { role, 0 };
+
+	r = cert_foreach_role(crt, &has_role, &a, xerrz(e));
+	if (r == -1 && !xerr_is(e, XLOG_APP, XLOG_NOTFOUND))
+		return XERR_PREPENDFN(e);
+	return a.found;
+}
+
+int
+cert_foreach_san(X509 *crt, int(*cb)(const char *, void *), void *args,
+    struct xerr *e)
 {
 	STACK_OF(GENERAL_NAME) *sans = NULL;
 	GENERAL_NAME           *gname;
 	char                    name[512];
-	int                     i, found = 0;
+	int                     i;
 
 	sans = (STACK_OF(GENERAL_NAME) *)X509_get_ext_d2i(crt,
 	    NID_subject_alt_name, NULL, NULL);
@@ -182,7 +180,7 @@ cert_has_san(X509 *crt, const char *san, struct xerr *e)
 		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "%s: subjectAltName extension not found", __func__);
 
-	for (i = 0; i < sk_GENERAL_NAME_num(sans) && !found; i++) {
+	for (i = 0; i < sk_GENERAL_NAME_num(sans); i++) {
 		gname = sk_GENERAL_NAME_value(sans, i);
 		switch (gname->type) {
 		case GEN_DNS:
@@ -198,12 +196,42 @@ cert_has_san(X509 *crt, const char *san, struct xerr *e)
 			return XERRF(e, XLOG_APP, XLOG_FAIL,
 			    "%s: unknown subjectAltName type", __func__);
 		}
-		if (strcmp(san, name) == 0)
-			found = 1;
+		if (!cb(name, args))
+			break;
+	}
+	GENERAL_NAMES_free(sans);
+	return 0;
+}
+
+struct has_san_args
+{
+	const char *san;
+	int         found;
+};
+
+static int
+has_san(const char *san, void *args)
+{
+	struct has_san_args *a = (struct has_san_args *)args;
+
+	if (strcmp(san, a->san) == 0) {
+		a->found = 1;
+		return 0;
 	}
 
-	GENERAL_NAMES_free(sans);
-	return found;
+	return 1;
+}
+
+int
+cert_has_san(X509 *crt, const char *san, struct xerr *e)
+{
+	int                 r;
+	struct has_san_args a = { san, 0 };
+
+	r = cert_foreach_san(crt, &has_san, &a, xerrz(e));
+	if (r == -1)
+		return XERR_PREPENDFN(e);
+	return a.found;
 }
 
 X509_NAME *

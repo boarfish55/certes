@@ -159,10 +159,11 @@ fail:
 int
 authority_revoke(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 {
-	struct umdr_vec uv[1];
-	struct pmdr     pm;
-	char            pbuf[mdr_spec_base_sz(msg_reload_crls, 0)];
-	struct xerr     e2;
+	struct umdr_vec    uv[1];
+	struct pmdr        pm;
+	char               pbuf[mdr_spec_base_sz(msg_reload_crls, 0)];
+	struct xerr        e2;
+	struct cert_entry *ce;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
@@ -191,7 +192,7 @@ authority_revoke(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		goto fail;
 	}
 
-	if (certdb_get_cert(uv[0].v.s.bytes, xerrz(e)) == NULL) {
+	if ((ce = certdb_get_cert(uv[0].v.s.bytes, xerrz(e))) == NULL) {
 		if (certdb_rollback_txn(xerrz(&e2)) == -1)
 			xlog(LOG_ERR, &e2, __func__);
 		if (xerr_is(e, XLOG_APP, XLOG_NOTFOUND)) {
@@ -199,8 +200,10 @@ authority_revoke(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 			    MDR_ERR_FAIL, "no such serial");
 			return XERR_PREPENDFN(e);
 		}
+		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	certdb_cert_free(ce);
 	if (certdb_revoke_cert(uv[0].v.s.bytes, xerrz(e)) == -1) {
 		if (certdb_rollback_txn(xerrz(&e2)) == -1)
 			xlog(LOG_ERR, &e2, __func__);
@@ -222,6 +225,72 @@ authority_revoke(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	if (mdrd_beout_ok(sess, MDRD_BEOUT_FNONE) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout_ok");
 		return -1;
+	}
+
+	return 0;
+fail:
+	mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+	    "backend failure");
+	return -1;
+}
+
+int
+authority_cert_get(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
+{
+	struct umdr_vec    uv[1];
+	struct pmdr        pm;
+	struct pmdr_vec    pv[3];
+	struct cert_entry *ce = NULL;
+	char               pbuf[mdr_spec_base_sz(msg_cert_get_answer,
+	    certes_conf.max_cert_size)];
+
+	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
+	    certes_client_name(sess, NULL, 0, xerrz(e)));
+
+	if (!agent_is_authority()) {
+		mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_NOTSUPP,
+		    "we are not an authority");
+		return XERRF(e, XLOG_APP, XLOG_NOTSUP,
+		    "we are not an authority");
+	}
+
+	if (!cert_has_role(sess->cert, ROLE_CERTADMIN, xerrz(e))) {
+		mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+		    MDR_ERR_DENIED, ROLE_CERTADMIN " role required");
+		return XERRF(e, XLOG_APP, XLOG_DENIED,
+		    ROLE_CERTADMIN " role required");
+	}
+
+	if (umdr_unpack(m, msg_cert_get, uv, UMDRVECLEN(uv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_unpack");
+		goto fail;
+	}
+
+	if ((ce = certdb_get_cert(uv[0].v.s.bytes, xerrz(e))) == NULL) {
+		if (xerr_is(e, XLOG_APP, XLOG_NOTFOUND)) {
+			mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+			    MDR_ERR_FAIL, "no such serial");
+			return 0;
+		}
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_B;
+	pv[0].v.b.bytes = ce->der;
+	pv[0].v.b.sz = ce->der_sz;
+	pv[1].type = MDR_U64;
+	pv[1].v.u64 = ce->revoked_at_sec;
+	pv[2].type = MDR_U32;
+	pv[2].v.u32 = ce->flags;
+	if (pmdr_pack(&pm, msg_cert_get_answer, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		abort();
+	certdb_cert_free(ce);
+
+	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
+		goto fail;
 	}
 
 	return 0;
