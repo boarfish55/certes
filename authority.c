@@ -272,6 +272,8 @@ authority_role_mod(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		goto fail;
 	}
 
+	free(new_roles);
+	new_roles = NULL;
 	certdb_cert_free(ce);
 	ce = NULL;
 

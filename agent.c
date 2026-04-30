@@ -135,6 +135,7 @@ static int            agent_error(struct umdr *, struct xerr *);
 static int            load_crls(struct xerr *);
 static int            agent_init_ctx(struct xerr *);
 static int            agent_poll_crls_gen(int, struct xerr *);
+static int            agent_regen_crl(struct xerr *);
 
 static int
 verify_callback(int ok, X509_STORE_CTX *ctx)
@@ -476,7 +477,7 @@ agent_run(int lsock, struct xerr *e)
 				xlog(LOG_INFO, NULL,
 				    "%s: received CRLs reload request",
 				    __func__);
-				if (agent_reload_crls(xerrz(e)) == MDR_FAIL)
+				if (agent_regen_crl(xerrz(e)) == MDR_FAIL)
 					xlog(LOG_ERR, e, "%s", __func__);
 				else
 					crls_gen++;
@@ -1358,10 +1359,10 @@ fail:
 }
 
 /*
- * Reload CRLs after reinitiating our store/ctx
+ * Regen CRL after reinitiating our store/ctx
  */
-int
-agent_reload_crls(struct xerr *e)
+static int
+agent_regen_crl(struct xerr *e)
 {
 	if (cert != NULL) {
 		X509_free(cert);
@@ -1382,6 +1383,30 @@ agent_reload_crls(struct xerr *e)
 		if (cert_gen_crl(xerrz(e)) == -1)
 			return XERR_PREPENDFN(e);
 	}
+
+	if (load_crls(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
+
+	return 0;
+}
+
+/*
+ * Reload CRLs after reinitiating our store/ctx
+ */
+int
+agent_reload_crls(struct xerr *e)
+{
+	if (cert != NULL) {
+		X509_free(cert);
+		cert = NULL;
+	}
+	if (ssl_ctx != NULL) {
+		SSL_CTX_free(ssl_ctx);
+		ssl_ctx = NULL;
+	}
+
+	if (agent_init_ctx(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
 
 	if (load_crls(xerrz(e)) == -1)
 		return XERR_PREPENDFN(e);
@@ -1667,7 +1692,8 @@ role_usage()
 	    CERTES_PROGNAME);
 	printf("\t-help        Prints this help\n");
 	printf("\t-serial      Which cert to change\n");
-	printf("\t-role        Role to add/remove\n");
+	printf("\t-add         Role to add\n");
+	printf("\t-del         Role to remove\n");
 }
 
 void
