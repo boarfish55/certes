@@ -1095,8 +1095,7 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 fail:
 	if (crl != NULL)
 		X509_CRL_free(crl);
-	if (crl_sizes != NULL)
-		free(crl_sizes);
+	free(crl_sizes);
 	authop_free(op);
 	return -1;
 }

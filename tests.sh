@@ -98,7 +98,7 @@ if [ -x /usr/bin/valgrind -a "$USE_VALGRIND" = "yes" ]; then
 	cat << EOF >> $basedir/authority1/mdrd.conf
 backend_argv = [
 	"/usr/bin/valgrind"
-	"--log-file=$basedir/authority1/valgrind.out"
+	"--log-file=$basedir/authority1/valgrind.%p.out"
 	"--keep-stacktraces=none"
 	"--leak-check=full"
 	"--track-origins=yes"

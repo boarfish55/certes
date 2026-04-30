@@ -948,8 +948,7 @@ authority_send_cert(struct mdrd_besession *sess, const char *op_id,
 	free(der_chain);
 	return 0;
 fail:
-	if (der_chain != NULL)
-		free(der_chain);
+	free(der_chain);
 	return -1;
 }
 
@@ -1070,8 +1069,7 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	return 0;
 fail:
 	certdb_bootstrap_free(be);
-	if (crt_buf != NULL)
-		free(crt_buf);
+	free(crt_buf);
 	if (crt != NULL)
 		X509_free(crt);
 	return -1;

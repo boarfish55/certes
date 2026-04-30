@@ -367,6 +367,8 @@ cert_new_serial(struct xerr *e)
 			XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
 			goto fail;
 		}
+		BN_free(min_bn);
+		BN_free(max_bn);
 		return v;
 	}
 
