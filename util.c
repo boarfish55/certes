@@ -65,6 +65,11 @@ strlist_split(char ***strlist, const char *src, size_t src_len)
 	int   sz = 0;
 	char *str_p, **strlist_p;
 
+	if (strlist == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+
 	for (i = 0; i < src_len; i++)
 		if (src[i] == '\0')
 			sz++;

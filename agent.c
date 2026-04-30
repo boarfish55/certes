@@ -115,8 +115,7 @@ client_free(struct client *c)
 static void           free_loaded_crls();
 static int            agent_bootstrap(struct xerr *);
 static int            agent_cert_renew_inquiry(struct xerr *);
-static int            agent_refresh_crls(struct xerr *);
-static int            agent_refresh_peer_crl(const char *, struct xerr *);
+static int            agent_refresh_crls(const char *, struct xerr *);
 static int            agent_bootstrap_dialback(struct umdr *, struct xerr *);
 static int            agent_cert_renew_dialback(struct umdr *, struct xerr *);
 static int            agent_recv_cert(struct authop *, struct xerr *);
@@ -274,7 +273,7 @@ agent_tasks()
 		memcpy(&last_crl_check, &now, sizeof(now));
 		for (i = 0; certes_conf.peer_authorities != NULL &&
 		    certes_conf.peer_authorities[i] != NULL; i++) {
-			if (agent_refresh_peer_crl(
+			if (agent_refresh_crls(
 			    certes_conf.peer_authorities[i], xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, __func__);
 		}
@@ -297,7 +296,7 @@ agent_tasks()
 		if (agent_cert_renew_inquiry(xerrz(&e)) == -1)
 			xlog(LOG_ERR, &e, __func__);
 
-		if (agent_refresh_crls(xerrz(&e)) == -1)
+		if (agent_refresh_crls(NULL, xerrz(&e)) == -1)
 			xlog(LOG_ERR, &e, __func__);
 	}
 
@@ -917,172 +916,6 @@ fail:
 }
 
 static int
-agent_refresh_crls(struct xerr *e)
-{
-	struct pmdr      pm;
-	struct pmdr_vec  pv[3];
-	char             pbuf[CERTES_MAX_MSG_SIZE];
-	struct authop   *op;
-	struct umdr      um;
-	char             ubuf[CERTES_MAX_MSG_SIZE];
-	struct umdr_vec  uv[3];
-	int              r, i;
-	uint32_t         crl_count;
-	uint32_t        *crl_sizes = NULL;
-	const uint8_t   *p;
-	X509_CRL        *crl = NULL;
-	X509_NAME       *issuer;
-	char             issuer_cn[256];
-	char             crl_path[PATH_MAX];
-	FILE            *f;
-
-	if ((op = authop_new(AUTHOP_REFRESH_CRLS, NULL, xerrz(e))) == NULL)
-		return XERR_PREPENDFN(e);
-
-	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
-	pv[0].type = MDR_S;
-	pv[0].v.s = op->id;
-	pv[1].type = MDR_AS;
-	pv[1].v.as.items = (const char **)loaded_crls.issuers;
-	pv[1].v.as.length = loaded_crls.count;
-	pv[2].type = MDR_AU64;
-	pv[2].v.au64.items = loaded_crls.last_updates;
-	pv[2].v.au64.length = loaded_crls.count;
-	if (pmdr_pack(&pm, msg_fetch_outdated_crls, pv,
-	    PMDRVECLEN(pv)) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno,
-		    "pmdr_pack/msg_fetch_outdated_crls");
-		goto fail;
-	}
-
-	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		goto fail;
-	}
-
-	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(e))) == -1) {
-		XERR_PREPENDFN(e);
-		goto fail;
-	}
-	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
-		XERR_PREPENDFN(e);
-		goto fail;
-	}
-
-	switch (umdr_dcv(&um)) {
-	case MDR_DCV_CERTES_SEND_UPDATED_CRLS:
-		/* Success */
-		break;
-	case MDR_DCV_CERTES_ERROR:
-		if (umdr_unpack(&um, msg_error, uv,
-		    UMDRVECLEN(uv)) == MDR_FAIL) {
-			XERR_PREPENDFN(e);
-			goto fail;
-		}
-		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
-		    op->id, uv[2].v.s.bytes, uv[1].v.u32);
-		goto fail;
-	case MDR_DCV_MDR_ERROR:
-		if (umdr_unpack(&um, mdr_msg_error, uv,
-		    UMDRVECLEN(uv)) == MDR_FAIL) {
-			XERR_PREPENDFN(e);
-			goto fail;
-		}
-		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
-		    op->id, uv[1].v.s.bytes, uv[0].v.u32);
-		goto fail;
-	default:
-		XERRF(e, XLOG_APP, XLOG_BADMSG, "bad response from authority");
-		goto fail;
-	}
-
-	if (umdr_unpack(&um, msg_send_updated_crls, uv,
-	    UMDRVECLEN(uv)) == MDR_FAIL) {
-		XERR_PREPENDFN(e);
-		goto fail;
-	}
-
-	crl_count = umdr_vec_alen(&uv[1].v.au32);
-	if (crl_count == 0) {
-		authop_free(op);
-		return 0;
-	}
-
-	xlog(LOG_NOTICE, NULL, "%s: %u CRLs to update",
-	    __func__, crl_count);
-
-	crl_sizes = malloc(sizeof(uint32_t) * crl_count);
-	if (crl_sizes == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
-		goto fail;
-	}
-
-	if (umdr_vec_au32(&uv[1].v.au32, crl_sizes, crl_count) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_au32");
-		goto fail;
-	}
-
-	for (i = 0, p = uv[2].v.b.bytes;
-	    i < crl_count && (p - (uint8_t *)uv[2].v.b.bytes) < uv[2].v.b.sz;
-	    i++) {
-		crl = d2i_X509_CRL(NULL, &p, crl_sizes[i]);
-		/* p is incremented */
-		if (crl == NULL) {
-			XERRF(e, XLOG_APP, XLOG_BADMSG,
-			    "reply did not contain a valid "
-			    "DER-encoded X.509 CRL, or alloc failed");
-			goto fail;
-		}
-
-		issuer = X509_CRL_get_issuer(crl);
-		if (X509_NAME_get_text_by_NID(issuer, NID_commonName,
-		    issuer_cn, sizeof(issuer_cn)) < 0) {
-			XERRF(e, XLOG_SSL, ERR_get_error(),
-			    "X509_NAME_get_text_by_NID");
-			goto fail;
-		}
-
-		if (snprintf(crl_path, sizeof(crl_path), "%s/%s.crl",
-		    certes_conf.crl_path, issuer_cn) >= sizeof(crl_path)) {
-			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
-			    "crl path too long");
-			goto fail;
-		}
-
-		if ((f = fopen(crl_path, "w")) == NULL) {
-			XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
-			goto fail;
-		}
-		if (PEM_write_X509_CRL(f, crl) == 0) {
-			fclose(f);
-			XERRF(e, XLOG_SSL, ERR_get_error(),
-			    "PEM_write_X509_CRL");
-			goto fail;
-		}
-		fclose(f);
-		X509_CRL_free(crl);
-		crl = NULL;
-		xlog(LOG_NOTICE, NULL, "%s: wrote updated CRL from %s",
-		    __func__, issuer_cn);
-	}
-	free(crl_sizes);
-	authop_free(op);
-
-	if (load_crls(xerrz(e)) == -1)
-		xlog(LOG_ERR, e, "%s");
-	crls_gen++;
-
-	return 0;
-fail:
-	if (crl != NULL)
-		X509_CRL_free(crl);
-	if (crl_sizes != NULL)
-		free(crl_sizes);
-	authop_free(op);
-	return -1;
-}
-
-static int
 agent_poll_crls_gen(int cfd, struct xerr *e)
 {
 	struct pmdr     pm;
@@ -1104,10 +937,10 @@ agent_poll_crls_gen(int cfd, struct xerr *e)
 }
 
 static int
-agent_refresh_peer_crl(const char *peer_fqdn, struct xerr *e)
+agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 {
 	struct pmdr      pm;
-	struct pmdr_vec  pv[2];
+	struct pmdr_vec  pv[3];
 	char             pbuf[CERTES_MAX_MSG_SIZE];
 	struct authop   *op;
 	struct umdr      um;
@@ -1248,7 +1081,6 @@ agent_refresh_peer_crl(const char *peer_fqdn, struct xerr *e)
 		}
 		fclose(f);
 		X509_CRL_free(crl);
-		crl = NULL;
 		xlog(LOG_NOTICE, NULL, "%s: wrote updated CRL from %s",
 		    __func__, issuer_cn);
 	}
@@ -1885,7 +1717,7 @@ agent_cli_role(int argc, char **argv)
 				role_usage();
 				exit(1);
 			}
-			del_roles = strarray_add(add_roles, argv[opt]);
+			del_roles = strarray_add(del_roles, argv[opt]);
 			if (del_roles == NULL)
 				err(1, "strarray_add");
 			del_roles_sz++;
@@ -2443,9 +2275,12 @@ load_crls(struct xerr *e)
 	if (*certes_conf.crl_path == '\0')
 		return 0;
 
-	mkdir(certes_conf.crl_path, 0700);
+	if (mkdir(certes_conf.crl_path, 0700) == -1 && errno != EEXIST)
+		return XERRF(e, XLOG_ERRNO, errno, "mkdir: %s",
+		    certes_conf.crl_path);
 	if ((d = opendir(certes_conf.crl_path)) == NULL)
-		return XERRF(e, XLOG_ERRNO, errno, "opendir");
+		return XERRF(e, XLOG_ERRNO, errno, "opendir: %s",
+		    certes_conf.crl_path);
 
 	for (;;) {
 		errno = 0;

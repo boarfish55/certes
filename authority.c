@@ -266,7 +266,6 @@ authority_role_mod(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 
 	if (certdb_mod_roles(serial, (const char **)new_roles,
 	    new_roles_sz, xerrz(e)) == -1) {
-		certdb_cert_free(ce);
 		if (certdb_rollback_txn(xerrz(&e2)) == -1)
 			xlog(LOG_ERR, &e2, __func__);
 		XERR_PREPENDFN(e);
