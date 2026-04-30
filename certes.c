@@ -646,6 +646,7 @@ main(int argc, char **argv)
 
 	if (strcmp(command, "mdrd-backend") == 0) {
 		status = mdrd_backend();
+		certdb_shutdown();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
 		agent_cli_bootstrap_setup(argc - opt, argv + opt);
 	} else if (strcmp(command, "revoke") == 0) {

@@ -1375,6 +1375,8 @@ cert_gen_crl(struct xerr *e)
 	}
 	fclose(f);
 
+	X509_CRL_free(crl);
+
 	return 0;
 fail:
 	if (tmptm != NULL)

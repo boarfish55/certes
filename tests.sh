@@ -4,7 +4,9 @@ set -e
 
 export PATH=$PATH:.
 
-valgrind=no
+if [ -z "$USE_VALGRIND" ]; then
+	USE_VALGRIND=no
+fi
 if [ -d testdata ]; then
 	rm -rf testdata
 fi
@@ -92,7 +94,7 @@ allowed_mdr_domains = [ 0x00000002 ]
 
 EOF
 
-if [ -x /usr/bin/valgrind -a "$valgrind" = "yes" ]; then
+if [ -x /usr/bin/valgrind -a "$USE_VALGRIND" = "yes" ]; then
 	cat << EOF >> $basedir/authority1/mdrd.conf
 backend_argv = [
 	"/usr/bin/valgrind"

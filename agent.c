@@ -47,7 +47,7 @@ static int             cert_fetch_in_progress = 0;
 
 extern struct certes_flatconf certes_conf;
 
-static struct loaded_crls  loaded_crls = { 0, NULL, NULL, NULL };
+static struct loaded_crls loaded_crls = { 0, NULL, NULL, NULL };
 
 enum authop_type {
 	AUTHOP_BOOTSTRAP_SETUP = 1,
@@ -112,6 +112,7 @@ client_free(struct client *c)
 	client_tree_sz--;
 }
 
+static void           free_loaded_crls();
 static int            agent_bootstrap(struct xerr *);
 static int            agent_cert_renew_inquiry(struct xerr *);
 static int            agent_refresh_crls(struct xerr *);
@@ -2245,6 +2246,7 @@ agent_load_key(struct xerr *e)
 void
 agent_cleanup()
 {
+	free_loaded_crls();
 	if (cert != NULL) {
 		X509_free(cert);
 		cert = NULL;
@@ -2409,6 +2411,20 @@ fail:
 	return -1;
 }
 
+static void
+free_loaded_crls()
+{
+	int i;
+
+	if (loaded_crls.count > 0) {
+		free(loaded_crls.issuers);
+		free(loaded_crls.last_updates);
+		for (i = 0; i < loaded_crls.count; i++)
+			X509_CRL_free(loaded_crls.crls[i]);
+		free(loaded_crls.crls);
+	}
+}
+
 static int
 load_crls(struct xerr *e)
 {
@@ -2516,13 +2532,7 @@ load_crls(struct xerr *e)
 	closedir(d);
 	d = NULL;
 
-	if (loaded_crls.count > 0) {
-		free(loaded_crls.issuers);
-		free(loaded_crls.last_updates);
-		for (i = 0; i < loaded_crls.count; i++)
-			X509_CRL_free(loaded_crls.crls[i]);
-		free(loaded_crls.crls);
-	}
+	free_loaded_crls();
 
 	loaded_crls.count = count;
 	loaded_crls.issuers = issuers;
@@ -2639,6 +2649,7 @@ agent_start(struct xerr *e)
 
 	if (agent_init(xerrz(e)) == -1)
 		return XERR_PREPENDFN(e);
+
 	xlog(LOG_NOTICE, NULL, "%s: finished initialization; we are "
 	    "%san authority", __func__, (is_authority) ? "" : "not ");
 
