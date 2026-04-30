@@ -129,14 +129,9 @@ extern const struct mdr_spec *msg_cert_find_answer;
 /*
  * Edit certificate roles
  */
-// TODO:
-#define MDR_DCV_CERTES_CERT_ADD_ROLE \
+#define MDR_DCV_CERTES_CERT_MOD_ROLES \
     MDR_DCV(0x00000002, 0x0016, 0x0000)
-extern const struct mdr_spec *msg_cert_add_role;
-// TODO:
-#define MDR_DCV_CERTES_CERT_DEL_ROLE \
-    MDR_DCV(0x00000002, 0x0017, 0x0000)
-extern const struct mdr_spec *msg_cert_del_role;
+extern const struct mdr_spec *msg_cert_mod_roles;
 
 /* Built-ins */
 extern const struct mdr_spec *msg_pack_beout;

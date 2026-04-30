@@ -67,6 +67,8 @@ int                     certdb_del_bootstrap(const struct bootstrap_entry *,
 int                     certdb_clean_expired_bootstraps(struct xerr *);
 
 struct cert_entry *certdb_get_cert(const char *, struct xerr *);
+int                certdb_mod_roles(const char *, const char **, size_t,
+                       struct xerr *);
 int                certdb_revoke_cert(const char *, struct xerr *);
 void               certdb_cert_free(struct cert_entry *);
 int                certdb_put_cert(const struct cert_entry *, struct xerr *);

@@ -257,6 +257,7 @@ usage()
 	printf("\tbootstrap-setup  Create a bootstrap entry on the "
 	    "authority\n");
 	printf("\tcert             Find/show certificates\n");
+	printf("\trole             Add/remove role\n");
 	printf("\trevoke           Revoke a certificate\n");
 }
 
@@ -492,6 +493,11 @@ mdrd_backend()
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
+		case MDR_DCV_CERTES_CERT_MOD_ROLES:
+			if (authority_role_mod(mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
 		case MDR_DCV_CERTES_REVOKE:
 			if (authority_revoke(mrh.session, mrh.msg, &e)
 			    == MDR_FAIL)
@@ -646,6 +652,8 @@ main(int argc, char **argv)
 		agent_cli_revoke(argc - opt, argv + opt);
 	} else if (strcmp(command, "cert") == 0) {
 		agent_cli_cert(argc - opt, argv + opt);
+	} else if (strcmp(command, "role") == 0) {
+		agent_cli_role(argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
 		/*
 		 * Do a standalone run to get our initial key/cert,

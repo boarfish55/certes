@@ -243,27 +243,17 @@ const struct mdr_spec *msg_cert_find_answer;
 /*
  * Edit certificate roles
  */
-struct mdr_def msgdef_cert_add_role = {
-	MDR_DCV_CERTES_CERT_ADD_ROLE,
-	"certes.cert_add_role",
+struct mdr_def msgdef_cert_mod_roles = {
+	MDR_DCV_CERTES_CERT_MOD_ROLES,
+	"certes.cert_mod_roles",
 	{
-		MDR_S,   /* cert serial */
-		MDR_S,   /* role */
+		MDR_S,    /* cert serial */
+		MDR_AS,   /* add roles */
+		MDR_AS,   /* del roles */
 		MDR_LAST
 	}
 };
-const struct mdr_spec *msg_cert_add_role;
-
-struct mdr_def msgdef_cert_del_role = {
-	MDR_DCV_CERTES_CERT_DEL_ROLE,
-	"certes.cert_del_role",
-	{
-		MDR_S,   /* cert serial */
-		MDR_S,   /* role */
-		MDR_LAST
-	}
-};
-const struct mdr_spec *msg_cert_del_role;
+const struct mdr_spec *msg_cert_mod_roles;
 
 int
 beout_ok(struct mdrd_besession *sess, const char *op_id, uint32_t beout_flags)
@@ -374,10 +364,7 @@ load_mdr_defs()
 	if ((msg_cert_find_answer =
 	    mdr_register_spec(&msgdef_cert_find_answer)) == NULL)
 		errx(1, "mdr_register_spec");
-	if ((msg_cert_add_role =
-	    mdr_register_spec(&msgdef_cert_add_role)) == NULL)
-		errx(1, "mdr_register_spec");
-	if ((msg_cert_del_role =
-	    mdr_register_spec(&msgdef_cert_del_role)) == NULL)
+	if ((msg_cert_mod_roles =
+	    mdr_register_spec(&msgdef_cert_mod_roles)) == NULL)
 		errx(1, "mdr_register_spec");
 }

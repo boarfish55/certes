@@ -56,7 +56,8 @@ enum authop_type {
 	AUTHOP_CERT_REVOKE,
 	AUTHOP_REFRESH_CRLS,
 	AUTHOP_CERT_GET,
-	AUTHOP_CERT_FIND
+	AUTHOP_CERT_FIND,
+	AUTHOP_ROLE_MOD
 };
 
 struct authop {
@@ -1628,9 +1629,9 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 				bootstrap_setup_usage();
 				exit(1);
 			}
-			sans = strlist_add(sans, argv[opt]);
+			sans = strarray_add(sans, argv[opt]);
 			if (sans == NULL)
-				err(1, "strlist_add");
+				err(1, "strarray_add");
 			sans_sz++;
 			continue;
 		}
@@ -1652,9 +1653,9 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 				bootstrap_setup_usage();
 				exit(1);
 			}
-			roles = strlist_add(roles, argv[opt]);
+			roles = strarray_add(roles, argv[opt]);
 			if (roles == NULL)
-				err(1, "strlist_add");
+				err(1, "strarray_add");
 			roles_sz++;
 			continue;
 		}
@@ -1828,6 +1829,147 @@ agent_cli_revoke(int argc, char **argv)
 }
 
 static void
+role_usage()
+{
+	printf("Usage: %s role -serial <serial> [-add <role>] [-del <role>]\n",
+	    CERTES_PROGNAME);
+	printf("\t-help        Prints this help\n");
+	printf("\t-serial      Which cert to change\n");
+	printf("\t-role        Role to add/remove\n");
+}
+
+void
+agent_cli_role(int argc, char **argv)
+{
+	int               opt, r;
+	char             *serial = NULL;
+	char            **add_roles = NULL;
+	size_t            add_roles_sz = 0;
+	char            **del_roles = NULL;
+	size_t            del_roles_sz = 0;
+	struct pmdr       pm;
+	struct pmdr_vec   pv[3];
+	char              pbuf[CERTES_MAX_MSG_SIZE];
+	struct umdr       um;
+	struct umdr_vec   uv[3];
+	char              ubuf[1024];
+	struct xerr       e;
+	struct authop    *op;
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			role_usage();
+			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-add") == 0) {
+			opt++;
+			if (opt > argc) {
+				role_usage();
+				exit(1);
+			}
+			add_roles = strarray_add(add_roles, argv[opt]);
+			if (add_roles == NULL)
+				err(1, "strarray_add");
+			add_roles_sz++;
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-del") == 0) {
+			opt++;
+			if (opt > argc) {
+				role_usage();
+				exit(1);
+			}
+			del_roles = strarray_add(add_roles, argv[opt]);
+			if (del_roles == NULL)
+				err(1, "strarray_add");
+			del_roles_sz++;
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-serial") == 0) {
+			opt++;
+			if (opt > argc) {
+				role_usage();
+				exit(1);
+			}
+			serial = argv[opt];
+			continue;
+		}
+	}
+
+	if (serial == NULL) {
+		warn("no serial provided");
+		role_usage();
+		exit(1);
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (agent_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((op = authop_new(AUTHOP_ROLE_MOD, NULL, xerrz(&e))) == NULL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = serial;
+	pv[1].type = MDR_AS;
+	pv[1].v.as.items = (const char **)add_roles;
+	pv[1].v.as.length = add_roles_sz;
+	pv[2].type = MDR_AS;
+	pv[2].v.as.items = (const char **)del_roles;
+	pv[2].v.as.length = del_roles_sz;
+	if (pmdr_pack(&pm, msg_cert_mod_roles, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		err(1, "pmdr_pack");
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(&e))) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_MDR_OK:
+		break;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "role mod failed: %s (%u)", uv[1].v.s.bytes,
+		    uv[0].v.u32);
+	case MDR_DCV_CERTES_ERROR:
+		if (umdr_unpack(&um, msg_error, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "role mod failed: %s (%u)", uv[2].v.s.bytes,
+		    uv[1].v.u32);
+	default:
+		errx(1, "bad response from authority");
+	}
+}
+
+static void
 cli_cert_usage()
 {
 	printf("Usage: %s cert [-serial <serial>] [-find <pattern>]\n",
@@ -1980,8 +2122,8 @@ agent_cli_cert(int argc, char **argv)
 			errx(1, "msg_cert_find_answer: not all arrays "
 			    "are same length; invalid response");
 
-		serials = malloc(sizeof(char *) * serials_sz);
-		subjects = malloc(sizeof(char *) * subjects_sz);
+		serials = malloc(sizeof(char *) * (serials_sz + 1));
+		subjects = malloc(sizeof(char *) * (subjects_sz + 1));
 		find_flags = malloc(sizeof(uint32_t) * find_flags_sz);
 		if (serials == NULL || subjects == NULL || find_flags == NULL)
 			err(1, "malloc");
@@ -1997,8 +2139,11 @@ agent_cli_cert(int argc, char **argv)
 			err(1, "umdr_vec_au32");
 
 		for (i = 0; i < serials_sz; i++)
-			printf("%s\t%s\t%08x\n",
+			printf("%s\t%s\t0x%08x\n",
 			    serials[i], subjects[i], find_flags[i]);
+		free(serials);
+		free(subjects);
+		free(find_flags);
 		return;
 	}
 

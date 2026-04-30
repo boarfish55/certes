@@ -29,51 +29,8 @@ is_hex_str(const char *str)
 	return 1;
 }
 
-char **
-strlist_add(char **a, const char *str)
-{
-	int      i, j;
-	size_t   sz;
-	size_t   len = strlen(str) + 1;
-	char    *p, *start;
-
-	if (a == NULL) {
-		if ((a = malloc((sizeof(char *) * 2) + len)) == NULL)
-			return NULL;
-		strlcpy(((char *)a) + (sizeof(char *) * 2), str, len);
-		a[0] = ((char *)a) + (sizeof(char *) * 2);
-		a[1] = NULL;
-		return a;
-	}
-
-	for (sz = sizeof(char *), i = 0; a[i] != NULL; i++)
-		sz += sizeof(char *) + strlen(a[i]) + 1;
-
-	if ((a = realloc(a, sz + sizeof(char *) + len)) == NULL)
-		return NULL;
-
-	memmove(((char *)a) + (sizeof(char *) * (i + 2)),
-	    ((char *)a) + (sizeof(char *) * (i + 1)),
-	    sz - (sizeof(char *) * (i + 1)));
-
-	for (j = 0, p = ((char *)a) + (sizeof(char *) * (i + 2)), start = p;
-	    p - (char *)a < sz + sizeof(char *); p++) {
-		if (*p == '\0') {
-			a[j++] = start;
-			start = p + 1;
-		}
-	}
-
-	strlcpy(((char *)a) + sz + sizeof(char *), str, len);
-
-	a[i] = ((char *)a) + sz + sizeof(char *);
-	a[i + 1] = NULL;
-
-	return a;
-}
-
 int
-strlist_join(char **strlist, size_t strlist_sz, char **dst)
+strlist_join(const char **strlist, size_t strlist_sz, char **dst)
 {
 	int   i;
 	int   sz = 0;

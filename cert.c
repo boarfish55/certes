@@ -542,7 +542,7 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 	in_tm = be->not_after_sec;
 	X509_time_adj(X509_get_notAfter(newcrt), 0, &in_tm);
 
-	if ((strlist_join(be->sans, be->sans_sz, &sans)) == -1) {
+	if ((strlist_join((const char **)be->sans, be->sans_sz, &sans)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		return NULL;
 	}
@@ -669,7 +669,7 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 	X509_gmtime_adj(X509_get_notAfter(newcrt),
 	    certes_conf.cert_renew_lifetime_seconds);
 
-	if ((strlist_join(ce->sans, ce->sans_sz, &sans)) == -1) {
+	if ((strlist_join((const char **)ce->sans, ce->sans_sz, &sans)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}

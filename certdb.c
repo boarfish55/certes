@@ -216,6 +216,17 @@ struct {
 	sqlite3_stmt *stmt;
 	char         *sql;
 	int           i_serial;
+	int           i_roles;
+} qry_mod_roles = {
+	NULL,
+	"update certs set roles = ?2 where serial = ?1",
+	1, 2
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_serial;
 	int           i_flags;
 } qry_revoke_cert = {
 	NULL,
@@ -594,16 +605,11 @@ certdb_cert_free(struct cert_entry *ce)
 {
 	if (ce == NULL)
 		return;
-	if (ce->serial != NULL)
-		free(ce->serial);
-	if (ce->subject != NULL)
-		free(ce->subject);
-	if (ce->sans != NULL)
-		free(ce->sans);
-	if (ce->roles != NULL)
-		free(ce->roles);
-	if (ce->der != NULL)
-		free(ce->der);
+	free(ce->serial);
+	free(ce->subject);
+	free(ce->sans);
+	free(ce->roles);
+	free(ce->der);
 	free(ce);
 }
 
@@ -622,7 +628,7 @@ certdb_get_cert(const char *serial, struct xerr *e)
 
 	if ((r = sqlite3_bind_text(qry_cert_get.stmt,
 	    qry_cert_get.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
-		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
 		    sqlite3_errmsg(db));
 		goto fail;
 	}
@@ -749,6 +755,53 @@ fail:
 	if (certdb_qry_cleanup(qry_cert_get.stmt, xerrz(&e2)) == -1)
 		xlog(LOG_ERR, &e2, "%s", __func__);
 	return NULL;
+}
+
+int
+certdb_mod_roles(const char *serial, const char **roles, size_t roles_sz,
+    struct xerr *e)
+{
+	int          r, sz;
+	struct xerr  e2;
+	char        *roles_joined = NULL;
+
+	if ((r = sqlite3_bind_text(qry_mod_roles.stmt,
+	    qry_mod_roles.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+
+	if ((sz = strlist_join(roles, roles_sz, &roles_joined)) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
+		goto fail;
+	}
+	if ((r = sqlite3_bind_blob(qry_mod_roles.stmt,
+	    qry_mod_roles.i_roles, roles_joined, sz, SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	switch (sqlite3_step(qry_mod_roles.stmt)) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	free(roles_joined);
+	return certdb_qry_cleanup(qry_mod_roles.stmt, e);
+fail:
+	free(roles_joined);
+	if (certdb_qry_cleanup(qry_mod_roles.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
 }
 
 int
@@ -1025,7 +1078,7 @@ certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((sans_sz = strlist_join(entry->sans, entry->sans_sz,
+	if ((sans_sz = strlist_join((const char **)entry->sans, entry->sans_sz,
 	    &sans)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
@@ -1037,8 +1090,8 @@ certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((roles_sz = strlist_join(entry->roles, entry->roles_sz,
-	    &roles)) == -1) {
+	if ((roles_sz = strlist_join((const char **)entry->roles,
+	    entry->roles_sz, &roles)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
@@ -1247,7 +1300,7 @@ certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((sans_sz = strlist_join(entry->sans, entry->sans_sz,
+	if ((sans_sz = strlist_join((const char **)entry->sans, entry->sans_sz,
 	    &sans)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
@@ -1259,8 +1312,8 @@ certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((roles_sz = strlist_join(entry->roles, entry->roles_sz,
-	    &roles)) == -1) {
+	if ((roles_sz = strlist_join((const char **)entry->roles,
+	    entry->roles_sz, &roles)) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
@@ -1485,6 +1538,12 @@ certdb_init(const char *path, struct xerr *e)
 		    "qry_cert_get: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
+	if ((r = sqlite3_prepare_v2(db, qry_mod_roles.sql, -1,
+	    &qry_mod_roles.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_mod_roles: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
 	if ((r = sqlite3_prepare_v2(db, qry_revoke_cert.sql, -1,
 	    &qry_revoke_cert.stmt, NULL))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
@@ -1567,6 +1626,10 @@ certdb_shutdown()
 	if (sqlite3_finalize(qry_cert_get.stmt))
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_cert_get: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_mod_roles.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_mod_roles: %s",
 		    __func__, sqlite3_errmsg(db));
 	if (sqlite3_finalize(qry_revoke_cert.stmt))
 		xlog(LOG_WARNING, NULL,
