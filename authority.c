@@ -461,7 +461,8 @@ find_certs(const struct cert_entry *ce, void *args)
 	if ((tmp = strarray_add(a->subjects, ce->subject)) == NULL)
 		goto fail;
 	a->subjects = tmp;
-	if ((tmpflags = realloc(a->flags, a->count + 1)) == NULL)
+	if ((tmpflags = reallocarray(a->flags, a->count + 1,
+	    sizeof(uint32_t))) == NULL)
 		goto fail;
 	a->flags = tmpflags;
 	a->flags[a->count] = ce->flags;
