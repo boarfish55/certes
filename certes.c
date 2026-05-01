@@ -257,7 +257,8 @@ usage()
 	printf("\tbootstrap-setup  Create a bootstrap entry on the "
 	    "authority\n");
 	printf("\tcert             Find/show certificates\n");
-	printf("\trole             Add/remove role\n");
+	printf("\trole             Add/remove roles\n");
+	printf("\tsan              Add/remove SANs\n");
 	printf("\trevoke           Revoke a certificate\n");
 }
 
@@ -494,7 +495,12 @@ mdrd_backend()
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		case MDR_DCV_CERTES_CERT_MOD_ROLES:
-			if (authority_role_mod(mrh.session, mrh.msg, &e)
+			if (authority_role_san_mod(1, mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
+		case MDR_DCV_CERTES_CERT_MOD_SANS:
+			if (authority_role_san_mod(0, mrh.session, mrh.msg, &e)
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
@@ -654,7 +660,9 @@ main(int argc, char **argv)
 	} else if (strcmp(command, "cert") == 0) {
 		agent_cli_cert(argc - opt, argv + opt);
 	} else if (strcmp(command, "role") == 0) {
-		agent_cli_role(argc - opt, argv + opt);
+		agent_cli_role_sans(1, argc - opt, argv + opt);
+	} else if (strcmp(command, "san") == 0) {
+		agent_cli_role_sans(0, argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
 		/*
 		 * Do a standalone run to get our initial key/cert,

@@ -30,7 +30,7 @@ int         agent_start(struct xerr *);
 void        agent_cli_bootstrap_setup(int, char **);
 void        agent_cli_revoke(int, char **);
 void        agent_cli_cert(int, char **);
-void        agent_cli_role(int, char **);
+void        agent_cli_role_sans(int, int, char **);
 int         agent_send(const void *, size_t, struct xerr *);
 int         agent_recv(void *, size_t, struct xerr *);
 int         agent_reload_crls(struct xerr *);

@@ -241,7 +241,7 @@ struct mdr_def msgdef_cert_find_answer = {
 const struct mdr_spec *msg_cert_find_answer;
 
 /*
- * Edit certificate roles
+ * Edit certificate roles/SANs
  */
 struct mdr_def msgdef_cert_mod_roles = {
 	MDR_DCV_CERTES_CERT_MOD_ROLES,
@@ -254,6 +254,17 @@ struct mdr_def msgdef_cert_mod_roles = {
 	}
 };
 const struct mdr_spec *msg_cert_mod_roles;
+struct mdr_def msgdef_cert_mod_sans = {
+	MDR_DCV_CERTES_CERT_MOD_SANS,
+	"certes.cert_mod_sans",
+	{
+		MDR_S,    /* cert serial */
+		MDR_AS,   /* add SANs */
+		MDR_AS,   /* del SANs */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_mod_sans;
 
 int
 beout_ok(struct mdrd_besession *sess, const char *op_id, uint32_t beout_flags)
@@ -366,5 +377,8 @@ load_mdr_defs()
 		errx(1, "mdr_register_spec");
 	if ((msg_cert_mod_roles =
 	    mdr_register_spec(&msgdef_cert_mod_roles)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_mod_sans =
+	    mdr_register_spec(&msgdef_cert_mod_sans)) == NULL)
 		errx(1, "mdr_register_spec");
 }

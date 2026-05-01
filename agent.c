@@ -57,7 +57,8 @@ enum authop_type {
 	AUTHOP_REFRESH_CRLS,
 	AUTHOP_CERT_GET,
 	AUTHOP_CERT_FIND,
-	AUTHOP_ROLE_MOD
+	AUTHOP_ROLE_MOD,
+	AUTHOP_ROLE_SAN
 };
 
 struct authop {
@@ -1686,25 +1687,25 @@ agent_cli_revoke(int argc, char **argv)
 }
 
 static void
-role_usage()
+role_san_usage(int role)
 {
-	printf("Usage: %s role -serial <serial> [-add <role>] [-del <role>]\n",
-	    CERTES_PROGNAME);
+	printf("Usage: %s %s -serial <serial> [-add <entry>] [-del <entry>]\n",
+	    CERTES_PROGNAME, (role) ? "role" : "san");
 	printf("\t-help        Prints this help\n");
 	printf("\t-serial      Which cert to change\n");
-	printf("\t-add         Role to add\n");
-	printf("\t-del         Role to remove\n");
+	printf("\t-add         Entry to add\n");
+	printf("\t-del         Entry to remove\n");
 }
 
 void
-agent_cli_role(int argc, char **argv)
+agent_cli_role_sans(int role, int argc, char **argv)
 {
 	int               opt, r;
 	char             *serial = NULL;
-	char            **add_roles = NULL;
-	size_t            add_roles_sz = 0;
-	char            **del_roles = NULL;
-	size_t            del_roles_sz = 0;
+	char            **add = NULL;
+	size_t            add_sz = 0;
+	char            **del = NULL;
+	size_t            del_sz = 0;
 	struct pmdr       pm;
 	struct pmdr_vec   pv[3];
 	char              pbuf[CERTES_MAX_MSG_SIZE];
@@ -1719,40 +1720,40 @@ agent_cli_role(int argc, char **argv)
 			break;
 
 		if (strcmp(argv[opt], "-help") == 0) {
-			role_usage();
+			role_san_usage(role);
 			exit(0);
 		}
 
 		if (strcmp(argv[opt], "-add") == 0) {
 			opt++;
 			if (opt > argc) {
-				role_usage();
+				role_san_usage(role);
 				exit(1);
 			}
-			add_roles = strarray_add(add_roles, argv[opt]);
-			if (add_roles == NULL)
+			add = strarray_add(add, argv[opt]);
+			if (add == NULL)
 				err(1, "strarray_add");
-			add_roles_sz++;
+			add_sz++;
 			continue;
 		}
 
 		if (strcmp(argv[opt], "-del") == 0) {
 			opt++;
 			if (opt > argc) {
-				role_usage();
+				role_san_usage(role);
 				exit(1);
 			}
-			del_roles = strarray_add(del_roles, argv[opt]);
-			if (del_roles == NULL)
+			del = strarray_add(del, argv[opt]);
+			if (del == NULL)
 				err(1, "strarray_add");
-			del_roles_sz++;
+			del_sz++;
 			continue;
 		}
 
 		if (strcmp(argv[opt], "-serial") == 0) {
 			opt++;
 			if (opt > argc) {
-				role_usage();
+				role_san_usage(role);
 				exit(1);
 			}
 			serial = argv[opt];
@@ -1762,7 +1763,7 @@ agent_cli_role(int argc, char **argv)
 
 	if (serial == NULL) {
 		warn("no serial provided");
-		role_usage();
+		role_san_usage(role);
 		exit(1);
 	}
 
@@ -1776,7 +1777,8 @@ agent_cli_role(int argc, char **argv)
 		exit(1);
 	}
 
-	if ((op = authop_new(AUTHOP_ROLE_MOD, NULL, xerrz(&e))) == NULL) {
+	if ((op = authop_new((role) ? AUTHOP_ROLE_MOD : AUTHOP_ROLE_SAN,
+	    NULL, xerrz(&e))) == NULL) {
 		xerr_print(&e);
 		exit(1);
 	}
@@ -1785,12 +1787,13 @@ agent_cli_role(int argc, char **argv)
 	pv[0].type = MDR_S;
 	pv[0].v.s = serial;
 	pv[1].type = MDR_AS;
-	pv[1].v.as.items = (const char **)add_roles;
-	pv[1].v.as.length = add_roles_sz;
+	pv[1].v.as.items = (const char **)add;
+	pv[1].v.as.length = add_sz;
 	pv[2].type = MDR_AS;
-	pv[2].v.as.items = (const char **)del_roles;
-	pv[2].v.as.length = del_roles_sz;
-	if (pmdr_pack(&pm, msg_cert_mod_roles, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+	pv[2].v.as.items = (const char **)del;
+	pv[2].v.as.length = del_sz;
+	if (pmdr_pack(&pm, (role) ? msg_cert_mod_roles : msg_cert_mod_sans,
+	    pv, PMDRVECLEN(pv)) == MDR_FAIL)
 		err(1, "pmdr_pack");
 
 	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(&e)) == -1) {
@@ -1815,12 +1818,12 @@ agent_cli_role(int argc, char **argv)
 		if (umdr_unpack(&um, mdr_msg_error, uv,
 		    UMDRVECLEN(uv)) == MDR_FAIL)
 			err(1, "failed to unpack response");
-		errx(1, "role mod failed: %s (%u)", uv[1].v.s.bytes,
+		errx(1, "mod failed: %s (%u)", uv[1].v.s.bytes,
 		    uv[0].v.u32);
 	case MDR_DCV_CERTES_ERROR:
 		if (umdr_unpack(&um, msg_error, uv, UMDRVECLEN(uv)) == MDR_FAIL)
 			err(1, "failed to unpack response");
-		errx(1, "role mod failed: %s (%u)", uv[2].v.s.bytes,
+		errx(1, "mod failed: %s (%u)", uv[2].v.s.bytes,
 		    uv[1].v.u32);
 	default:
 		errx(1, "bad response from authority");

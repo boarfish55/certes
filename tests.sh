@@ -7,6 +7,9 @@ export PATH=$PATH:.
 if [ -z "$USE_VALGRIND" ]; then
 	USE_VALGRIND=no
 fi
+if [ -z "$DBG_DELAY" ]; then
+	DBG_DELAY=0
+fi
 if [ -d testdata ]; then
 	rm -rf testdata
 fi
@@ -88,7 +91,7 @@ socket_timeout_min = 3
 socket_timeout_max = 300
 max_payload_size = 16384
 max_cert_size = 4096
-dbg_delay_to_backend_seconds = 0
+dbg_delay_to_backend_seconds = $DBG_DELAY
 
 allowed_mdr_domains = [ 0x00000002 ]
 
@@ -232,7 +235,7 @@ socket_timeout_min = 3
 socket_timeout_max = 300
 max_payload_size = 16384
 max_cert_size = 4096
-dbg_delay_to_backend_seconds = 0
+dbg_delay_to_backend_seconds = $DBG_DELAY
 
 allowed_mdr_domains = [ 0x00000002 ]
 

@@ -30,9 +30,9 @@ is_hex_str(const char *str)
 }
 
 int
-strlist_join(const char **strlist, size_t strlist_sz, char **dst)
+strlist_join(const char **strlist, size_t strlist_sz, char **dst, char sep)
 {
-	int   i;
+	int   i, len;
 	int   sz = 0;
 	char *str_p;
 
@@ -52,14 +52,20 @@ strlist_join(const char **strlist, size_t strlist_sz, char **dst)
 	if ((*dst = malloc(sz)) == NULL)
 		return -1;
 
-	for (i = 0, str_p = *dst; i < strlist_sz && strlist[i] != NULL; i++)
-		str_p += strlcpy(str_p, strlist[i], strlen(strlist[i]) + 1) + 1;
+	for (i = 0, str_p = *dst; i < strlist_sz && strlist[i] != NULL; i++) {
+		if (i > 0)
+			*str_p++ = sep;
+		len = strlen(strlist[i]);
+		memcpy(str_p, strlist[i], len);
+		str_p += len;
+	}
+	*str_p = '\0';
 
 	return sz;
 }
 
 int
-strlist_split(char ***strlist, const char *src, size_t src_len)
+strlist_split(char ***strlist, const char *src, size_t src_len, char sep)
 {
 	int   i;
 	int   sz = 0;
@@ -71,7 +77,7 @@ strlist_split(char ***strlist, const char *src, size_t src_len)
 	}
 
 	for (i = 0; i < src_len; i++)
-		if (src[i] == '\0')
+		if (src[i] == '\0' || src[i] == sep)
 			sz++;
 
 	*strlist = malloc(((sz + 1) * sizeof(char *)) + src_len);
@@ -83,6 +89,8 @@ strlist_split(char ***strlist, const char *src, size_t src_len)
 	*strlist_p = str_p;
 	for (i = 0; i < src_len; i++) {
 		*str_p = src[i];
+		if (*str_p == sep)
+			*str_p = '\0';
 		if (*str_p++ == '\0') {
 			strlist_p++;
 			*strlist_p = str_p;
