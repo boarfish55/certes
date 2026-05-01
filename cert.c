@@ -1174,6 +1174,7 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 	time_t               expiry;
 	struct tm            tm;
 	struct timespec      now;
+	int                  num;
 
 	roles_idx = X509_get_ext_by_NID(crt, NID_certes_roles, -1);
 	if (roles_idx == -1)
@@ -1195,9 +1196,10 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 	 */
 	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
 	    (const unsigned char **)&p, asn1str->length);
-	if (sk_ASN1_TYPE_num(seq) != ce->roles_sz)
-		return 1;
+	num = sk_ASN1_TYPE_num(seq);
 	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
+	if (num != ce->roles_sz)
+		return 1;
 	for (i = 0; ce->roles[i] != NULL; i++)
 		if (!cert_has_role(crt, ce->roles[i], xerrz(e)))
 			return 1;
@@ -1213,9 +1215,10 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 	 */
 	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
 	    (const unsigned char **)&p, asn1str->length);
-	if (sk_ASN1_TYPE_num(seq) != ce->sans_sz)
-		return 1;
+	num = sk_ASN1_TYPE_num(seq);
 	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
+	if (num != ce->sans_sz)
+		return 1;
 	for (i = 0; ce->sans[i] != NULL; i++)
 		if (!cert_has_san(crt, ce->sans[i], xerrz(e)))
 			return 1;

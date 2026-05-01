@@ -161,7 +161,7 @@ authority_role_mod(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 {
 	struct umdr_vec     uv[3];
 	struct xerr         e2;
-	struct cert_entry  *ce;
+	struct cert_entry  *ce = NULL;
 	const char         *serial;
 	char              **new_roles = NULL;
 	size_t              new_roles_sz = 0;
@@ -1288,8 +1288,8 @@ authority_cert_renewal_inquiry(struct mdrd_besession *sess, struct umdr *msg,
 
 	if (authority_challenge(sess, op_id,
 	    MDR_DCV_CERTES_CERT_RENEW_DIALBACK, challenge_host, e) == -1) {
-		certdb_cert_free(ce);
-		return XERR_PREPENDFN(e);
+		XERR_PREPENDFN(e);
+		goto fail;
 	}
 
 	certdb_cert_free(ce);

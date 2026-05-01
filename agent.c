@@ -2155,8 +2155,7 @@ agent_get_crl(const char *issuer_cn, const X509_CRL **crl,
 
 
 const struct loaded_crls *
-agent_get_loaded_crls(const char *issuer_cn, const X509_CRL **crl,
-    uint64_t *last_update)
+agent_get_loaded_crls()
 {
 	return &loaded_crls;
 }
@@ -2416,8 +2415,8 @@ fail:
 	return -1;
 }
 
-int
-agent_init(struct xerr *e)
+static int
+agent_init2(int gen_crl, struct xerr *e)
 {
 	clock_gettime(CLOCK_MONOTONIC, &next_certdb_backup);
 	next_certdb_backup.tv_sec +=
@@ -2442,7 +2441,7 @@ agent_init(struct xerr *e)
 	if (agent_init_ctx(xerrz(e)) == -1)
 		return XERR_PREPENDFN(e);
 
-	if (is_authority) {
+	if (is_authority && gen_crl) {
 		if (*certes_conf.certdb_path == '\0')
 			return XERRF(e, XLOG_APP, XLOG_FAIL,
 			    "certdb_path is not set and we are an authority");
@@ -2458,6 +2457,12 @@ agent_init(struct xerr *e)
 		return XERR_PREPENDFN(e);
 
 	return 0;
+}
+
+int
+agent_init(struct xerr *e)
+{
+	return agent_init2(0, e);
 }
 
 int
@@ -2507,7 +2512,7 @@ agent_start(struct xerr *e)
 	int                lsock, lsock_flags;
 	struct sockaddr_un saddr;
 
-	if (agent_init(xerrz(e)) == -1)
+	if (agent_init2(1, xerrz(e)) == -1)
 		return XERR_PREPENDFN(e);
 
 	xlog(LOG_NOTICE, NULL, "%s: finished initialization; we are "
