@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -29,7 +30,7 @@ authority_make_bootstrap(const char *cn, const char **sans,
     size_t sans_sz, const char **roles, size_t roles_sz, uint32_t cert_expiry,
     uint32_t timeout, uint32_t flags, struct xerr *e)
 {
-	int                    i;
+	int                    i, j, len, c;
 	char                   subject[CERTES_MAX_SUBJET_LENGTH] = "";
 	struct bootstrap_entry be;
 	struct timespec        tp;
@@ -53,17 +54,32 @@ authority_make_bootstrap(const char *cn, const char **sans,
 	be.subject = subject;
 	be.flags = flags;
 
-	for (i = 0; i < roles_sz; i++)
+	for (i = 0; i < roles_sz; i++) {
 		if (strlen(roles[i]) > CERTES_MAX_ROLE_LENGTH)
 			return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "role name %s longer than limit of %d",
 			    roles[i], CERTES_MAX_ROLE_LENGTH);
+		len = strlen(roles[i]);
+		for (j = 0; j < len; j++)
+			if (!isalnum(roles[i][j]))
+				return XERRF(e, XLOG_APP, XLOG_INVALID,
+				    "role name may only contain letters or "
+				    "digits");
+	}
 
-	for (i = 0; i < sans_sz; i++)
+	for (i = 0; i < sans_sz; i++) {
 		if (strlen(sans[i]) > CERTES_MAX_SAN_LENGTH)
 			return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "SAN name %s longer than limit of %d",
 			    sans[i], CERTES_MAX_SAN_LENGTH);
+		len = strlen(sans[i]);
+		for (j = 0; j < len; j++) {
+			c = sans[i][j];
+			if (isspace(c) || c == ',')
+				return XERRF(e, XLOG_APP, XLOG_INVALID,
+				    "SAN may not contain spaces or commas");
+		}
+	}
 
 	be.roles = (char **)roles;
 	be.roles_sz = roles_sz;
@@ -171,7 +187,7 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 	const char        **del = NULL;
 	size_t              del_sz;
 	char              **tmp;
-	int                 i, j, r;
+	int                 i, j, r, len;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
@@ -232,6 +248,27 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 		goto fail;
 	}
 
+	for (i = 0; i < del_sz; i++) {
+		len = strlen(del[i]);
+		for (j = 0; j < len; j++) {
+			if (role) {
+				if (!isalnum(del[i][j])) {
+					XERRF(e, XLOG_APP, XLOG_INVALID,
+					    "role name may only contain letters"
+					    "or digits");
+					goto fail;
+				}
+			} else {
+				if (isspace(del[i][j]) || del[i][j] == ',') {
+					XERRF(e, XLOG_APP, XLOG_INVALID,
+					    "SAN may not contain spaces or "
+					    "commas");
+					goto fail;
+				}
+			}
+		}
+	}
+
 	for (i = 0; i < ((role) ? ce->roles_sz : ce->sans_sz); i++) {
 		for (j = 0; j < del_sz; j++)
 			if (strcmp((role) ? ce->roles[i] : ce->sans[i],
@@ -252,6 +289,38 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 	del = NULL;
 
 	for (i = 0; i < add_sz; i++) {
+		len = strlen(add[i]);
+		if (role) {
+			if (len > CERTES_MAX_ROLE_LENGTH) {
+				XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+				    "role name %s longer than limit of %d",
+				    add[i], CERTES_MAX_ROLE_LENGTH);
+				goto fail;
+			}
+			for (j = 0; j < len; j++) {
+				if (!isalnum(add[i][j])) {
+					XERRF(e, XLOG_APP, XLOG_INVALID,
+					    "role name may only contain letters"
+					    "or digits");
+					goto fail;
+				}
+			}
+		} else {
+			if (len > CERTES_MAX_SAN_LENGTH) {
+				XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+				    "SAN name %s longer than limit of %d",
+				    add[i], CERTES_MAX_SAN_LENGTH);
+				goto fail;
+			}
+			for (j = 0; j < len; j++) {
+				if (isspace(add[i][j]) || add[i][j] == ',') {
+					XERRF(e, XLOG_APP, XLOG_INVALID,
+					    "SAN may not contain spaces or "
+					    "commas");
+					goto fail;
+				}
+			}
+		}
 		for (j = 0; j < ((role) ? ce->roles_sz : ce->sans_sz); j++)
 			if (strcmp((role) ? ce->roles[j] : ce->sans[j],
 			    add[i]) == 0)
