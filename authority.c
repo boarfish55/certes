@@ -188,6 +188,7 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 	size_t              del_sz;
 	char              **tmp;
 	int                 i, j, r, len;
+	int                 in_txn = 0;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
@@ -235,14 +236,14 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	in_txn = 1;
 
 	if ((ce = certdb_get_cert(serial, xerrz(e))) == NULL) {
-		if (certdb_rollback_txn(xerrz(&e2)) == -1)
-			xlog(LOG_ERR, &e2, __func__);
 		if (xerr_is(e, XLOG_APP, XLOG_NOTFOUND)) {
 			mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
 			    MDR_ERR_FAIL, "no such serial");
-			return XERR_PREPENDFN(e);
+			XERR_PREPENDFN(e);
+			goto fail_no_reply;
 		}
 		XERR_PREPENDFN(e);
 		goto fail;
@@ -253,17 +254,25 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 		for (j = 0; j < len; j++) {
 			if (role) {
 				if (!isalnum(del[i][j])) {
+					mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+					    MDR_ERR_FAIL,
+					    "role name may only contain letters"
+					    "or digits");
 					XERRF(e, XLOG_APP, XLOG_INVALID,
 					    "role name may only contain letters"
 					    "or digits");
-					goto fail;
+					goto fail_no_reply;
 				}
 			} else {
 				if (isspace(del[i][j]) || del[i][j] == ',') {
+					mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+					    MDR_ERR_FAIL,
+					    "SAN may not contain spaces or "
+					    "commas");
 					XERRF(e, XLOG_APP, XLOG_INVALID,
 					    "SAN may not contain spaces or "
 					    "commas");
-					goto fail;
+					goto fail_no_reply;
 				}
 			}
 		}
@@ -292,32 +301,42 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 		len = strlen(add[i]);
 		if (role) {
 			if (len > CERTES_MAX_ROLE_LENGTH) {
+				mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+				    MDR_ERR_FAIL, "role name over limit");
 				XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 				    "role name %s longer than limit of %d",
 				    add[i], CERTES_MAX_ROLE_LENGTH);
-				goto fail;
+				goto fail_no_reply;
 			}
 			for (j = 0; j < len; j++) {
 				if (!isalnum(add[i][j])) {
+					mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+					    MDR_ERR_FAIL, "role name may only "
+					    "contain  letters or digits");
 					XERRF(e, XLOG_APP, XLOG_INVALID,
 					    "role name may only contain letters"
 					    "or digits");
-					goto fail;
+					goto fail_no_reply;
 				}
 			}
 		} else {
 			if (len > CERTES_MAX_SAN_LENGTH) {
+				mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+				    MDR_ERR_FAIL, "SAN name longer than limit");
 				XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 				    "SAN name %s longer than limit of %d",
 				    add[i], CERTES_MAX_SAN_LENGTH);
-				goto fail;
+				goto fail_no_reply;
 			}
 			for (j = 0; j < len; j++) {
 				if (isspace(add[i][j]) || add[i][j] == ',') {
+					mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
+					    MDR_ERR_FAIL, "SAN may not "
+					    "contain spaces or commas");
 					XERRF(e, XLOG_APP, XLOG_INVALID,
 					    "SAN may not contain spaces or "
 					    "commas");
-					goto fail;
+					goto fail_no_reply;
 				}
 			}
 		}
@@ -344,10 +363,7 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 	else
 		r = certdb_mod_sans(serial, (const char **)res,
 		    res_sz, xerrz(e));
-
 	if (r == -1) {
-		if (certdb_rollback_txn(xerrz(&e2)) == -1)
-			xlog(LOG_ERR, &e2, __func__);
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
@@ -369,12 +385,16 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 
 	return 0;
 fail:
+	mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+	    "backend failure");
+fail_no_reply:
+	if (in_txn)
+		if (certdb_rollback_txn(xerrz(&e2)) == -1)
+			xlog(LOG_ERR, &e2, __func__);
 	certdb_cert_free(ce);
 	free(res);
 	free(add);
 	free(del);
-	mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
-	    "backend failure");
 	return -1;
 }
 
