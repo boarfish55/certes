@@ -73,7 +73,7 @@ crl_path = "$basedir/authority1/crls"
 cert_file = "$basedir/authority1/proxy_cert.pem"
 key_file = "$basedir/authority1/proxy_key.pem"
 require_client_cert = false
-crl_scan_interval_sec = 30
+crl_scan_interval_sec = 60
 
 port = 9792
 listen_backlog = 1024
