@@ -131,7 +131,7 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 	timeout = uv[4].v.u32;
 	flags = uv[5].v.u32;
 
-	if ((sans = malloc(sizeof(char *) * (sans_sz + 1))) == NULL) {
+	if ((sans = malloc(sizeof(char *) * sans_sz)) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
 	}
@@ -140,7 +140,7 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 		goto fail;
 	}
 
-	if (umdr_vec_as(&uv[1].v.as, sans, sans_sz + 1) == MDR_FAIL) {
+	if (umdr_vec_as(&uv[1].v.as, sans, sans_sz) == MDR_FAIL) {
 		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
 		goto fail;
 	}
@@ -149,8 +149,13 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 		goto fail;
 	}
 
+	/*
+	 * Anything that bootstraps is an agent.
+	 */
+	roles[roles_sz] = ROLE_AGENT;
+
 	if (authority_make_bootstrap(subject, sans, sans_sz, roles,
-	    roles_sz, cert_expiry, timeout, flags, xerrz(e)) == -1) {
+	    roles_sz + 1, cert_expiry, timeout, flags, xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);
 		goto fail;
 	}

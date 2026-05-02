@@ -173,8 +173,7 @@ echo "* Authority running with pid `cat $basedir/authority1/mdrd.pid`"
 #
 
 ./certes -config $basedir/authority1/certes.conf \
-	bootstrap-setup -role agent -san DNS:certes.example.com \
-	-cert_expiry 300
+	bootstrap-setup -san DNS:certes.example.com -cert_expiry 300
 echo "* Bootstrap setup done"
 
 bootstrap_key=$(sqlite3 $basedir/authority1/certdb/certdb.sqlite \
