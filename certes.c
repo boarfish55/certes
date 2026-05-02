@@ -429,7 +429,7 @@ mdrd_backend()
 	while ((r = mdrd_recv(&mrh, 1000))) {
 		if (r == MDR_FAIL) {
 			if (errno == ETIMEDOUT) {
-				if ((r = mdrd_purge_sessions(
+				if ((r = mdrd_purge_sessions(&mrh,
 				    certes_conf.agent_recv_timeout_ms / 1000))
 				    > 0)
 					xlog(LOG_NOTICE, NULL,
@@ -568,7 +568,7 @@ mdrd_backend()
 		}
 		task_reload_crls();
 	}
-	if ((r = mdrd_purge_sessions(0)) > 0)
+	if ((r = mdrd_purge_sessions(NULL, 0)) > 0)
 		xlog(LOG_NOTICE, NULL, "purging %d sessions before exit", r);
 	X509_STORE_CTX_free(ctx);
 	return 0;
