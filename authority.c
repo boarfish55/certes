@@ -35,7 +35,7 @@ authority_make_bootstrap(const char *cn, const char **sans,
 	struct bootstrap_entry be;
 	struct timespec        tp;
 
-	if (flags & CERTDB_BOOTSTRAP_FLAG_SETCN) {
+	if (flags & CERTDB_BOOTSTRAP_FLAG_SETSUBJECT) {
 		if (snprintf(subject, sizeof(subject),
 		    "/O=%s/CN=%s/emailAddress=%s", certes_conf.cert_org,
 		    cn, certes_conf.cert_email) >= sizeof(subject))
@@ -844,7 +844,7 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 		goto fail;
 	}
 
-	if (be->flags & CERTDB_BOOTSTRAP_FLAG_SETCN) {
+	if (be->flags & CERTDB_BOOTSTRAP_FLAG_SETSUBJECT) {
 		if (cert_subject_cn(be->subject, challenge_host,
 		    sizeof(challenge_host), e) == -1) {
 			XERR_PREPENDFN(e);
@@ -1108,7 +1108,11 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 		return XERR_PREPENDFN(e);
 	}
 
-	crt = cert_sign_req(cs->req, be, xerrz(e));
+	crt = cert_sign_req(cs->req,
+	    (be->flags & CERTDB_BOOTSTRAP_FLAG_SETSUBJECT) ? be->subject : NULL,
+	    be->not_before_sec, be->not_after_sec, (const char **)be->roles,
+	    be->roles_sz, (const char **)be->sans, be->sans_sz,
+	    "serverAuth,clientAuth", xerrz(e));
 	if (crt == NULL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");

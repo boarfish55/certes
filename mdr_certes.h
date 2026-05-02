@@ -136,6 +136,10 @@ extern const struct mdr_spec *msg_cert_mod_roles;
     MDR_DCV(0x00000002, 0x0017, 0x0000)
 extern const struct mdr_spec *msg_cert_mod_sans;
 
+#define MDR_DCV_CERTES_SIGN_REQ \
+    MDR_DCV(0x00000002, 0x0018, 0x0000)
+extern const struct mdr_spec *msg_sign_req;
+
 /* Built-ins */
 extern const struct mdr_spec *msg_pack_beout;
 

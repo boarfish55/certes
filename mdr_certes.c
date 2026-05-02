@@ -266,6 +266,17 @@ struct mdr_def msgdef_cert_mod_sans = {
 };
 const struct mdr_spec *msg_cert_mod_sans;
 
+struct mdr_def msgdef_sign_req = {
+	MDR_DCV_CERTES_SIGN_REQ,
+	"certes.sign_req",
+	{
+		MDR_B,    /* DER-encoded REQ */
+		MDR_AS,   /* Roles */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_sign_req;
+
 int
 beout_ok(struct mdrd_besession *sess, const char *op_id, uint32_t beout_flags)
 {

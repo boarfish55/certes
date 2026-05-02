@@ -24,6 +24,8 @@ extern struct certes_flatconf certes_conf;
 int NID_certes_roles;
 int NID_certes_roles_idx;
 
+const char *key_usage = "critical,digitalSignature,keyEncipherment";
+
 int
 cert_init(struct xerr *e)
 {
@@ -445,7 +447,7 @@ fail:
 }
 
 int
-cert_add_ext(X509V3_CTX *ctx, X509 *crt, int nid, char *value)
+cert_add_ext(X509V3_CTX *ctx, X509 *crt, int nid, const char *value)
 {
 	X509_EXTENSION *ex;
 	int             st;
@@ -468,15 +470,17 @@ cert_is_selfsigned(X509 *crt)
 }
 
 X509 *
-cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
+cert_sign_req(X509_REQ *req, const char *subject, time_t not_before_sec,
+    time_t not_after_sec, const char **roles, size_t roles_sz,
+    const char **sans, size_t sans_sz, const char *ext_key_usage,
+    struct xerr *e)
 {
 	X509           *newcrt = NULL;
 	BIGNUM         *serial = NULL;
 	X509_EXTENSION *ex;
 	X509V3_CTX      ctx;
 	X509_NAME      *name;
-	char           *sans = NULL;
-	time_t          in_tm;
+	char           *sans_joined = NULL;
 	struct xerr     e2;
 
 	X509V3_set_ctx(&ctx, agent_cert(), NULL, req, NULL, 0);
@@ -512,8 +516,8 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 		goto fail;
 	}
 
-	if (be->flags & CERTDB_BOOTSTRAP_FLAG_SETCN) {
-		name = cert_subject_from_str(be->subject, xerrz(e));
+	if (subject != NULL) {
+		name = cert_subject_from_str(subject, xerrz(e));
 		if (name == NULL) {
 			XERR_PREPENDFN(e);
 			goto fail;
@@ -539,17 +543,14 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 		return NULL;
 	}
 
-	in_tm = be->not_before_sec;
-	X509_time_adj(X509_get_notBefore(newcrt), 0, &in_tm);
-	in_tm = be->not_after_sec;
-	X509_time_adj(X509_get_notAfter(newcrt), 0, &in_tm);
+	X509_time_adj(X509_get_notBefore(newcrt), 0, &not_before_sec);
+	X509_time_adj(X509_get_notAfter(newcrt), 0, &not_after_sec);
 
-	if ((strlist_join((const char **)be->sans, be->sans_sz,
-	    &sans, ',')) == -1) {
+	if ((strlist_join(sans, sans_sz, &sans_joined, ',')) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		return NULL;
 	}
-	if (!cert_add_ext(&ctx, newcrt, NID_subject_alt_name, sans)) {
+	if (!cert_add_ext(&ctx, newcrt, NID_subject_alt_name, sans_joined)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_subject_alt_name");
 		goto fail;
@@ -561,14 +562,12 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 		    "cert_add_ext/NID_basic_constraints");
 		goto fail;
 	}
-	if (!cert_add_ext(&ctx, newcrt, NID_key_usage,
-	    "critical,nonRepudiation,digitalSignature")) {
+	if (!cert_add_ext(&ctx, newcrt, NID_key_usage, key_usage)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_key_usage");
 		goto fail;
 	}
-	if (!cert_add_ext(&ctx, newcrt, NID_ext_key_usage,
-	    "serverAuth,clientAuth")) {
+	if (!cert_add_ext(&ctx, newcrt, NID_ext_key_usage, ext_key_usage)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_ext_key_usage");
 		goto fail;
@@ -585,7 +584,7 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 		goto fail;
 	}
 
-	ex = cert_encode_certes_roles((const char **)be->roles);
+	ex = cert_encode_certes_roles(roles);
 	if (!X509_add_ext(newcrt, ex, -1)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
 		goto fail;
@@ -602,7 +601,7 @@ cert_sign_req(X509_REQ *req, const struct bootstrap_entry *be, struct xerr *e)
 		goto fail;
 	}
 
-	free(sans);
+	free(sans_joined);
 	BN_free(serial);
 	return newcrt;
 fail:
@@ -613,7 +612,7 @@ fail:
 	}
 	if (newcrt != NULL)
 		X509_free(newcrt);
-	free(sans);
+	free(sans_joined);
 	return NULL;
 }
 
@@ -689,8 +688,7 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 		    "cert_add_ext/NID_basic_constraints");
 		goto fail;
 	}
-	if (!cert_add_ext(&ctx, newcrt, NID_key_usage,
-	    "critical,nonRepudiation,digitalSignature")) {
+	if (!cert_add_ext(&ctx, newcrt, NID_key_usage, key_usage)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "cert_add_ext/NID_key_usage");
 		goto fail;
@@ -868,8 +866,7 @@ cert_selfsign(EVP_PKEY *pkey, struct xerr *e)
 		    "add_ext / NID_basic_constraints");
 		goto fail;
 	}
-	if (!cert_add_ext(&ctx, newcrt, NID_key_usage,
-	    "critical,nonRepudiation,digitalSignature,keyEncipherment")) {
+	if (!cert_add_ext(&ctx, newcrt, NID_key_usage, key_usage)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "add_ext / NID_key_usage");
 		goto fail;
 	}

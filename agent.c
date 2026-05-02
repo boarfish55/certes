@@ -1501,7 +1501,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 				exit(1);
 			}
 			cn = argv[opt];
-			flags |= CERTDB_BOOTSTRAP_FLAG_SETCN;
+			flags |= CERTDB_BOOTSTRAP_FLAG_SETSUBJECT;
 			continue;
 		}
 
