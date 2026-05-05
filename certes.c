@@ -260,6 +260,7 @@ usage()
 	printf("\trole             Add/remove roles\n");
 	printf("\tsan              Add/remove SANs\n");
 	printf("\trevoke           Revoke a certificate\n");
+	printf("\tsign-req         Sign a REQ\n");
 }
 
 static void
@@ -509,6 +510,11 @@ mdrd_backend()
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
+		case MDR_DCV_CERTES_SIGN_REQ:
+			if (authority_sign_req(mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
 		case MDR_DCV_CERTES_CERT_GET:
 			if (authority_cert_get(mrh.session, mrh.msg, &e)
 			    == MDR_FAIL)
@@ -663,6 +669,8 @@ main(int argc, char **argv)
 		agent_cli_role_sans(1, argc - opt, argv + opt);
 	} else if (strcmp(command, "san") == 0) {
 		agent_cli_role_sans(0, argc - opt, argv + opt);
+	} else if (strcmp(command, "sign-req") == 0) {
+		agent_cli_sign_req(argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
 		/*
 		 * Do a standalone run to get our initial key/cert,

@@ -37,7 +37,7 @@ cert_init(struct xerr *e)
 }
 
 X509_EXTENSION *
-cert_encode_certes_roles(const char **roles)
+cert_encode_certes_roles(const char **roles, size_t sz)
 {
 	const char          **role;
 	X509_EXTENSION       *ex;
@@ -50,7 +50,7 @@ cert_encode_certes_roles(const char **roles)
 
 	sk = sk_ASN1_TYPE_new(NULL);
 
-	for (role = roles; *role != NULL; role++) {
+	for (role = roles; sz > 0 && *role != NULL; role++, sz--) {
 		if ((s = ASN1_IA5STRING_new()) == NULL)
 			goto fail;
 		if (!ASN1_STRING_set(s, *role, strlen(*role))) {
@@ -494,11 +494,6 @@ cert_sign_req(X509_REQ *req, const char *subject, time_t not_before_sec,
 		goto fail;
 	}
 
-	if (certdb_begin_txn(xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		goto fail;
-	}
-
 	serial = cert_new_serial(xerrz(e));
 	if (serial == NULL) {
 		XERR_PREPENDFN(e);
@@ -546,14 +541,17 @@ cert_sign_req(X509_REQ *req, const char *subject, time_t not_before_sec,
 	X509_time_adj(X509_get_notBefore(newcrt), 0, &not_before_sec);
 	X509_time_adj(X509_get_notAfter(newcrt), 0, &not_after_sec);
 
-	if ((strlist_join(sans, sans_sz, &sans_joined, ',')) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
-		return NULL;
-	}
-	if (!cert_add_ext(&ctx, newcrt, NID_subject_alt_name, sans_joined)) {
-		XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "cert_add_ext/NID_subject_alt_name");
-		goto fail;
+	if (sans_sz > 0) {
+		if ((strlist_join(sans, sans_sz, &sans_joined, ',')) == -1) {
+			XERRF(e, XLOG_ERRNO, errno, "strlist_join");
+			return NULL;
+		}
+		if (!cert_add_ext(&ctx, newcrt, NID_subject_alt_name,
+		    sans_joined)) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "cert_add_ext/NID_subject_alt_name");
+			goto fail;
+		}
 	}
 
 	if (!cert_add_ext(&ctx, newcrt, NID_basic_constraints,
@@ -584,20 +582,18 @@ cert_sign_req(X509_REQ *req, const char *subject, time_t not_before_sec,
 		goto fail;
 	}
 
-	ex = cert_encode_certes_roles(roles);
-	if (!X509_add_ext(newcrt, ex, -1)) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
-		goto fail;
+	if (roles_sz > 0) {
+		ex = cert_encode_certes_roles(roles, roles_sz);
+		if (!X509_add_ext(newcrt, ex, -1)) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_add_ext / roles");
+			goto fail;
+		}
+		X509_EXTENSION_free(ex);
 	}
-	X509_EXTENSION_free(ex);
 
 	if (!X509_sign(newcrt, agent_key(), EVP_sha256())) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_sign");
-		goto fail;
-	}
-
-	if (certdb_commit_txn(xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
 		goto fail;
 	}
 
@@ -605,11 +601,8 @@ cert_sign_req(X509_REQ *req, const char *subject, time_t not_before_sec,
 	BN_free(serial);
 	return newcrt;
 fail:
-	if (serial != NULL) {
-		if (certdb_rollback_txn(xerrz(&e2)) == -1)
-			xlog(LOG_ERR, &e2, __func__);
+	if (serial != NULL)
 		BN_free(serial);
-	}
 	if (newcrt != NULL)
 		X509_free(newcrt);
 	free(sans_joined);
@@ -711,7 +704,7 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 		goto fail;
 	}
 
-	ex = cert_encode_certes_roles((const char **)ce->roles);
+	ex = cert_encode_certes_roles((const char **)ce->roles, ce->roles_sz);
 	if (!X509_add_ext(newcrt, ex, -1)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
 		goto fail;

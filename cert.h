@@ -13,7 +13,7 @@
 #include "certdb.h"
 
 int             cert_init(struct xerr *);
-X509_EXTENSION *cert_encode_certes_roles(const char **);
+X509_EXTENSION *cert_encode_certes_roles(const char **, size_t);
 int             cert_foreach_role(X509 *, int(*)(const char *, void *),
                     void *, struct xerr *);
 int             cert_has_role(X509 *, const char *, struct xerr *);

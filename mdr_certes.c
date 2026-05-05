@@ -270,7 +270,9 @@ struct mdr_def msgdef_sign_req = {
 	MDR_DCV_CERTES_SIGN_REQ,
 	"certes.sign_req",
 	{
+		MDR_S,    /* Operation ID */
 		MDR_B,    /* DER-encoded REQ */
+		MDR_U32,  /* Cert validity in seconds */
 		MDR_AS,   /* Roles */
 		MDR_LAST
 	}
@@ -391,5 +393,8 @@ load_mdr_defs()
 		errx(1, "mdr_register_spec");
 	if ((msg_cert_mod_sans =
 	    mdr_register_spec(&msgdef_cert_mod_sans)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_sign_req =
+	    mdr_register_spec(&msgdef_sign_req)) == NULL)
 		errx(1, "mdr_register_spec");
 }

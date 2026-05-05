@@ -258,8 +258,39 @@ backend_unveils = [
 ]
 EOF
 
+mkdir -p $basedir/user
+openssl req -config $cnf -nodes \
+	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+	-keyout $basedir/user/key.pem -keyform PEM \
+	-out $basedir/user/req.pem -outform PEM \
+	-subj "/O=Example/CN=alice"
+
 $MDRD -c $basedir/client3/mdrd.conf
 echo "* Agent running with pid `cat $basedir/client3/mdrd.pid`"
+
+mkdir -p $basedir/user
+openssl req -config $cnf -nodes \
+	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+	-keyout $basedir/user/key.pem -keyform PEM \
+	-out $basedir/user/req.pem -outform PEM \
+	-subj "/O=Example/CN=alice"
+./certes -config $basedir/authority1/certes.conf \
+	sign-req -in $basedir/user/req.pem -out $basedir/user/cert.pem \
+	-role certadmin
+echo "* User cert created at $basedir/user/cert.pem"
+cat << EOF > $basedir/user/certes.conf
+enable_coredumps = true
+authority_fqdn = "localhost"
+authority_port = 9792
+root_cert_file = "$basedir/user/root.pem"
+crl_path = "$basedir/user/crls"
+cert_file = "$basedir/user/cert.pem"
+key_file = "$basedir/user/key.pem"
+EOF
+cp $basedir/ca/root.pem $basedir/user/
+# TODO: client should get CRLs on its own; there should be a separate command
+# to downloads CRLs that does not require CRL validation
+cp -R $basedir/authority1/crls $basedir/user/
 
 echo -n "Press any key to terminate daemon..."
 read PAUSE

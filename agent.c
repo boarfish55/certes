@@ -58,7 +58,8 @@ enum authop_type {
 	AUTHOP_CERT_GET,
 	AUTHOP_CERT_FIND,
 	AUTHOP_ROLE_MOD,
-	AUTHOP_ROLE_SAN
+	AUTHOP_ROLE_SAN,
+	AUTHOP_SIGN_REQ
 };
 
 struct authop {
@@ -1582,6 +1583,229 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 
 	free(sans);
 	free(roles);
+}
+
+static void
+sign_req_usage()
+{
+	printf("Usage: %s sign-req [options] -in <REQ> -out <cert>\n",
+	    CERTES_PROGNAME);
+	printf("\t-help        Prints this help\n");
+	printf("\t-in          Input REQ file name\n");
+	printf("\t-out         Output file name for the certificate\n");
+	printf("\t-cert_expiry Validity of certificate in "
+	    "seconds (default 7*86400)\n");
+	printf("\t-role        Adds a role\n");
+}
+
+void
+agent_cli_sign_req(int argc, char **argv)
+{
+	int               opt, r;
+	uint32_t          cert_expiry = 7 * 86400;
+	const char       *out = NULL;
+	const char       *in = NULL;
+	char            **roles = NULL;
+	size_t            roles_sz = 0;
+	struct pmdr       pm;
+	struct pmdr_vec   pv[4];
+	char              pbuf[CERTES_MAX_MSG_SIZE];
+	struct umdr       um;
+	struct umdr_vec   uv[3];
+	char              ubuf[CERTES_MAX_MSG_SIZE];
+	struct xerr       e;
+	struct authop    *op;
+	X509             *crt = NULL, *icrt;
+	X509_REQ         *req = NULL;
+	FILE             *f = NULL;
+	uint8_t          *der = NULL;
+	int               der_sz;
+	const uint8_t    *der_chain = NULL, *dp;
+	uint64_t          der_chain_sz;
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			sign_req_usage();
+			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-out") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			out = argv[opt];
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-in") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			in = argv[opt];
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-cert_expiry") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			cert_expiry = atoi(argv[opt]);
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-role") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			roles = strarray_add(roles, argv[opt]);
+			if (roles == NULL)
+				err(1, "strarray_add");
+			roles_sz++;
+			continue;
+		}
+	}
+
+	if (in == NULL || out == NULL) {
+		sign_req_usage();
+		exit(1);
+	}
+
+	if ((f = fopen(in, "r")) == NULL)
+		err(1, "fopen");
+
+	if ((req = PEM_read_X509_REQ(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+
+	if ((der_sz = i2d_X509_REQ(req, &der)) == -1) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (agent_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((op = authop_new(AUTHOP_SIGN_REQ, NULL, xerrz(&e))) == NULL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;  /* Op ID */
+	pv[0].v.s = op->id;
+	pv[1].type = MDR_B;  /* DER-encoded REQ */
+	pv[1].v.b.bytes = der;
+	pv[1].v.b.sz = der_sz;
+	pv[2].type = MDR_U32;
+	pv[2].v.u32 = cert_expiry;
+	pv[3].type = MDR_AS;
+	pv[3].v.as.items = (const char **)roles;
+	pv[3].v.as.length = roles_sz;
+	if (pmdr_pack(&pm, msg_sign_req, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		err(1, "pmdr_pack");
+	free(roles);
+	X509_REQ_free(req);
+	free(der);
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(&e))) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_CERTES_SEND_CERT:
+		break;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "umdr_unpack");
+		errx(1, "failed: %s (%u)", uv[1].v.s.bytes, uv[0].v.u32);
+	case MDR_DCV_CERTES_ERROR:
+		if (umdr_unpack(&um, msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "umdr_unpack");
+		errx(1, "authop %s failed with %s (%u)",
+		    op->id, uv[2].v.s.bytes, uv[1].v.u32);
+	default:
+		errx(1, "bad response from authority");
+	}
+
+	/*
+	 * Finally, we get the cert back.
+	 */
+
+	if (umdr_unpack(&um, msg_send_cert, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+		err(1, "umdr_unpack");
+
+	if (uv[0].v.s.bytes == NULL || strcmp(op->id, uv[0].v.s.bytes) != 0)
+		errx(1, "expected authop %s, got %s", op->id, uv[0].v.s.bytes);
+
+	crt = d2i_X509(NULL, (const unsigned char **)&uv[1].v.b.bytes,
+	    uv[1].v.b.sz);
+	if (crt == NULL)
+		errx(1, "sign-req reply did not contain a valid "
+		    "DER-encoded X.509, or alloc failed");
+
+	if ((f = fopen(out, "w")) == NULL)
+		err(1, "fopen: %s", out);
+
+	if (PEM_write_X509(f, crt) == 0) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	der_chain = uv[2].v.b.bytes;
+	der_chain_sz = uv[2].v.b.sz;
+
+	for (dp = der_chain; dp - der_chain < der_chain_sz; ) {
+		der_sz = *(uint32_t *)dp;
+		dp += sizeof(uint32_t);
+		icrt = d2i_X509(NULL, &dp, der_sz);
+		/* dp is incremented */
+		if (icrt == NULL) {
+			errx(1, "reply did not contain a valid "
+			    "DER-encoded X.509, or alloc failed");
+			exit(1);
+		}
+		if (PEM_write_X509(f, icrt) == 0) {
+			X509_free(icrt);
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+	}
+
+	fclose(f);
+	X509_free(crt);
 }
 
 static void

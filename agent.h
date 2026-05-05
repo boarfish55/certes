@@ -28,6 +28,7 @@ X509_STORE *agent_cert_store();
 int         agent_init(struct xerr *);
 int         agent_start(struct xerr *);
 void        agent_cli_bootstrap_setup(int, char **);
+void        agent_cli_sign_req(int, char **);
 void        agent_cli_revoke(int, char **);
 void        agent_cli_cert(int, char **);
 void        agent_cli_role_sans(int, int, char **);
