@@ -1588,22 +1588,24 @@ fail:
 int
 authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 {
-	const char       *op_id;
-	const char      **roles = NULL;
-	int32_t           roles_sz;
-	unsigned char    *der = NULL;
-	size_t            der_sz;
-	uint8_t          *der_chain = NULL;
-	size_t            der_chain_sz;
-	uint32_t          cert_validity;
-	struct umdr_vec   uv[4];
-	X509_REQ         *req = NULL;
-	X509             *crt = NULL;
-	struct timespec   now;
-	struct pmdr       pm;
-	struct pmdr_vec   pv[3];
-	char              pbuf[CERTES_MAX_MSG_SIZE];
-	struct xerr       e2;
+	const char        *op_id;
+	const char       **roles = NULL;
+	int32_t            roles_sz;
+	unsigned char     *der = NULL;
+	size_t             der_sz;
+	uint8_t           *der_chain = NULL;
+	size_t             der_chain_sz;
+	uint32_t           cert_validity;
+	struct umdr_vec    uv[4];
+	X509_REQ          *req = NULL;
+	X509              *crt = NULL;
+	struct timespec    now;
+	struct pmdr        pm;
+	struct pmdr_vec    pv[3];
+	char               pbuf[CERTES_MAX_MSG_SIZE];
+	struct xerr        e2;
+	struct tm          tm;
+	struct cert_entry  ce;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
@@ -1667,18 +1669,49 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
-
-	// TODO: we need certdb_put_cert!
-
-	if (certdb_commit_txn(xerrz(e)) == -1) {
-		XERR_PREPENDFN(e);
-		goto fail;
-	}
-
 	der_sz = i2d_X509(crt, &der);
 	if (der_sz < 0) {
                 XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
                 goto fail;
+	}
+
+	if ((ce.serial = cert_serial_to_hex(crt, xerrz(e))) == NULL) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	if ((ce.subject = cert_subject_oneline(crt, xerrz(e))) == NULL) {
+		free(ce.serial);
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	// TODO: we may want to allow copying SANs from a REQ
+	ce.sans = NULL;
+	ce.sans_sz = 0;
+	ce.roles = (char **)roles;
+	ce.roles_sz = roles_sz;
+	ASN1_TIME_to_tm(X509_get_notBefore(crt), &tm);
+	ce.not_before_sec = timegm(&tm);
+	ASN1_TIME_to_tm(X509_get_notAfter(crt), &tm);
+	ce.not_after_sec = timegm(&tm);
+	ce.flags = CERTDB_FLAG_NONE;
+	ce.der = der;
+	ce.der_sz = der_sz;
+	if (certdb_put_cert(&ce, xerrz(e)) == -1) {
+		free(ce.serial);
+		free(ce.subject);
+		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
+		    "backend failed");
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	xlog(LOG_NOTICE, NULL, "%s: cert serial %s issued for subject %s",
+	    __func__, ce.serial, ce.subject);
+	free(ce.serial);
+	free(ce.subject);
+
+	if (certdb_commit_txn(xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
 	}
 
 	if (pack_intermediates(crt, &der_chain, &der_chain_sz,
