@@ -32,6 +32,7 @@ void        agent_cli_sign_req(int, char **);
 void        agent_cli_revoke(int, char **);
 void        agent_cli_cert(int, char **);
 void        agent_cli_role_sans(int, int, char **);
+void        agent_cli_update_crls(int, char **);
 int         agent_send(const void *, size_t, struct xerr *);
 int         agent_recv(void *, size_t, struct xerr *);
 int         agent_reload_crls(struct xerr *);

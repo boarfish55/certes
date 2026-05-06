@@ -1969,6 +1969,45 @@ agent_cli_revoke(int argc, char **argv)
 }
 
 static void
+cli_update_crls_usage()
+{
+	printf("Usage: %s update-crls\n", CERTES_PROGNAME);
+	printf("\t-help        Prints this help\n");
+}
+
+void
+agent_cli_update_crls(int argc, char **argv)
+{
+	int         opt;
+	struct xerr e;
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			cli_update_crls_usage();
+			exit(0);
+		}
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (agent_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (agent_refresh_crls(NULL, xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+}
+
+static void
 role_san_usage(int role)
 {
 	printf("Usage: %s %s -serial <serial> [-add <entry>] [-del <entry>]\n",

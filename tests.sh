@@ -289,9 +289,9 @@ cert_file = "$basedir/user/cert.pem"
 key_file = "$basedir/user/key.pem"
 EOF
 cp $basedir/ca/root.pem $basedir/user/
-# TODO: client should get CRLs on its own; there should be a separate command
-# to downloads CRLs that does not require CRL validation
 cp -R $basedir/authority1/crls $basedir/user/
+
+./certes -config $basedir/user/certes.conf update-crls
 
 echo -n "Press any key to terminate daemon..."
 read PAUSE
