@@ -22,7 +22,6 @@
 extern struct certes_flatconf certes_conf;
 
 int NID_certes_roles;
-int NID_certes_roles_idx;
 
 const char *key_usage = "critical,digitalSignature,keyEncipherment";
 
@@ -136,6 +135,31 @@ cert_foreach_role(X509 *crt, int(*cb)(const char *, void *), void *args,
 	return 0;
 }
 
+int
+cert_copy_extension(X509 *crt, X509_REQ *req, int nid, struct xerr *e)
+{
+	int                       i;
+	STACK_OF(X509_EXTENSION) *exts = NULL;
+	X509_EXTENSION           *ext;
+	ASN1_OBJECT              *obj;
+	int                       status = 0;
+
+	exts = X509_REQ_get_extensions(req);
+	for (i = 0; i < sk_X509_EXTENSION_num(exts); i++) {
+		ext = sk_X509_EXTENSION_value(exts, i);
+		obj = X509_EXTENSION_get_object(ext);
+		if (OBJ_obj2nid(obj) == nid)
+			if (!X509_add_ext(crt, ext, -1)) {
+				status = XERRF(e, XLOG_SSL, ERR_get_error(),
+				    "X509_add_ext");
+				goto end;
+			}
+	}
+end:
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	return status;
+}
+
 struct has_role_args
 {
 	const char *role;
@@ -180,7 +204,7 @@ cert_foreach_san(X509 *crt, int(*cb)(const char *, void *), void *args,
 	    NID_subject_alt_name, NULL, NULL);
 	if (sans == NULL)
 		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
-		    "%s: subjectAltName extension not found", __func__);
+		    "subjectAltName extension not found");
 
 	for (i = 0; i < sk_GENERAL_NAME_num(sans); i++) {
 		gname = sk_GENERAL_NAME_value(sans, i);
@@ -196,13 +220,65 @@ cert_foreach_san(X509 *crt, int(*cb)(const char *, void *), void *args,
 		default:
 			GENERAL_NAMES_free(sans);
 			return XERRF(e, XLOG_APP, XLOG_FAIL,
-			    "%s: unknown subjectAltName type", __func__);
+			    "unknown subjectAltName type");
 		}
 		if (!cb(name, args))
 			break;
 	}
 	GENERAL_NAMES_free(sans);
 	return 0;
+}
+
+int
+cert_req_foreach_san(X509_REQ *req, int(*cb)(const char *, void *), void *args,
+    struct xerr *e)
+{
+	STACK_OF(GENERAL_NAME)   *sans = NULL;
+	GENERAL_NAME             *gname;
+	char                      name[512];
+	int                       i;
+	STACK_OF(X509_EXTENSION) *exts = NULL;
+	int                       status = 0;
+
+	if ((exts = X509_REQ_get_extensions(req)) == NULL) {
+		status = XERRF(e, XLOG_APP, XLOG_NOTFOUND,
+		    "subjectAltName extension not found");
+		goto end;
+	}
+
+	sans = X509V3_get_d2i(exts, NID_subject_alt_name, NULL, NULL);
+	if (sans == NULL) {
+		status = XERRF(e, XLOG_APP, XLOG_NOTFOUND,
+		    "subjectAltName extension not found");
+		goto end;
+	}
+
+	for (i = 0; i < sk_GENERAL_NAME_num(sans); i++) {
+		gname = sk_GENERAL_NAME_value(sans, i);
+		switch (gname->type) {
+		case GEN_DNS:
+			snprintf(name, sizeof(name), "DNS:%s",
+			    ASN1_STRING_get0_data(gname->d.dNSName));
+			break;
+		case GEN_IPADD:
+			snprintf(name, sizeof(name), "IP:%s",
+			    ASN1_STRING_get0_data(gname->d.iPAddress));
+			break;
+		default:
+			GENERAL_NAMES_free(sans);
+			status = XERRF(e, XLOG_APP, XLOG_FAIL,
+			    "unknown subjectAltName type");
+			goto end;
+		}
+		if (!cb(name, args))
+			break;
+	}
+end:
+	if (sans != NULL)
+		GENERAL_NAMES_free(sans);
+	if (exts != NULL)
+		sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	return status;
 }
 
 struct has_san_args
@@ -481,7 +557,6 @@ cert_sign_req(X509_REQ *req, const char *subject, time_t not_before_sec,
 	X509V3_CTX      ctx;
 	X509_NAME      *name;
 	char           *sans_joined = NULL;
-	struct xerr     e2;
 
 	X509V3_set_ctx(&ctx, agent_cert(), NULL, req, NULL, 0);
 

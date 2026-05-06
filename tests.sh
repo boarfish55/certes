@@ -273,10 +273,11 @@ openssl req -config $cnf -nodes \
 	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 	-keyout $basedir/user/key.pem -keyform PEM \
 	-out $basedir/user/req.pem -outform PEM \
-	-subj "/O=Example/CN=alice"
+	-subj "/O=Example/CN=alice" \
+	-addext "subjectAltName = DNS:user.example.com"
 ./certes -config $basedir/authority1/certes.conf \
 	sign-req -in $basedir/user/req.pem -out $basedir/user/cert.pem \
-	-role certadmin
+	-role certadmin -server_auth
 echo "* User cert created at $basedir/user/cert.pem"
 cat << EOF > $basedir/user/certes.conf
 enable_coredumps = true

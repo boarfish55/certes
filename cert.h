@@ -26,8 +26,8 @@ int             cert_add_ext(X509V3_CTX *, X509 *, int, const char *);
 X509           *cert_sign(X509 *, X509 *, const struct cert_entry *,
                     struct xerr *);
 X509           *cert_sign_req(X509_REQ *, const char *, time_t, time_t,
-                    const char **, size_t, const char **, size_t, const char *,
-                    struct xerr *);
+                    const char **, size_t, const char **, size_t,
+		    const char *, struct xerr *);
 int             cert_new_privkey(struct xerr *);
 int             cert_subject_cn(const char *, char *, size_t, struct xerr *);
 X509_NAME      *cert_subject_from_str(const char *, struct xerr *);
@@ -38,5 +38,8 @@ char           *cert_serial_to_hex(X509 *, struct xerr *);
 char           *cert_subject_oneline(X509 *, struct xerr *);
 int             cert_must_renew(X509 *, struct cert_entry *, struct xerr *);
 int             cert_gen_crl(struct xerr *);
+int             cert_copy_extension(X509 *, X509_REQ *, int, struct xerr *);
+int             cert_req_foreach_san(X509_REQ *, int(*)(const char *, void *),
+                    void *, struct xerr *);
 
 #endif

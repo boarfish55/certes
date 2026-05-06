@@ -1251,7 +1251,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	der_chain_sz = uv[2].v.b.sz;
 
 	for (dp = der_chain; dp - der_chain < der_chain_sz; ) {
-		der_sz = *(uint32_t *)dp;
+		der_sz = be32toh(*(uint32_t *)dp);
 		dp += sizeof(uint32_t);
 		icrt = d2i_X509(NULL, &dp, der_sz);
 		/* dp is incremented */
@@ -1590,12 +1590,31 @@ sign_req_usage()
 {
 	printf("Usage: %s sign-req [options] -in <REQ> -out <cert>\n",
 	    CERTES_PROGNAME);
-	printf("\t-help        Prints this help\n");
-	printf("\t-in          Input REQ file name\n");
-	printf("\t-out         Output file name for the certificate\n");
-	printf("\t-cert_expiry Validity of certificate in "
+	printf("\t-help         Prints this help\n");
+	printf("\t-in           Input REQ file name\n");
+	printf("\t-out          Output file name for the certificate\n");
+	printf("\t-cert_expiry  Validity of certificate in "
 	    "seconds (default 7*86400)\n");
-	printf("\t-role        Adds a role\n");
+	printf("\t-role         Adds a role\n");
+	printf("\t-server_auth  Adds serverAuth extended usage\n");
+	printf("\t-copy_sans    Copy REQ SANs when signing\n");
+}
+
+struct append_san_data {
+	char   **sans;
+	size_t   sz;
+};
+
+static int
+append_san(const char *san, void *arg)
+{
+	struct append_san_data *sd = (struct append_san_data *)arg;
+
+	sd->sans = strarray_add(sd->sans, san);
+	if (sd->sans == NULL)
+		err(1, "strarray_add");
+	sd->sz++;
+	return 1;
 }
 
 void
@@ -1608,7 +1627,7 @@ agent_cli_sign_req(int argc, char **argv)
 	char            **roles = NULL;
 	size_t            roles_sz = 0;
 	struct pmdr       pm;
-	struct pmdr_vec   pv[4];
+	struct pmdr_vec   pv[6];
 	char              pbuf[CERTES_MAX_MSG_SIZE];
 	struct umdr       um;
 	struct umdr_vec   uv[3];
@@ -1622,6 +1641,10 @@ agent_cli_sign_req(int argc, char **argv)
 	int               der_sz;
 	const uint8_t    *der_chain = NULL, *dp;
 	uint64_t          der_chain_sz;
+	uint32_t          req_flags = 0;
+	int               i, copy_sans = 0;
+
+	struct append_san_data sd = { NULL, 0 };
 
 	for (opt = 0; opt < argc; opt++) {
 		if (argv[opt][0] != '-')
@@ -1662,6 +1685,26 @@ agent_cli_sign_req(int argc, char **argv)
 			continue;
 		}
 
+		if (strcmp(argv[opt], "-copy_sans") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			copy_sans = 1;
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-server_auth") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			req_flags |= CERTES_SIGN_REQ_FSERVERAUTH;
+			continue;
+		}
+
 		if (strcmp(argv[opt], "-role") == 0) {
 			opt++;
 			if (opt > argc) {
@@ -1689,6 +1732,17 @@ agent_cli_sign_req(int argc, char **argv)
 		exit(1);
 	}
 	fclose(f);
+
+	if (copy_sans) {
+		if (cert_req_foreach_san(req, &append_san, &sd,
+		    xerrz(&e)) == -1) {
+			xerr_print(&e);
+			exit(1);
+		}
+		printf("Copying SANs:\n");
+		for (i = 0; i < sd.sz; i++)
+			printf("* %s\n", sd.sans[i]);
+	}
 
 	if ((der_sz = i2d_X509_REQ(req, &der)) == -1) {
 		ERR_print_errors_fp(stderr);
@@ -1721,6 +1775,11 @@ agent_cli_sign_req(int argc, char **argv)
 	pv[3].type = MDR_AS;
 	pv[3].v.as.items = (const char **)roles;
 	pv[3].v.as.length = roles_sz;
+	pv[4].type = MDR_AS;
+	pv[4].v.as.items = (const char **)sd.sans;
+	pv[4].v.as.length = sd.sz;
+	pv[5].type = MDR_U32;
+	pv[5].v.u32 = req_flags;
 	if (pmdr_pack(&pm, msg_sign_req, pv, PMDRVECLEN(pv)) == MDR_FAIL)
 		err(1, "pmdr_pack");
 	free(roles);
@@ -1788,13 +1847,12 @@ agent_cli_sign_req(int argc, char **argv)
 	der_chain_sz = uv[2].v.b.sz;
 
 	for (dp = der_chain; dp - der_chain < der_chain_sz; ) {
-		der_sz = *(uint32_t *)dp;
+		der_sz = be32toh(*(uint32_t *)dp);
 		dp += sizeof(uint32_t);
 		icrt = d2i_X509(NULL, &dp, der_sz);
 		/* dp is incremented */
 		if (icrt == NULL) {
-			errx(1, "reply did not contain a valid "
-			    "DER-encoded X.509, or alloc failed");
+			ERR_print_errors_fp(stderr);
 			exit(1);
 		}
 		if (PEM_write_X509(f, icrt) == 0) {

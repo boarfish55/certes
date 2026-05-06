@@ -274,6 +274,8 @@ struct mdr_def msgdef_sign_req = {
 		MDR_B,    /* DER-encoded REQ */
 		MDR_U32,  /* Cert validity in seconds */
 		MDR_AS,   /* Roles */
+		MDR_AS,   /* SANs */
+		MDR_U32,  /* Flags */
 		MDR_LAST
 	}
 };

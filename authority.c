@@ -194,7 +194,10 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 	char              **tmp;
 	int                 i, j, r, len;
 	int                 in_txn = 0;
-
+	const char         *role_chars_err = "role name may only "
+	    "contain  letters or digits";
+	const char         *san_chars_err = "SAN may not contain spaces "
+	    "or commas";
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
 
@@ -271,12 +274,9 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 			} else {
 				if (isspace(del[i][j]) || del[i][j] == ',') {
 					mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
-					    MDR_ERR_FAIL,
-					    "SAN may not contain spaces or "
-					    "commas");
+					    MDR_ERR_FAIL, san_chars_err);
 					XERRF(e, XLOG_APP, XLOG_INVALID,
-					    "SAN may not contain spaces or "
-					    "commas");
+					    san_chars_err);
 					goto fail_no_reply;
 				}
 			}
@@ -316,11 +316,9 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 			for (j = 0; j < len; j++) {
 				if (!isalnum(add[i][j])) {
 					mdrd_beout_error(sess, MDRD_BEOUT_FNONE,
-					    MDR_ERR_FAIL, "role name may only "
-					    "contain  letters or digits");
+					    MDR_ERR_FAIL, role_chars_err);
 					XERRF(e, XLOG_APP, XLOG_INVALID,
-					    "role name may only contain letters"
-					    "or digits");
+					    role_chars_err);
 					goto fail_no_reply;
 				}
 			}
@@ -1591,12 +1589,15 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	const char        *op_id;
 	const char       **roles = NULL;
 	int32_t            roles_sz;
+	const char       **sans = NULL;
+	int32_t            sans_sz;
 	unsigned char     *der = NULL;
 	size_t             der_sz;
 	uint8_t           *der_chain = NULL;
 	size_t             der_chain_sz;
 	uint32_t           cert_validity;
-	struct umdr_vec    uv[4];
+	uint32_t           req_flags;
+	struct umdr_vec    uv[6];
 	X509_REQ          *req = NULL;
 	X509              *crt = NULL;
 	struct timespec    now;
@@ -1633,6 +1634,8 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	op_id = uv[0].v.s.bytes;
 	cert_validity = uv[2].v.u32;
 	roles_sz = umdr_vec_alen(&uv[3].v.as);
+	sans_sz = umdr_vec_alen(&uv[4].v.as);
+	req_flags = uv[5].v.u32;
 
 	if (roles_sz > 0) {
 		if ((roles = malloc(sizeof(char *) * roles_sz)) == NULL) {
@@ -1640,6 +1643,16 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 			goto fail;
 		}
 		if (umdr_vec_as(&uv[3].v.as, roles, roles_sz) == MDR_FAIL) {
+			XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
+			goto fail;
+		}
+	}
+	if (sans_sz > 0) {
+		if ((sans = malloc(sizeof(char *) * sans_sz)) == NULL) {
+			XERRF(e, XLOG_ERRNO, errno, "malloc");
+			goto fail;
+		}
+		if (umdr_vec_as(&uv[4].v.as, sans, sans_sz) == MDR_FAIL) {
 			XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
 			goto fail;
 		}
@@ -1662,7 +1675,10 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 
 	clock_gettime(CLOCK_REALTIME, &now);
 	crt = cert_sign_req(req, NULL, now.tv_sec, now.tv_sec + cert_validity,
-	    (const char **)roles, roles_sz, NULL, 0, "clientAuth", xerrz(e));
+	    (const char **)roles, roles_sz, (const char **)sans, sans_sz,
+	    (req_flags & CERTES_SIGN_REQ_FSERVERAUTH) ?
+	    "clientAuth,serverAuth" :
+	    "clientAuth", xerrz(e));
 	if (crt == NULL) {
 		if (certdb_rollback_txn(xerrz(&e2)) == -1)
 			xlog(LOG_ERR, &e2, __func__);
@@ -1684,9 +1700,8 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
-	// TODO: we may want to allow copying SANs from a REQ
-	ce.sans = NULL;
-	ce.sans_sz = 0;
+	ce.sans = (char **)sans;
+	ce.sans_sz = sans_sz;
 	ce.roles = (char **)roles;
 	ce.roles_sz = roles_sz;
 	ASN1_TIME_to_tm(X509_get_notBefore(crt), &tm);
@@ -1740,6 +1755,7 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	}
 
 	free(roles);
+	free(sans);
 	free(der_chain);
 	free(der);
 	X509_REQ_free(req);
@@ -1754,6 +1770,7 @@ fail_no_reply:
 	if (req != NULL)
 		X509_REQ_free(req);
 	free(roles);
+	free(sans);
 	free(der_chain);
 	return -1;
 }
