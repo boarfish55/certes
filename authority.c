@@ -1592,7 +1592,7 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	const char       **sans = NULL;
 	int32_t            sans_sz;
 	unsigned char     *der = NULL;
-	size_t             der_sz;
+	int                der_sz;
 	uint8_t           *der_chain = NULL;
 	size_t             der_chain_sz;
 	uint32_t           cert_validity;

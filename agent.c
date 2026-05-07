@@ -2381,7 +2381,8 @@ agent_cli_cert(int argc, char **argv)
 		errx(1, "strftime() result too large");
 	printf("Not after:  %s\n", tstr);
 
-	PEM_write_X509(stdout, crt);
+	if (PEM_write_X509(stdout, crt) == 0)
+		ERR_print_errors_fp(stderr);
 
 	X509_free(crt);
 	return;
