@@ -31,33 +31,36 @@ static uint64_t        crls_gen = 1;
 static struct timespec next_crl_reload;
 
 struct certes_flatconf certes_conf = {
-	0,
-	CERTES_AGENT_PORT,
-	"",
-	CERTES_AGENT_PORT,
-	"",
-	"",
+	0,                      /* enable_coredumps */
+	CERTES_AGENT_PORT,      /* agent_bootstrap_port */
+	"",                     /* authority_fqdn */
+	CERTES_AGENT_PORT,      /* authority_port */
+	NULL,                   /* peer_authorities */
+	"",                     /* certdb_path */
+	"",                     /* certdb_backup_path */
 	86400,                  /* certdb_backup_interval_seconds */
 	0,                      /* certdb_backup_pages_per_steps */
-	60000,
-	60000,
-	"",
+	60000,                  /* agent_send_timeout_ms */
+	60000,                  /* agent_recv_timeout_ms */
+	"",                     /* bootstrap_key */
 	30,                     /* challenge_timeout */
 	"ca.pem",               /* root_cert_file */
-	"",
-	"key.pem",
-	"cert.pem",
-	"agent.lock",
-	"agent.sock",
+	"",                     /* crl_path */
+	300,                    /* crl_reload_interval_seconds */
+	"key.pem",              /* key_file */
+	"cert.pem",             /* cert_file */
+	"agent.lock",           /* lock_file */
+	"agent.sock",           /* agent_sock_path */
 	4096,                   /* max_cert_size */
-	345600,
-	864000,
-	"serial",
-	"",
-	"",
+	345600,                 /* cert_min_lifetime_seconds */
+	864000,                 /* cert_renew_lifetime_seconds */
+	600,                    /* cert_check_interval_seconds */
+	86400,                  /* cert_expired_retention_seconds */
+	"",                     /* cert_org */
+	"",                     /* cert_email */
 
-	"0x0",
-	"0x0"
+	"0x0",                  /* min_serial */
+	"0x0"                   /* max_serial */
 };
 
 struct flatconf certes_config_vars[] = {
@@ -84,6 +87,12 @@ struct flatconf certes_config_vars[] = {
 		FLATCONF_ULONG,
 		&certes_conf.authority_port,
 		sizeof(certes_conf.authority_port)
+	},
+	{
+		"peer_authorities",
+		FLATCONF_ALLOCSTRINGLIST,
+		&certes_conf.peer_authorities,
+		0
 	},
 	{
 		"certdb_path",
@@ -146,6 +155,12 @@ struct flatconf certes_config_vars[] = {
 		sizeof(certes_conf.crl_path)
 	},
 	{
+		"crl_reload_interval_seconds",
+		FLATCONF_ULONG,
+		&certes_conf.crl_reload_interval_seconds,
+		sizeof(certes_conf.crl_reload_interval_seconds)
+	},
+	{
 		"key_file",
 		FLATCONF_STRING,
 		certes_conf.key_file,
@@ -188,10 +203,16 @@ struct flatconf certes_config_vars[] = {
 		sizeof(certes_conf.cert_renew_lifetime_seconds)
 	},
 	{
-		"serial_file",
-		FLATCONF_STRING,
-		certes_conf.serial_file,
-		sizeof(certes_conf.serial_file)
+		"cert_check_interval_seconds",
+		FLATCONF_ULONG,
+		&certes_conf.cert_check_interval_seconds,
+		sizeof(certes_conf.cert_check_interval_seconds)
+	},
+	{
+		"cert_expired_retention_seconds",
+		FLATCONF_ULONG,
+		&certes_conf.cert_expired_retention_seconds,
+		sizeof(certes_conf.cert_expired_retention_seconds)
 	},
 	{
 		"cert_org",
@@ -235,7 +256,12 @@ usage()
 	printf("\tinit-db          Create the cert DB then exit\n");
 	printf("\tbootstrap-setup  Create a bootstrap entry on the "
 	    "authority\n");
+	printf("\tcert             Find/show certificates\n");
+	printf("\trole             Add/remove roles\n");
+	printf("\tsan              Add/remove SANs\n");
 	printf("\trevoke           Revoke a certificate\n");
+	printf("\tsign-req         Sign a REQ\n");
+	printf("\tupdate-crls      Fetch updated CRLs\n");
 }
 
 static void
@@ -304,7 +330,7 @@ task_reload_crls()
 	if (now.tv_sec < next_crl_reload.tv_sec)
 		return;
 	memcpy(&next_crl_reload, &now, sizeof(next_crl_reload));
-	next_crl_reload.tv_sec += 300;
+	next_crl_reload.tv_sec += certes_conf.crl_reload_interval_seconds;
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	if (pmdr_pack(&pm, msg_poll_crls_gen, NULL, 0) == MDR_FAIL)
@@ -371,8 +397,14 @@ mdrd_backend()
 	act.sa_flags = 0;
 	act.sa_handler = SIG_IGN;
 	if (sigaction(SIGINT, &act, NULL) == -1 ||
+	    sigaction(SIGPIPE, &act, NULL) == -1 ||
 	    sigaction(SIGTERM, &act, NULL) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: sigaction", __func__);
+		return 1;
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xlog(LOG_ERR, &e, __func__);
 		return 1;
 	}
 
@@ -390,7 +422,7 @@ mdrd_backend()
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &next_crl_reload);
-	next_crl_reload.tv_sec += 300;
+	next_crl_reload.tv_sec += certes_conf.crl_reload_interval_seconds;
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
 	bzero(&mrh, sizeof(mrh));
@@ -399,7 +431,7 @@ mdrd_backend()
 	while ((r = mdrd_recv(&mrh, 1000))) {
 		if (r == MDR_FAIL) {
 			if (errno == ETIMEDOUT) {
-				if ((r = mdrd_purge_sessions(
+				if ((r = mdrd_purge_sessions(&mrh,
 				    certes_conf.agent_recv_timeout_ms / 1000))
 				    > 0)
 					xlog(LOG_NOTICE, NULL,
@@ -464,8 +496,33 @@ mdrd_backend()
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
+		case MDR_DCV_CERTES_CERT_MOD_ROLES:
+			if (authority_role_san_mod(1, mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
+		case MDR_DCV_CERTES_CERT_MOD_SANS:
+			if (authority_role_san_mod(0, mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
 		case MDR_DCV_CERTES_REVOKE:
 			if (authority_revoke(mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
+		case MDR_DCV_CERTES_SIGN_REQ:
+			if (authority_sign_req(mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
+		case MDR_DCV_CERTES_CERT_GET:
+			if (authority_cert_get(mrh.session, mrh.msg, &e)
+			    == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
+		case MDR_DCV_CERTES_CERT_FIND:
+			if (authority_cert_find(mrh.session, mrh.msg, &e)
 			    == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
@@ -481,6 +538,11 @@ mdrd_backend()
 			break;
 		case MDR_DCV_CERTES_CERT_RENEWAL_INQUIRY:
 			if (authority_cert_renewal_inquiry(mrh.session, mrh.msg,
+			    &e) == MDR_FAIL)
+				xlog(LOG_ERR, &e, "%s", __func__);
+			break;
+		case MDR_DCV_CERTES_FETCH_OUTDATED_CRLS:
+			if (authority_fetch_outdated_crls(mrh.session, mrh.msg,
 			    &e) == MDR_FAIL)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
@@ -513,7 +575,7 @@ mdrd_backend()
 		}
 		task_reload_crls();
 	}
-	if ((r = mdrd_purge_sessions(0)) > 0)
+	if ((r = mdrd_purge_sessions(NULL, 0)) > 0)
 		xlog(LOG_NOTICE, NULL, "purging %d sessions before exit", r);
 	X509_STORE_CTX_free(ctx);
 	return 0;
@@ -534,6 +596,10 @@ main(int argc, char **argv)
 	char           *command;
 	size_t          sz;
 	struct xerr     e;
+
+	if (getenv("CERTES_CONF") != NULL)
+		strlcpy(config_file_path, getenv("CERTES_CONF"),
+		    sizeof(config_file_path));
 
 	for (opt = 1; opt < argc; opt++) {
 		if (argv[opt][0] != '-')
@@ -597,10 +663,21 @@ main(int argc, char **argv)
 
 	if (strcmp(command, "mdrd-backend") == 0) {
 		status = mdrd_backend();
+		certdb_shutdown();
 	} else if (strcmp(command, "bootstrap-setup") == 0) {
 		agent_cli_bootstrap_setup(argc - opt, argv + opt);
 	} else if (strcmp(command, "revoke") == 0) {
 		agent_cli_revoke(argc - opt, argv + opt);
+	} else if (strcmp(command, "cert") == 0) {
+		agent_cli_cert(argc - opt, argv + opt);
+	} else if (strcmp(command, "role") == 0) {
+		agent_cli_role_sans(1, argc - opt, argv + opt);
+	} else if (strcmp(command, "san") == 0) {
+		agent_cli_role_sans(0, argc - opt, argv + opt);
+	} else if (strcmp(command, "sign-req") == 0) {
+		agent_cli_sign_req(argc - opt, argv + opt);
+	} else if (strcmp(command, "update-crls") == 0) {
+		agent_cli_update_crls(argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
 		/*
 		 * Do a standalone run to get our initial key/cert,

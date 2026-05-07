@@ -60,7 +60,7 @@ certesRoles.3           = IA5:certadmin
 
 [intermediate_proxy_crt_ext]
 basicConstraints        = critical,CA:false
-keyUsage                = critical,nonRepudiation,digitalSignature
+keyUsage                = critical,keyEncipherment,digitalSignature
 extendedKeyUsage        = serverAuth,clientAuth
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer
@@ -71,7 +71,7 @@ certesRoles.0           = IA5:caproxy
 
 [intermediate_client_crt_ext]
 basicConstraints        = critical,CA:false
-keyUsage                = critical,nonRepudiation,digitalSignature
+keyUsage                = critical,keyEncipherment,digitalSignature
 extendedKeyUsage        = serverAuth,clientAuth
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer

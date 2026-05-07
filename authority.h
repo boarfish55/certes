@@ -13,7 +13,13 @@
 
 int  authority_bootstrap_setup(struct mdrd_besession *, struct umdr *,
          struct xerr *);
+int  authority_sign_req(struct mdrd_besession *, struct umdr *,
+         struct xerr *);
+int  authority_role_san_mod(int, struct mdrd_besession *, struct umdr *,
+         struct xerr *);
 int  authority_revoke(struct mdrd_besession *, struct umdr *, struct xerr *);
+int  authority_cert_get(struct mdrd_besession *, struct umdr *, struct xerr *);
+int  authority_cert_find(struct mdrd_besession *, struct umdr *, struct xerr *);
 int  authority_bootstrap_dialin(struct mdrd_besession *, struct umdr *,
          struct xerr *);
 int  authority_bootstrap_answer(struct mdrd_besession *, struct umdr *,
@@ -21,6 +27,8 @@ int  authority_bootstrap_answer(struct mdrd_besession *, struct umdr *,
 int  authority_cert_renewal_inquiry(struct mdrd_besession *, struct umdr *,
          struct xerr *);
 int  authority_cert_renew_answer(struct mdrd_besession *, struct umdr *,
+         struct xerr *);
+int  authority_fetch_outdated_crls(struct mdrd_besession *, struct umdr *,
          struct xerr *);
 
 #endif

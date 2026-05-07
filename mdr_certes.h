@@ -99,6 +99,48 @@ extern const struct mdr_spec *msg_poll_crls_gen;
     MDR_DCV(0x00000002, 0x000F, 0x0000)
 extern const struct mdr_spec *msg_crls_gen;
 
+/*
+ * Poll for updated CRLs (after a specific time).
+ * Client can then update the new CRLs locally, distinguishing by issuer.
+ */
+#define MDR_DCV_CERTES_FETCH_OUTDATED_CRLS \
+    MDR_DCV(0x00000002, 0x0010, 0x0000)
+extern const struct mdr_spec *msg_fetch_outdated_crls;
+#define MDR_DCV_CERTES_SEND_UPDATED_CRLS \
+    MDR_DCV(0x00000002, 0x0011, 0x0000)
+extern const struct mdr_spec *msg_send_updated_crls;
+
+/*
+ * Find certificates / get a certificate
+ */
+#define MDR_DCV_CERTES_CERT_GET \
+    MDR_DCV(0x00000002, 0x0012, 0x0000)
+extern const struct mdr_spec *msg_cert_get;
+#define MDR_DCV_CERTES_CERT_GET_ANSWER \
+    MDR_DCV(0x00000002, 0x0013, 0x0000)
+extern const struct mdr_spec *msg_cert_get_answer;
+#define MDR_DCV_CERTES_CERT_FIND \
+    MDR_DCV(0x00000002, 0x0014, 0x0000)
+extern const struct mdr_spec *msg_cert_find;
+#define MDR_DCV_CERTES_CERT_FIND_ANSWER \
+    MDR_DCV(0x00000002, 0x0015, 0x0000)
+extern const struct mdr_spec *msg_cert_find_answer;
+
+/*
+ * Edit certificate roles/SANs
+ */
+#define MDR_DCV_CERTES_CERT_MOD_ROLES \
+    MDR_DCV(0x00000002, 0x0016, 0x0000)
+extern const struct mdr_spec *msg_cert_mod_roles;
+#define MDR_DCV_CERTES_CERT_MOD_SANS \
+    MDR_DCV(0x00000002, 0x0017, 0x0000)
+extern const struct mdr_spec *msg_cert_mod_sans;
+
+#define MDR_DCV_CERTES_SIGN_REQ \
+    MDR_DCV(0x00000002, 0x0018, 0x0000)
+extern const struct mdr_spec *msg_sign_req;
+#define CERTES_SIGN_REQ_FSERVERAUTH 0x00000001
+
 /* Built-ins */
 extern const struct mdr_spec *msg_pack_beout;
 

@@ -51,8 +51,13 @@ const char *qry_create_certs_table = "create table if not exists certs("
 	"der blob not null, "
 	"primary key(serial))";
 
+const char *qry_create_serial_table = "create table if not exists serial("
+	"serial text not null)";
+
 const char *qry_create_certs_index = "create index if not exists "
 	"by_serial_flags on certs (flags, serial desc)";
+const char *qry_create_certs_subj_index = "create index if not exists "
+	"by_subject on certs (subject)";
 
 struct {
 	sqlite3_stmt    *stmt;
@@ -66,99 +71,167 @@ struct {
 struct {
 	sqlite3_stmt *stmt;
 	char         *sql;
+} qry_commit_txn = {
+	NULL,
+	"commit"
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
 } qry_rollback_txn = {
 	NULL,
 	"rollback"
 };
 
 struct {
-        sqlite3_stmt *stmt;
-        char         *sql;
-        int           i_bootstrap_key;
-        int           i_valid_until_sec;
-        int           i_subject;
-        int           i_sans;
-        int           i_roles;
-        int           i_flags;
-        int           i_not_before_sec;
-        int           i_not_after_sec;
-} qry_bootstrap_put = {
-        NULL,
-        "insert or replace into bootstrap(bootstrap_key, valid_until_sec, "
-	    "subject, sans, roles, flags, not_before_sec, not_after_sec) "
-            "values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        1, 2, 3, 4, 5, 6, 7, 8
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_serial;
+} qry_serial_init = {
+	NULL,
+	"insert into serial(serial) values(?1)",
+	1
 };
 
 struct {
-        sqlite3_stmt *stmt;
-        char         *sql;
-        int           i_bootstrap_key;
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           o_serial;
+} qry_serial_last = {
+	NULL,
+	"select serial from serial",
+	0
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_serial;
+} qry_serial_update = {
+	NULL,
+	"update serial set serial = ?1",
+	1
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_bootstrap_key;
+	int           i_valid_until_sec;
+	int           i_subject;
+	int           i_sans;
+	int           i_roles;
+	int           i_flags;
+	int           i_not_before_sec;
+	int           i_not_after_sec;
+} qry_bootstrap_put = {
+	NULL,
+	"insert or replace into bootstrap(bootstrap_key, valid_until_sec, "
+	    "subject, sans, roles, flags, not_before_sec, not_after_sec) "
+	    "values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+	1, 2, 3, 4, 5, 6, 7, 8
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_bootstrap_key;
 } qry_bootstrap_del = {
-        NULL,
-        "delete from bootstrap where bootstrap_key = ?1",
-        1
+	NULL,
+	"delete from bootstrap where bootstrap_key = ?1",
+	1
 };
 
 const char *qry_bootstrap_del_expired =
     "delete from bootstrap where valid_until_sec < unixepoch()";
-const char *qry_cert_del_expired =
-    "delete from certs where not_after_sec < unixepoch()";
 
 struct {
-        sqlite3_stmt *stmt;
-        char         *sql;
-        int           i_bootstrap_key;
-        int           o_valid_until_sec;
-        int           o_subject;
-        int           o_sans;
-        int           o_roles;
-        int           o_flags;
-        int           o_not_before_sec;
-        int           o_not_after_sec;
-} qry_bootstrap_get = {
-        NULL,
-        "select valid_until_sec, subject, sans, roles, flags, not_before_sec, "
-	    "not_after_sec from bootstrap where bootstrap_key = ?1",
-        1, 0, 1, 2, 3, 4, 5, 6
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_retention_sec;
+} qry_cert_del_expired = {
+	NULL,
+	"delete from certs where not_after_sec < unixepoch() + ?1",
+	1
 };
 
 struct {
-        sqlite3_stmt *stmt;
-        char         *sql;
-        int           i_serial;
-        int           i_subject;
-        int           i_sans;
-        int           i_roles;
-        int           i_not_before_sec;
-        int           i_not_after_sec;
-        int           i_flags;
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_bootstrap_key;
+	int           o_valid_until_sec;
+	int           o_subject;
+	int           o_sans;
+	int           o_roles;
+	int           o_flags;
+	int           o_not_before_sec;
+	int           o_not_after_sec;
+} qry_bootstrap_get = {
+	NULL,
+	"select valid_until_sec, subject, sans, roles, flags, not_before_sec, "
+	    "not_after_sec from bootstrap where bootstrap_key = ?1",
+	1, 0, 1, 2, 3, 4, 5, 6
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_serial;
+	int           i_subject;
+	int           i_sans;
+	int           i_roles;
+	int           i_not_before_sec;
+	int           i_not_after_sec;
+	int           i_flags;
 	int           i_der;
 } qry_cert_put = {
-        NULL,
-        "insert or replace into certs(serial, subject, "
+	NULL,
+	"insert or replace into certs(serial, subject, "
 	    "sans, roles, not_before_sec, not_after_sec, flags, der) "
-            "values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        1, 2, 3, 4, 5, 6, 7, 8
+	    "values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+	1, 2, 3, 4, 5, 6, 7, 8
 };
 
 struct {
-        sqlite3_stmt *stmt;
-        char         *sql;
-        int           i_serial;
-        int           o_subject;
-        int           o_sans;
-        int           o_roles;
-        int           o_not_before_sec;
-        int           o_not_after_sec;
-        int           o_revoked_at_sec;
-        int           o_flags;
-        int           o_der;
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_serial;
+	int           o_subject;
+	int           o_sans;
+	int           o_roles;
+	int           o_not_before_sec;
+	int           o_not_after_sec;
+	int           o_revoked_at_sec;
+	int           o_flags;
+	int           o_der;
 } qry_cert_get = {
-        NULL,
-        "select subject, sans, roles, not_before_sec, not_after_sec, "
+	NULL,
+	"select subject, sans, roles, not_before_sec, not_after_sec, "
 	"revoked_at_sec, flags, der from certs where serial = ?1",
-        1, 0, 1, 2, 3, 4, 5, 6, 7
+	1, 0, 1, 2, 3, 4, 5, 6, 7
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_serial;
+	int           i_roles;
+} qry_mod_roles = {
+	NULL,
+	"update certs set roles = ?2 where serial = ?1",
+	1, 2
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_serial;
+	int           i_sans;
+} qry_mod_sans = {
+	NULL,
+	"update certs set sans = ?2 where serial = ?1",
+	1, 2
 };
 
 struct {
@@ -174,14 +247,34 @@ struct {
 };
 
 struct {
-        sqlite3_stmt *stmt;
-        char         *sql;
-        int           o_serial;
-        int           o_revoked_at_sec;
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           o_serial;
+	int           o_revoked_at_sec;
 } qry_get_revoked_certs = {
-        NULL,
-        "select serial, revoked_at_sec from certs where (flags & 1) <> 0",
-        0, 1
+	NULL,
+	"select serial, revoked_at_sec from certs where (flags & 1) <> 0",
+	0, 1
+};
+
+struct {
+	sqlite3_stmt *stmt;
+	char         *sql;
+	int           i_pattern;
+	int           o_serial;
+	int           o_subject;
+	int           o_sans;
+	int           o_roles;
+	int           o_not_before_sec;
+	int           o_not_after_sec;
+	int           o_revoked_at_sec;
+	int           o_flags;
+} qry_find_certs = {
+	NULL,
+	"select serial, subject, sans, roles, not_before_sec, not_after_sec, "
+	    "revoked_at_sec, flags from certs where subject "
+	    "like '%' || ?1 || '%'",
+	1, 0, 1, 2, 3, 4, 5, 6, 7
 };
 
 static int
@@ -211,7 +304,7 @@ txn_duration()
 	return delta_ns;
 }
 
-static int
+int
 certdb_begin_txn(struct xerr *e)
 {
 	int         r;
@@ -240,7 +333,40 @@ fail:
 	return -1;
 }
 
-static int
+int
+certdb_commit_txn(struct xerr *e)
+{
+	int         r;
+	struct xerr e2;
+	time_t      delta_ns;
+
+	switch ((r = sqlite3_step(qry_commit_txn.stmt))) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+		XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
+		goto fail;
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
+		    sqlite3_errmsg(db), r);
+		goto fail;
+	}
+
+	delta_ns = txn_duration();
+	xlog(LOG_DEBUG, NULL, "%s: transaction held the lock for %ld.%09ld "
+	    "seconds", __func__, delta_ns / 1000000000, delta_ns % 1000000000);
+
+	return certdb_qry_cleanup(qry_commit_txn.stmt, e);
+fail:
+	if (certdb_qry_cleanup(qry_commit_txn.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+int
 certdb_rollback_txn(struct xerr *e)
 {
 	int         r;
@@ -350,16 +476,17 @@ certdb_get_bootstrap(const uint8_t *bootstrap_key, size_t bootstrap_key_sz,
 
 	subject_len = sqlite3_column_bytes(
 	    qry_bootstrap_get.stmt,
-	    qry_bootstrap_get.o_subject) + 1;
-	if ((be->subject = malloc(subject_len)) == NULL) {
+	    qry_bootstrap_get.o_subject);
+	if ((be->subject = malloc(subject_len + 1)) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
 	}
 	b = sqlite3_column_blob(qry_bootstrap_get.stmt,
 	    qry_bootstrap_get.o_subject);
-	if (b != NULL)
-		strlcpy(be->subject, b, subject_len);
-	else
+	if (b != NULL) {
+		memcpy(be->subject, b, subject_len);
+		be->subject[subject_len] = '\0';
+	} else
 		be->subject[0] = '\0';
 
 	sans_len = sqlite3_column_bytes(
@@ -380,7 +507,7 @@ certdb_get_bootstrap(const uint8_t *bootstrap_key, size_t bootstrap_key_sz,
 		}
 		memcpy(sans, b, sans_len);
 		if ((be->sans_sz = strlist_split(&be->sans,
-		    sans, sans_len)) == -1) {
+		    sans, sans_len, ',')) == -1) {
 			free(be->subject);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
@@ -407,7 +534,7 @@ certdb_get_bootstrap(const uint8_t *bootstrap_key, size_t bootstrap_key_sz,
 		}
 		memcpy(roles, b, roles_len);
 		if ((be->roles_sz = strlist_split(&be->roles,
-		    roles, roles_len)) == -1) {
+		    roles, roles_len, ',')) == -1) {
 			free(be->subject);
 			free(be->sans);
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
@@ -489,16 +616,11 @@ certdb_cert_free(struct cert_entry *ce)
 {
 	if (ce == NULL)
 		return;
-	if (ce->serial != NULL)
-		free(ce->serial);
-	if (ce->subject != NULL)
-		free(ce->subject);
-	if (ce->sans != NULL)
-		free(ce->sans);
-	if (ce->roles != NULL)
-		free(ce->roles);
-	if (ce->der != NULL)
-		free(ce->der);
+	free(ce->serial);
+	free(ce->subject);
+	free(ce->sans);
+	free(ce->roles);
+	free(ce->der);
 	free(ce);
 }
 
@@ -516,8 +638,8 @@ certdb_get_cert(const char *serial, struct xerr *e)
 	struct cert_entry *dst = NULL;
 
 	if ((r = sqlite3_bind_text(qry_cert_get.stmt,
-	    qry_cert_put.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
-		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+	    qry_cert_get.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
 		    sqlite3_errmsg(db));
 		goto fail;
 	}
@@ -553,15 +675,16 @@ certdb_get_cert(const char *serial, struct xerr *e)
 	subject_len = sqlite3_column_bytes(
 	    qry_cert_get.stmt,
 	    qry_cert_get.o_subject);
-	if ((dst->subject = malloc(subject_len)) == NULL) {
+	if ((dst->subject = malloc(subject_len + 1)) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto fail;
 	}
 	b = sqlite3_column_blob(qry_cert_get.stmt,
 	    qry_cert_get.o_subject);
-	if (b != NULL)
-		strlcpy(dst->subject, b, subject_len);
-	else
+	if (b != NULL) {
+		memcpy(dst->subject, b, subject_len);
+		dst->subject[subject_len] = '\0';
+	} else
 		dst->subject[0] = '\0';
 
 	dst->der_sz = sqlite3_column_bytes(
@@ -590,7 +713,7 @@ certdb_get_cert(const char *serial, struct xerr *e)
 		}
 		memcpy(sans, b, sans_len);
 		if ((dst->sans_sz = strlist_split(&dst->sans,
-		    sans, sans_len)) == -1) {
+		    sans, sans_len, ',')) == -1) {
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
@@ -612,7 +735,7 @@ certdb_get_cert(const char *serial, struct xerr *e)
 		}
 		memcpy(roles, b, roles_len);
 		if ((dst->roles_sz = strlist_split(&dst->roles,
-		    roles, roles_len)) == -1) {
+		    roles, roles_len, ',')) == -1) {
 			XERRF(e, XLOG_ERRNO, errno, "malloc");
 			goto fail;
 		}
@@ -646,13 +769,103 @@ fail:
 }
 
 int
+certdb_mod_roles(const char *serial, const char **roles, size_t roles_sz,
+    struct xerr *e)
+{
+	int          r, sz;
+	struct xerr  e2;
+	char        *roles_joined = NULL;
+
+	if ((r = sqlite3_bind_text(qry_mod_roles.stmt,
+	    qry_mod_roles.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	if ((sz = strlist_join(roles, roles_sz, &roles_joined, ',')) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
+		goto fail;
+	}
+	if ((r = sqlite3_bind_blob(qry_mod_roles.stmt,
+	    qry_mod_roles.i_roles, roles_joined, sz, SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	switch (sqlite3_step(qry_mod_roles.stmt)) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	free(roles_joined);
+	return certdb_qry_cleanup(qry_mod_roles.stmt, e);
+fail:
+	free(roles_joined);
+	if (certdb_qry_cleanup(qry_mod_roles.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+int
+certdb_mod_sans(const char *serial, const char **sans, size_t sans_sz,
+    struct xerr *e)
+{
+	int          r, sz;
+	struct xerr  e2;
+	char        *sans_joined = NULL;
+
+	if ((r = sqlite3_bind_text(qry_mod_sans.stmt,
+	    qry_mod_sans.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	if ((sz = strlist_join(sans, sans_sz, &sans_joined, ',')) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
+		goto fail;
+	}
+	if ((r = sqlite3_bind_blob(qry_mod_sans.stmt,
+	    qry_mod_sans.i_sans, sans_joined, sz, SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	switch (sqlite3_step(qry_mod_sans.stmt)) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	free(sans_joined);
+	return certdb_qry_cleanup(qry_mod_sans.stmt, e);
+fail:
+	free(sans_joined);
+	if (certdb_qry_cleanup(qry_mod_sans.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+int
 certdb_revoke_cert(const char *serial, struct xerr *e)
 {
 	int         r;
 	struct xerr e2;
 
-	// TODO: start a transaction to see if the cert serial exists,
-	// so we can return an error if not
 	if ((r = sqlite3_bind_text(qry_revoke_cert.stmt,
 	    qry_revoke_cert.i_serial, serial, strlen(serial), SQLITE_STATIC))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
@@ -686,6 +899,133 @@ fail:
 }
 
 int
+certdb_find_certs(const char *pattern,
+    int(*cb)(const struct cert_entry *, void *), void *cb_args, struct xerr *e)
+{
+	int                r;
+	struct xerr        e2;
+	struct cert_entry  ce;
+	int                status = 0;
+	size_t             roles_len;
+	size_t             sans_len;
+
+	bzero(&ce, sizeof(ce));
+
+	if ((r = sqlite3_bind_text(qry_find_certs.stmt,
+	    qry_find_certs.i_pattern, pattern, strlen(pattern),
+	    SQLITE_STATIC))) {
+		status = XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
+		    sqlite3_errmsg(db));
+		goto end;
+	}
+
+	if (certdb_begin_txn(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
+
+	while ((r = sqlite3_step(qry_find_certs.stmt)) != SQLITE_DONE) {
+		switch (r) {
+		case SQLITE_ROW:
+			if (sqlite3_column_bytes(qry_find_certs.stmt,
+			    qry_find_certs.o_serial) == 0) {
+				status = XERRF(e, XLOG_APP, XLOG_FAIL,
+				    "serial was NULL for a cert");
+				goto end;
+			}
+			ce.serial = strdup(sqlite3_column_blob(
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_serial));
+			if (ce.serial == NULL) {
+				status = XERRF(e, XLOG_ERRNO, errno, "strdup");
+				goto end;
+			}
+
+			if (sqlite3_column_bytes(qry_find_certs.stmt,
+			    qry_find_certs.o_subject) == 0) {
+				status = XERRF(e, XLOG_APP, XLOG_FAIL,
+				    "subject was NULL for a cert");
+				goto end;
+			}
+			ce.subject = strdup(sqlite3_column_blob(
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_subject));
+			if (ce.subject == NULL) {
+				status = XERRF(e, XLOG_ERRNO, errno, "strdup");
+				goto end;
+			}
+
+			sans_len = sqlite3_column_bytes(
+			    qry_cert_get.stmt,
+			    qry_cert_get.o_sans);
+			if (sans_len > 0) {
+				if ((ce.sans_sz = strlist_split(&ce.sans,
+				    sqlite3_column_blob(qry_cert_get.stmt,
+				    qry_cert_get.o_sans), sans_len, ',')) == -1) {
+					status = XERRF(e, XLOG_ERRNO, errno, "malloc");
+					goto end;
+				}
+			}
+
+			roles_len = sqlite3_column_bytes(
+			    qry_cert_get.stmt,
+			    qry_cert_get.o_roles);
+			if (roles_len > 0) {
+				if ((ce.roles_sz = strlist_split(&ce.roles,
+				    sqlite3_column_blob(qry_cert_get.stmt,
+				    qry_cert_get.o_roles), roles_len, ',')) == -1) {
+					status = XERRF(e, XLOG_ERRNO,
+					    errno, "malloc");
+					goto end;
+				}
+			}
+
+			ce.flags = (uint32_t)sqlite3_column_int(
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_flags);
+			ce.not_before_sec = (uint64_t)sqlite3_column_int64(
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_not_before_sec);
+			ce.not_after_sec = (uint64_t)sqlite3_column_int64(
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_not_after_sec);
+			ce.revoked_at_sec = (uint64_t)sqlite3_column_int64(
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_revoked_at_sec);
+
+			if (!cb(&ce, cb_args)) {
+				goto end;
+			}
+			free(ce.serial);
+			free(ce.subject);
+			free(ce.roles);
+			free(ce.sans);
+			bzero(&ce, sizeof(ce));
+			break;
+		case SQLITE_BUSY:
+			status = XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
+			goto end;
+		case SQLITE_MISUSE:
+		case SQLITE_ERROR:
+		default:
+			status = XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
+			    sqlite3_errmsg(db), r);
+			goto end;
+		}
+	}
+end:
+	if (r != SQLITE_DONE) {
+		free(ce.serial);
+		free(ce.subject);
+		free(ce.roles);
+		free(ce.sans);
+	}
+	if (certdb_rollback_txn(&e2) == -1)
+		xlog(LOG_ERR, &e2, __func__);
+	if (certdb_qry_cleanup(qry_find_certs.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, __func__);
+	return status;
+}
+
+int
 certdb_get_revoked_certs(int(*cb)(const struct cert_entry *, void *),
     void *cb_args, struct xerr *e)
 {
@@ -693,9 +1033,6 @@ certdb_get_revoked_certs(int(*cb)(const struct cert_entry *, void *),
 	struct xerr        e2;
 	struct cert_entry  ce;
 	int                status = 0;
-
-	if (certdb_begin_txn(e) == -1)
-		return XERR_PREPENDFN(e);
 
 	while ((r = sqlite3_step(qry_get_revoked_certs.stmt)) != SQLITE_DONE) {
 		bzero(&ce, sizeof(ce));
@@ -737,7 +1074,6 @@ certdb_get_revoked_certs(int(*cb)(const struct cert_entry *, void *),
 		}
 	}
 end:
-	certdb_rollback_txn(e);
 	if (certdb_qry_cleanup(qry_get_revoked_certs.stmt, xerrz(&e2)) == -1)
 		xlog(LOG_ERR, &e2, "%s", __func__);
 	return status;
@@ -769,8 +1105,8 @@ certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((sans_sz = strlist_join(entry->sans, entry->sans_sz,
-	    &sans)) == -1) {
+	if ((sans_sz = strlist_join((const char **)entry->sans, entry->sans_sz,
+	    &sans, ',')) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
@@ -781,8 +1117,8 @@ certdb_put_bootstrap(const struct bootstrap_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((roles_sz = strlist_join(entry->roles, entry->roles_sz,
-	    &roles)) == -1) {
+	if ((roles_sz = strlist_join((const char **)entry->roles,
+	    entry->roles_sz, &roles, ',')) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
@@ -832,6 +1168,133 @@ fail:
 }
 
 int
+certdb_init_serial(const char *serial, struct xerr *e)
+{
+	int          r;
+	struct xerr  e2;
+
+	if ((r = sqlite3_bind_text(qry_serial_init.stmt,
+	    qry_serial_init.i_serial, serial,
+	    strlen(serial), SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	switch ((r = sqlite3_step(qry_serial_init.stmt))) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	return certdb_qry_cleanup(qry_serial_init.stmt, e);
+fail:
+	if (certdb_qry_cleanup(qry_serial_init.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+int
+certdb_update_serial(const char *serial, struct xerr *e)
+{
+	int          r;
+	struct xerr  e2;
+
+	if ((r = sqlite3_bind_text(qry_serial_update.stmt,
+	    qry_serial_update.i_serial, serial,
+	    strlen(serial), SQLITE_STATIC))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_bind_text: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	switch ((r = sqlite3_step(qry_serial_update.stmt))) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s",
+		    sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	return certdb_qry_cleanup(qry_serial_update.stmt, e);
+fail:
+	if (certdb_qry_cleanup(qry_serial_update.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+int
+certdb_last_serial(char *dst, size_t dst_sz, struct xerr *e)
+{
+	int          r;
+	struct xerr  e2;
+	int          serial_len;
+	const char  *b;
+
+	if (dst == NULL || dst_sz < 1)
+		return XERRF(e, XLOG_APP, XLOG_INVALID,
+		    "dst is NULL, or too short");
+
+	switch ((r = sqlite3_step(qry_serial_last.stmt))) {
+	case SQLITE_ROW:
+		break;
+        case SQLITE_DONE:
+                XERRF(e, XLOG_APP, XLOG_NOTFOUND,
+                    "sqlite3_step: entry not found");
+                goto fail;
+        case SQLITE_BUSY:
+                XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
+                goto fail;
+        case SQLITE_MISUSE:
+        case SQLITE_ERROR:
+        default:
+                XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
+                    sqlite3_errmsg(db), r);
+                goto fail;
+        }
+
+	serial_len = sqlite3_column_bytes(
+	    qry_serial_last.stmt,
+	    qry_serial_last.o_serial);
+	b = sqlite3_column_blob(qry_serial_last.stmt,
+	    qry_serial_last.o_serial);
+	if (b == NULL) {
+		dst[0] = '\0';
+		if (certdb_qry_cleanup(qry_serial_last.stmt, xerrz(&e2)) == -1)
+			xlog(LOG_ERR, &e2, "%s", __func__);
+		return 0;
+	}
+	if (serial_len >= dst_sz) {
+		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "serial does not fit in dst buffer");
+		goto fail;
+	}
+	memcpy(dst, sqlite3_column_blob(qry_serial_last.stmt,
+	    qry_serial_last.o_serial), serial_len);
+	dst[serial_len] = '\0';
+
+	if (certdb_qry_cleanup(qry_serial_last.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return 0;
+fail:
+	if (certdb_qry_cleanup(qry_serial_last.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
+}
+
+int
 certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 {
 	int          r;
@@ -864,8 +1327,8 @@ certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((sans_sz = strlist_join(entry->sans, entry->sans_sz,
-	    &sans)) == -1) {
+	if ((sans_sz = strlist_join((const char **)entry->sans, entry->sans_sz,
+	    &sans, ',')) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
@@ -876,8 +1339,8 @@ certdb_put_cert(const struct cert_entry *entry, struct xerr *e)
 		goto fail;
 	}
 
-	if ((roles_sz = strlist_join(entry->roles, entry->roles_sz,
-	    &roles)) == -1) {
+	if ((roles_sz = strlist_join((const char **)entry->roles,
+	    entry->roles_sz, &roles, ',')) == -1) {
 		XERRF(e, XLOG_ERRNO, errno, "strlist_join");
 		goto fail;
 	}
@@ -930,13 +1393,35 @@ fail:
 }
 
 int
-certdb_clean_expired_certs(struct xerr *e)
+certdb_clean_expired_certs(time_t retention, struct xerr *e)
 {
-	int r;
-	if ((r = sqlite3_exec(db, qry_cert_del_expired, NULL, NULL, NULL)))
-		return XERRF(e, XLOG_DB, r, "sqlite3_exec: %s",
+	int         r;
+	struct xerr e2;
+
+	if ((r = sqlite3_bind_int64(qry_cert_del_expired.stmt,
+	    qry_cert_del_expired.i_retention_sec, retention))) {
+		XERRF(e, XLOG_DB, r,
+		    "sqlite3_bind_int64: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+
+	switch (sqlite3_step(qry_cert_del_expired.stmt)) {
+	case SQLITE_DONE:
+		/* Nothing */
+		break;
+	case SQLITE_BUSY:
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s",
 		    sqlite3_errmsg(db));
-	return 0;
+		goto fail;
+	}
+	return certdb_qry_cleanup(qry_cert_del_expired.stmt, e);
+fail:
+	if (certdb_qry_cleanup(qry_cert_del_expired.stmt, xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, "%s", __func__);
+	return -1;
 }
 
 int
@@ -1009,7 +1494,17 @@ certdb_init(const char *path, struct xerr *e)
 		goto fail;
 	}
 
+	if ((r = sqlite3_exec(db, qry_create_serial_table, NULL, NULL, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_exec: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+
 	if ((r = sqlite3_exec(db, qry_create_certs_index, NULL, NULL, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_exec: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_exec(db, qry_create_certs_subj_index,
+	    NULL, NULL, NULL))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_exec: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
@@ -1018,6 +1513,12 @@ certdb_init(const char *path, struct xerr *e)
 	    &qry_begin_txn.stmt, NULL))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
 		    "qry_begin_txn: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_commit_txn.sql, -1,
+	    &qry_commit_txn.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_commit_txn: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
 	if ((r = sqlite3_prepare_v2(db, qry_rollback_txn.sql, -1,
@@ -1045,6 +1546,12 @@ certdb_init(const char *path, struct xerr *e)
 		    "qry_bootstrap_del: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
+	if ((r = sqlite3_prepare_v2(db, qry_cert_del_expired.sql, -1,
+	    &qry_cert_del_expired.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_cert_del_expired: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
 
 	if ((r = sqlite3_prepare_v2(db, qry_cert_put.sql, -1,
 	    &qry_cert_put.stmt, NULL))) {
@@ -1058,16 +1565,52 @@ certdb_init(const char *path, struct xerr *e)
 		    "qry_cert_get: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
+	if ((r = sqlite3_prepare_v2(db, qry_mod_roles.sql, -1,
+	    &qry_mod_roles.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_mod_roles: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_mod_sans.sql, -1,
+	    &qry_mod_sans.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_mod_sans: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
 	if ((r = sqlite3_prepare_v2(db, qry_revoke_cert.sql, -1,
 	    &qry_revoke_cert.stmt, NULL))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
 		    "qry_revoke_cert: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
+	if ((r = sqlite3_prepare_v2(db, qry_find_certs.sql, -1,
+	    &qry_find_certs.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_find_certs: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
 	if ((r = sqlite3_prepare_v2(db, qry_get_revoked_certs.sql, -1,
 	    &qry_get_revoked_certs.stmt, NULL))) {
 		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
 		    "qry_get_revoked_certs: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_serial_init.sql, -1,
+	    &qry_serial_init.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_serial_init: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_serial_last.sql, -1,
+	    &qry_serial_last.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_serial_last: %s", sqlite3_errmsg(db));
+		goto fail;
+	}
+	if ((r = sqlite3_prepare_v2(db, qry_serial_update.sql, -1,
+	    &qry_serial_update.stmt, NULL))) {
+		XERRF(e, XLOG_DB, r, "sqlite3_prepare_v2: "
+		    "qry_serial_update: %s", sqlite3_errmsg(db));
 		goto fail;
 	}
 
@@ -1083,6 +1626,10 @@ certdb_shutdown()
 	if (sqlite3_finalize(qry_begin_txn.stmt))
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_begin_txn: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_commit_txn.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_commit_txn: %s",
 		    __func__, sqlite3_errmsg(db));
 	if (sqlite3_finalize(qry_rollback_txn.stmt))
 		xlog(LOG_WARNING, NULL,
@@ -1100,6 +1647,10 @@ certdb_shutdown()
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_bootstrap_del: %s",
 		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_cert_del_expired.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_cert_del_expired: %s",
+		    __func__, sqlite3_errmsg(db));
 
 	if (sqlite3_finalize(qry_cert_put.stmt))
 		xlog(LOG_WARNING, NULL,
@@ -1109,13 +1660,37 @@ certdb_shutdown()
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_cert_get: %s",
 		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_mod_roles.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_mod_roles: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_mod_sans.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_mod_sans: %s",
+		    __func__, sqlite3_errmsg(db));
 	if (sqlite3_finalize(qry_revoke_cert.stmt))
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_revoke_cert: %s",
 		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_find_certs.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_find_certs: %s",
+		    __func__, sqlite3_errmsg(db));
 	if (sqlite3_finalize(qry_get_revoked_certs.stmt))
 		xlog(LOG_WARNING, NULL,
 		    "%s: sqlite3_finalize: qry_get_revoked_certs: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_serial_init.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_serial_init: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_serial_last.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_serial_last: %s",
+		    __func__, sqlite3_errmsg(db));
+	if (sqlite3_finalize(qry_serial_update.stmt))
+		xlog(LOG_WARNING, NULL,
+		    "%s: sqlite3_finalize: qry_serial_update: %s",
 		    __func__, sqlite3_errmsg(db));
 
 	if (sqlite3_close(db) != SQLITE_OK)

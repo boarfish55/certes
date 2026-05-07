@@ -41,16 +41,25 @@ static struct timespec last_authop_purge = {0, 0};
 static struct timespec last_certdb_purge = {0, 0};
 static struct timespec next_certdb_backup = {0, 0};
 static struct timespec last_cert_check = {0, 0};
+static struct timespec last_crl_check = {0, 0};
 static int             agent_fd = -1;
 static int             cert_fetch_in_progress = 0;
 
 extern struct certes_flatconf certes_conf;
 
+static struct loaded_crls loaded_crls = { 0, NULL, NULL, NULL };
+
 enum authop_type {
 	AUTHOP_BOOTSTRAP_SETUP = 1,
 	AUTHOP_BOOTSTRAP,
 	AUTHOP_CERT_RENEW,
-	AUTHOP_CERT_REVOKE
+	AUTHOP_CERT_REVOKE,
+	AUTHOP_REFRESH_CRLS,
+	AUTHOP_CERT_GET,
+	AUTHOP_CERT_FIND,
+	AUTHOP_ROLE_MOD,
+	AUTHOP_ROLE_SAN,
+	AUTHOP_SIGN_REQ
 };
 
 struct authop {
@@ -105,8 +114,10 @@ client_free(struct client *c)
 	client_tree_sz--;
 }
 
+static void           free_loaded_crls();
 static int            agent_bootstrap(struct xerr *);
 static int            agent_cert_renew_inquiry(struct xerr *);
+static int            agent_refresh_crls(const char *, struct xerr *);
 static int            agent_bootstrap_dialback(struct umdr *, struct xerr *);
 static int            agent_cert_renew_dialback(struct umdr *, struct xerr *);
 static int            agent_recv_cert(struct authop *, struct xerr *);
@@ -114,18 +125,19 @@ static void           purge_authops();
 static int            agent_connect(struct xerr *);
 static void           agent_tasks();
 static int            agent_run(int, struct xerr *);
-static struct authop *authop_new(enum authop_type, struct xerr *);
+static struct authop *authop_new(enum authop_type, const char *, struct xerr *);
 static void           authop_free(struct authop *);
 static int            authop_send(struct authop *, const void *, size_t,
                           struct xerr *);
 static int            authop_recv(struct authop *, char *, size_t,
                           struct xerr *);
-static int            load_crl(const char *, struct xerr *);
+static X509_CRL      *load_crl(const char *, struct xerr *);
 static void           bootstrap_setup_usage();
 static int            agent_error(struct umdr *, struct xerr *);
 static int            load_crls(struct xerr *);
 static int            agent_init_ctx(struct xerr *);
 static int            agent_poll_crls_gen(int, struct xerr *);
+static int            agent_regen_crl(struct xerr *);
 
 static int
 verify_callback(int ok, X509_STORE_CTX *ctx)
@@ -216,6 +228,7 @@ agent_tasks()
 {
 	struct timespec now;
 	struct xerr     e;
+	int             i;
 
 	/*
 	 * Tasks must be quick, unless it's one of bootstrap or cert
@@ -230,7 +243,9 @@ agent_tasks()
 			xlog(LOG_INFO, NULL, "%s: purging expired certs and "
 			    "bootstrap entries", __func__);
 			memcpy(&last_certdb_purge, &now, sizeof(now));
-			if (certdb_clean_expired_certs(xerrz(&e)) == -1)
+			if (certdb_clean_expired_certs(
+			    certes_conf.cert_expired_retention_seconds,
+			    xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
 			if (certdb_clean_expired_bootstraps(xerrz(&e)) == -1)
 				xlog(LOG_ERR, &e, "%s", __func__);
@@ -255,9 +270,16 @@ agent_tasks()
 			    certes_conf.certdb_backup_interval_seconds;
 		}
 
-		// TODO: need to sync CRLs from other authorities
-		// When we have CRL updates, need to recreate our ctx with
-		// agent_init_ctx
+		if (now.tv_sec < last_crl_check.tv_sec +
+		    certes_conf.crl_reload_interval_seconds)
+			return;
+		memcpy(&last_crl_check, &now, sizeof(now));
+		for (i = 0; certes_conf.peer_authorities != NULL &&
+		    certes_conf.peer_authorities[i] != NULL; i++) {
+			if (agent_refresh_crls(
+			    certes_conf.peer_authorities[i], xerrz(&e)) == -1)
+				xlog(LOG_ERR, &e, __func__);
+		}
 
 		return;
 	}
@@ -265,22 +287,22 @@ agent_tasks()
 	/*
 	 * Non-authority tasks only from this point on.
 	 */
-	//if (now.tv_sec < last_cert_check.tv_sec + 600)
-	if (now.tv_sec < last_cert_check.tv_sec + 30)
+	if (now.tv_sec < last_cert_check.tv_sec +
+	    certes_conf.cert_check_interval_seconds)
 		return;
 	memcpy(&last_cert_check, &now, sizeof(now));
 
 	if (cert_is_selfsigned(cert)) {
 		if (agent_bootstrap(xerrz(&e)) == -1)
-			xlog(LOG_ERR, &e, "%s", __func__);
+			xlog(LOG_ERR, &e, __func__);
 	} else {
 		if (agent_cert_renew_inquiry(xerrz(&e)) == -1)
-			xlog(LOG_ERR, &e, "%s", __func__);
+			xlog(LOG_ERR, &e, __func__);
+
+		if (agent_refresh_crls(NULL, xerrz(&e)) == -1)
+			xlog(LOG_ERR, &e, __func__);
 	}
 
-	// TODO: need to refresh CRLs from our authority
-	// When we have CRL updates, need to recreate our ctx with
-	// agent_init_ctx
 }
 
 static int
@@ -457,7 +479,7 @@ agent_run(int lsock, struct xerr *e)
 				xlog(LOG_INFO, NULL,
 				    "%s: received CRLs reload request",
 				    __func__);
-				if (agent_reload_crls(xerrz(e)) == MDR_FAIL)
+				if (agent_regen_crl(xerrz(e)) == MDR_FAIL)
 					xlog(LOG_ERR, e, "%s", __func__);
 				else
 					crls_gen++;
@@ -487,7 +509,7 @@ agent_run(int lsock, struct xerr *e)
 }
 
 static struct authop *
-authop_new(enum authop_type type, struct xerr *e)
+authop_new(enum authop_type type, const char *authority_fqdn, struct xerr *e)
 {
 	char            host[302];
 	int             fd;
@@ -503,15 +525,17 @@ authop_new(enum authop_type type, struct xerr *e)
 	}
 	bzero(op, sizeof(*op));
 
-	if (certes_conf.authority_fqdn[0] == '\0') {
-		XERRF(e, XLOG_APP, XLOG_INVALID,
-		    "no destination address was specified");
-		goto fail;
+	if (authority_fqdn == NULL) {
+		if (certes_conf.authority_fqdn[0] == '\0') {
+			XERRF(e, XLOG_APP, XLOG_INVALID,
+			    "no destination address was specified");
+			goto fail;
+		}
+		authority_fqdn = certes_conf.authority_fqdn;
 	}
 
 	if (snprintf(host, sizeof(host), "%s:%llu",
-	    certes_conf.authority_fqdn,
-	    certes_conf.authority_port) >= sizeof(host)) {
+	    authority_fqdn, certes_conf.authority_port) >= sizeof(host)) {
 		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 		    "resulting host:port is too long");
 		goto fail;
@@ -642,27 +666,28 @@ authop_recv(struct authop *op, char *buf, size_t buf_sz, struct xerr *e)
 	return r;
 }
 
-static int
+static X509_CRL *
 load_crl(const char *crl_path, struct xerr *e)
 {
 	X509_CRL *crl;
 	FILE     *f;
 
-	if ((f = fopen(crl_path, "r")) == NULL)
-		return XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
-
+	if ((f = fopen(crl_path, "r")) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
+		return NULL;
+	}
 	if ((crl = PEM_read_X509_CRL(f, NULL, NULL, NULL)) == NULL) {
 		fclose(f);
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509_CRL");
+		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_read_X509_CRL");
+		return NULL;
 	}
-
 	fclose(f);
 
-	if (!X509_STORE_add_crl(store, crl))
-		return XERRF(e, XLOG_SSL, ERR_get_error(),
-		    "X509_STORE_add_crl");
-	X509_CRL_free(crl);
-	return 0;
+	if (!X509_STORE_add_crl(store, crl)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_add_crl");
+		return NULL;
+	}
+	return crl;
 }
 
 /*
@@ -727,7 +752,7 @@ agent_bootstrap(struct xerr *e)
 	    certes_conf.bootstrap_key) < sizeof(bootstrap_key))
 		return XERRF(e, XLOG_ERRNO, errno, "b64dec");
 
-	if ((op = authop_new(AUTHOP_BOOTSTRAP, xerrz(e))) == NULL) {
+	if ((op = authop_new(AUTHOP_BOOTSTRAP, NULL, xerrz(e))) == NULL) {
 		cert_fetch_in_progress = 0;
 		return XERR_PREPENDFN(e);
 	}
@@ -802,10 +827,12 @@ agent_bootstrap(struct xerr *e)
 		goto fail;
 	}
 
+	free(req_buf);
 	xlog(LOG_INFO, NULL, "%s: awaiting challenge for authop id %s",
 	    __func__, op->id);
 	return 0;
 fail:
+	free(req_buf);
 	authop_free(op);
 	return -1;
 }
@@ -813,20 +840,20 @@ fail:
 static int
 agent_cert_renew_inquiry(struct xerr *e)
 {
-	struct pmdr          pm;
-	struct pmdr_vec      pv[1];
-	char                 pbuf[CERTES_MAX_MSG_SIZE];
-	struct authop       *op;
-	struct umdr          um;
-	char                 ubuf[256];
-	struct umdr_vec      uv[3];
-	int                  r;
+	struct pmdr      pm;
+	struct pmdr_vec  pv[1];
+	char             pbuf[CERTES_MAX_MSG_SIZE];
+	struct authop   *op;
+	struct umdr      um;
+	char             ubuf[256];
+	struct umdr_vec  uv[3];
+	int              r;
 
 	if (cert_fetch_in_progress)
 		return 0;
 	cert_fetch_in_progress = 1;
 
-	if ((op = authop_new(AUTHOP_CERT_RENEW, xerrz(e))) == NULL) {
+	if ((op = authop_new(AUTHOP_CERT_RENEW, NULL, xerrz(e))) == NULL) {
 		cert_fetch_in_progress = 0;
 		return XERR_PREPENDFN(e);
 	}
@@ -912,6 +939,170 @@ agent_poll_crls_gen(int cfd, struct xerr *e)
 		return XERRF(e, XLOG_ERRNO, errno, "writeall");
 
 	return 0;
+}
+
+static int
+agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
+{
+	struct pmdr      pm;
+	struct pmdr_vec  pv[3];
+	char             pbuf[CERTES_MAX_MSG_SIZE];
+	struct authop   *op;
+	struct umdr      um;
+	char             ubuf[CERTES_MAX_MSG_SIZE];
+	struct umdr_vec  uv[3];
+	int              r, i;
+	uint32_t         crl_count;
+	uint32_t        *crl_sizes = NULL;
+	const uint8_t   *p;
+	X509_CRL        *crl = NULL;
+	X509_NAME       *issuer;
+	char             issuer_cn[256];
+	char             crl_path[PATH_MAX];
+	FILE            *f;
+
+	if ((op = authop_new(AUTHOP_REFRESH_CRLS, peer_fqdn, xerrz(e))) == NULL)
+		return XERR_PREPENDFN(e);
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = op->id;
+	pv[1].type = MDR_AS;
+	pv[1].v.as.items = (const char **)loaded_crls.issuers;
+	pv[1].v.as.length = loaded_crls.count;
+	pv[2].type = MDR_AU64;
+	pv[2].v.au64.items = loaded_crls.last_updates;
+	pv[2].v.au64.length = loaded_crls.count;
+	if (pmdr_pack(&pm, msg_fetch_outdated_crls, pv,
+	    PMDRVECLEN(pv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno,
+		    "pmdr_pack/msg_fetch_outdated_crls");
+		goto fail;
+	}
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(e))) == -1) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_CERTES_SEND_UPDATED_CRLS:
+		/* Success */
+		break;
+	case MDR_DCV_CERTES_ERROR:
+		if (umdr_unpack(&um, msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
+		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
+		    op->id, uv[2].v.s.bytes, uv[1].v.u32);
+		goto fail;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
+		XERRF(e, XLOG_APP, XLOG_FAIL, "authop %s failed with %s (%u)",
+		    op->id, uv[1].v.s.bytes, uv[0].v.u32);
+		goto fail;
+	default:
+		XERRF(e, XLOG_APP, XLOG_BADMSG, "bad response from authority");
+		goto fail;
+	}
+
+	if (umdr_unpack(&um, msg_send_updated_crls, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL) {
+		XERR_PREPENDFN(e);
+		goto fail;
+	}
+
+	crl_count = umdr_vec_alen(&uv[1].v.au32);
+	if (crl_count == 0) {
+		authop_free(op);
+		return 0;
+	}
+
+	xlog(LOG_NOTICE, NULL, "%s: %u CRLs to update",
+	    __func__, crl_count);
+
+	crl_sizes = malloc(sizeof(uint32_t) * crl_count);
+	if (crl_sizes == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+
+	if (umdr_vec_au32(&uv[1].v.au32, crl_sizes, crl_count) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_au32");
+		goto fail;
+	}
+
+	for (i = 0, p = uv[2].v.b.bytes;
+	    i < crl_count && (p - (uint8_t *)uv[2].v.b.bytes) < uv[2].v.b.sz;
+	    i++) {
+		crl = d2i_X509_CRL(NULL, &p, crl_sizes[i]);
+		/* p is incremented */
+		if (crl == NULL) {
+			XERRF(e, XLOG_APP, XLOG_BADMSG,
+			    "reply did not contain a valid "
+			    "DER-encoded X.509 CRL, or alloc failed");
+			goto fail;
+		}
+
+		issuer = X509_CRL_get_issuer(crl);
+		if (X509_NAME_get_text_by_NID(issuer, NID_commonName,
+		    issuer_cn, sizeof(issuer_cn)) < 0) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_NAME_get_text_by_NID");
+			goto fail;
+		}
+
+		if (snprintf(crl_path, sizeof(crl_path), "%s/%s.crl",
+		    certes_conf.crl_path, issuer_cn) >= sizeof(crl_path)) {
+			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+			    "crl path too long");
+			goto fail;
+		}
+
+		if ((f = fopen(crl_path, "w")) == NULL) {
+			XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
+			goto fail;
+		}
+		if (PEM_write_X509_CRL(f, crl) == 0) {
+			fclose(f);
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "PEM_write_X509_CRL");
+			goto fail;
+		}
+		fclose(f);
+		X509_CRL_free(crl);
+		xlog(LOG_NOTICE, NULL, "%s: wrote updated CRL from %s",
+		    __func__, issuer_cn);
+	}
+	free(crl_sizes);
+	authop_free(op);
+
+	if (load_crls(xerrz(e)) == -1)
+		xlog(LOG_ERR, e, "%s");
+	crls_gen++;
+
+	return 0;
+fail:
+	if (crl != NULL)
+		X509_CRL_free(crl);
+	free(crl_sizes);
+	authop_free(op);
+	return -1;
 }
 
 /*
@@ -1062,10 +1253,10 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	der_chain_sz = uv[2].v.b.sz;
 
 	for (dp = der_chain; dp - der_chain < der_chain_sz; ) {
-		der_sz = *(uint32_t *)dp;
+		der_sz = be32toh(*(uint32_t *)dp);
 		dp += sizeof(uint32_t);
 		icrt = d2i_X509(NULL, &dp, der_sz);
-		dp += der_sz;
+		/* dp is incremented */
 		if (icrt == NULL) {
 			XERRF(e, XLOG_APP, XLOG_BADMSG,
 			    "bootstrap reply did not contain a valid "
@@ -1077,6 +1268,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 			XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
 			goto fail;
 		}
+		X509_free(icrt);
 	}
 
 	fclose(f);
@@ -1090,6 +1282,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 
 	xlog(LOG_INFO, NULL, "%s: new cert written", __func__);
 
+	X509_free(cert);
 	cert = crt;
 	if (SSL_CTX_use_certificate_chain_file(ssl_ctx,
 	    certes_conf.cert_file) != 1) {
@@ -1172,10 +1365,10 @@ fail:
 }
 
 /*
- * Reload CRLs after reinitiating our store/ctx
+ * Regen CRL after reinitiating our store/ctx
  */
-int
-agent_reload_crls(struct xerr *e)
+static int
+agent_regen_crl(struct xerr *e)
 {
 	if (cert != NULL) {
 		X509_free(cert);
@@ -1196,6 +1389,30 @@ agent_reload_crls(struct xerr *e)
 		if (cert_gen_crl(xerrz(e)) == -1)
 			return XERR_PREPENDFN(e);
 	}
+
+	if (load_crls(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
+
+	return 0;
+}
+
+/*
+ * Reload CRLs after reinitiating our store/ctx
+ */
+int
+agent_reload_crls(struct xerr *e)
+{
+	if (cert != NULL) {
+		X509_free(cert);
+		cert = NULL;
+	}
+	if (ssl_ctx != NULL) {
+		SSL_CTX_free(ssl_ctx);
+		ssl_ctx = NULL;
+	}
+
+	if (agent_init_ctx(xerrz(e)) == -1)
+		return XERR_PREPENDFN(e);
 
 	if (load_crls(xerrz(e)) == -1)
 		return XERR_PREPENDFN(e);
@@ -1275,9 +1492,9 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 				bootstrap_setup_usage();
 				exit(1);
 			}
-			sans = strlist_add(sans, argv[opt]);
+			sans = strarray_add(sans, argv[opt]);
 			if (sans == NULL)
-				err(1, "strlist_add");
+				err(1, "strarray_add");
 			sans_sz++;
 			continue;
 		}
@@ -1289,7 +1506,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 				exit(1);
 			}
 			cn = argv[opt];
-			flags |= CERTDB_BOOTSTRAP_FLAG_SETCN;
+			flags |= CERTDB_BOOTSTRAP_FLAG_SETSUBJECT;
 			continue;
 		}
 
@@ -1299,12 +1516,17 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 				bootstrap_setup_usage();
 				exit(1);
 			}
-			roles = strlist_add(roles, argv[opt]);
+			roles = strarray_add(roles, argv[opt]);
 			if (roles == NULL)
-				err(1, "strlist_add");
+				err(1, "strarray_add");
 			roles_sz++;
 			continue;
 		}
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
 	}
 
 	if (agent_init(xerrz(&e)) == -1) {
@@ -1312,7 +1534,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 		exit(1);
 	}
 
-	if ((op = authop_new(AUTHOP_BOOTSTRAP_SETUP, xerrz(&e))) == NULL) {
+	if ((op = authop_new(AUTHOP_BOOTSTRAP_SETUP, NULL, xerrz(&e))) == NULL) {
 		xerr_print(&e);
 		exit(1);
 	}
@@ -1368,6 +1590,287 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 }
 
 static void
+sign_req_usage()
+{
+	printf("Usage: %s sign-req [options] -in <REQ> -out <cert>\n",
+	    CERTES_PROGNAME);
+	printf("\t-help         Prints this help\n");
+	printf("\t-in           Input REQ file name\n");
+	printf("\t-out          Output file name for the certificate\n");
+	printf("\t-cert_expiry  Validity of certificate in "
+	    "seconds (default 7*86400)\n");
+	printf("\t-role         Adds a role\n");
+	printf("\t-server_auth  Adds serverAuth extended usage\n");
+	printf("\t-copy_sans    Copy REQ SANs when signing\n");
+}
+
+struct append_san_data {
+	char   **sans;
+	size_t   sz;
+};
+
+static int
+append_san(const char *san, void *arg)
+{
+	struct append_san_data *sd = (struct append_san_data *)arg;
+
+	sd->sans = strarray_add(sd->sans, san);
+	if (sd->sans == NULL)
+		err(1, "strarray_add");
+	sd->sz++;
+	return 1;
+}
+
+void
+agent_cli_sign_req(int argc, char **argv)
+{
+	int               opt, r;
+	uint32_t          cert_expiry = 7 * 86400;
+	const char       *out = NULL;
+	const char       *in = NULL;
+	char            **roles = NULL;
+	size_t            roles_sz = 0;
+	struct pmdr       pm;
+	struct pmdr_vec   pv[6];
+	char              pbuf[CERTES_MAX_MSG_SIZE];
+	struct umdr       um;
+	struct umdr_vec   uv[3];
+	char              ubuf[CERTES_MAX_MSG_SIZE];
+	struct xerr       e;
+	struct authop    *op;
+	X509             *crt = NULL, *icrt;
+	X509_REQ         *req = NULL;
+	FILE             *f = NULL;
+	uint8_t          *der = NULL;
+	int               der_sz;
+	const uint8_t    *der_chain = NULL, *dp;
+	uint64_t          der_chain_sz;
+	uint32_t          req_flags = 0;
+	int               i, copy_sans = 0;
+
+	struct append_san_data sd = { NULL, 0 };
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			sign_req_usage();
+			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-out") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			out = argv[opt];
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-in") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			in = argv[opt];
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-cert_expiry") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			cert_expiry = atoi(argv[opt]);
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-copy_sans") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			copy_sans = 1;
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-server_auth") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			req_flags |= CERTES_SIGN_REQ_FSERVERAUTH;
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-role") == 0) {
+			opt++;
+			if (opt > argc) {
+				sign_req_usage();
+				exit(1);
+			}
+			roles = strarray_add(roles, argv[opt]);
+			if (roles == NULL)
+				err(1, "strarray_add");
+			roles_sz++;
+			continue;
+		}
+	}
+
+	if (in == NULL || out == NULL) {
+		sign_req_usage();
+		exit(1);
+	}
+
+	if ((f = fopen(in, "r")) == NULL)
+		err(1, "fopen");
+
+	if ((req = PEM_read_X509_REQ(f, NULL, NULL, NULL)) == NULL) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+	fclose(f);
+
+	if (copy_sans) {
+		if (cert_req_foreach_san(req, &append_san, &sd,
+		    xerrz(&e)) == -1) {
+			xerr_print(&e);
+			exit(1);
+		}
+		printf("Copying SANs:\n");
+		for (i = 0; i < sd.sz; i++)
+			printf("* %s\n", sd.sans[i]);
+	}
+
+	if ((der_sz = i2d_X509_REQ(req, &der)) == -1) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (agent_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((op = authop_new(AUTHOP_SIGN_REQ, NULL, xerrz(&e))) == NULL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;  /* Op ID */
+	pv[0].v.s = op->id;
+	pv[1].type = MDR_B;  /* DER-encoded REQ */
+	pv[1].v.b.bytes = der;
+	pv[1].v.b.sz = der_sz;
+	pv[2].type = MDR_U32;
+	pv[2].v.u32 = cert_expiry;
+	pv[3].type = MDR_AS;
+	pv[3].v.as.items = (const char **)roles;
+	pv[3].v.as.length = roles_sz;
+	pv[4].type = MDR_AS;
+	pv[4].v.as.items = (const char **)sd.sans;
+	pv[4].v.as.length = sd.sz;
+	pv[5].type = MDR_U32;
+	pv[5].v.u32 = req_flags;
+	if (pmdr_pack(&pm, msg_sign_req, pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		err(1, "pmdr_pack");
+	free(roles);
+	X509_REQ_free(req);
+	free(der);
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(&e))) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_CERTES_SEND_CERT:
+		break;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "umdr_unpack");
+		errx(1, "failed: %s (%u)", uv[1].v.s.bytes, uv[0].v.u32);
+	case MDR_DCV_CERTES_ERROR:
+		if (umdr_unpack(&um, msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "umdr_unpack");
+		errx(1, "authop %s failed with %s (%u)",
+		    op->id, uv[2].v.s.bytes, uv[1].v.u32);
+	default:
+		errx(1, "bad response from authority");
+	}
+
+	/*
+	 * Finally, we get the cert back.
+	 */
+
+	if (umdr_unpack(&um, msg_send_cert, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+		err(1, "umdr_unpack");
+
+	if (uv[0].v.s.bytes == NULL || strcmp(op->id, uv[0].v.s.bytes) != 0)
+		errx(1, "expected authop %s, got %s", op->id, uv[0].v.s.bytes);
+
+	crt = d2i_X509(NULL, (const unsigned char **)&uv[1].v.b.bytes,
+	    uv[1].v.b.sz);
+	if (crt == NULL)
+		errx(1, "sign-req reply did not contain a valid "
+		    "DER-encoded X.509, or alloc failed");
+
+	if ((f = fopen(out, "w")) == NULL)
+		err(1, "fopen: %s", out);
+
+	if (PEM_write_X509(f, crt) == 0) {
+		ERR_print_errors_fp(stderr);
+		exit(1);
+	}
+
+	der_chain = uv[2].v.b.bytes;
+	der_chain_sz = uv[2].v.b.sz;
+
+	for (dp = der_chain; dp - der_chain < der_chain_sz; ) {
+		der_sz = be32toh(*(uint32_t *)dp);
+		dp += sizeof(uint32_t);
+		icrt = d2i_X509(NULL, &dp, der_sz);
+		/* dp is incremented */
+		if (icrt == NULL) {
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+		if (PEM_write_X509(f, icrt) == 0) {
+			X509_free(icrt);
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+	}
+
+	fclose(f);
+	X509_free(crt);
+}
+
+static void
 revoke_usage()
 {
 	printf("Usage: %s revoke -serial <serial>\n",
@@ -1416,12 +1919,17 @@ agent_cli_revoke(int argc, char **argv)
 		exit(1);
 	}
 
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
 	if (agent_init(xerrz(&e)) == -1) {
 		xerr_print(&e);
 		exit(1);
 	}
 
-	if ((op = authop_new(AUTHOP_CERT_REVOKE, xerrz(&e))) == NULL) {
+	if ((op = authop_new(AUTHOP_CERT_REVOKE, NULL, xerrz(&e))) == NULL) {
 		xerr_print(&e);
 		exit(1);
 	}
@@ -1464,6 +1972,431 @@ agent_cli_revoke(int argc, char **argv)
 	}
 }
 
+static void
+cli_update_crls_usage()
+{
+	printf("Usage: %s update-crls\n", CERTES_PROGNAME);
+	printf("\t-help        Prints this help\n");
+}
+
+void
+agent_cli_update_crls(int argc, char **argv)
+{
+	int         opt;
+	struct xerr e;
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			cli_update_crls_usage();
+			exit(0);
+		}
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (agent_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (agent_refresh_crls(NULL, xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+}
+
+static void
+role_san_usage(int role)
+{
+	printf("Usage: %s %s -serial <serial> [-add <entry>] [-del <entry>]\n",
+	    CERTES_PROGNAME, (role) ? "role" : "san");
+	printf("\t-help        Prints this help\n");
+	printf("\t-serial      Which cert to change\n");
+	printf("\t-add         Entry to add\n");
+	printf("\t-del         Entry to remove\n");
+}
+
+void
+agent_cli_role_sans(int role, int argc, char **argv)
+{
+	int               opt, r;
+	char             *serial = NULL;
+	char            **add = NULL;
+	size_t            add_sz = 0;
+	char            **del = NULL;
+	size_t            del_sz = 0;
+	struct pmdr       pm;
+	struct pmdr_vec   pv[3];
+	char              pbuf[CERTES_MAX_MSG_SIZE];
+	struct umdr       um;
+	struct umdr_vec   uv[3];
+	char              ubuf[1024];
+	struct xerr       e;
+	struct authop    *op;
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			role_san_usage(role);
+			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-add") == 0) {
+			opt++;
+			if (opt > argc) {
+				role_san_usage(role);
+				exit(1);
+			}
+			add = strarray_add(add, argv[opt]);
+			if (add == NULL)
+				err(1, "strarray_add");
+			add_sz++;
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-del") == 0) {
+			opt++;
+			if (opt > argc) {
+				role_san_usage(role);
+				exit(1);
+			}
+			del = strarray_add(del, argv[opt]);
+			if (del == NULL)
+				err(1, "strarray_add");
+			del_sz++;
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-serial") == 0) {
+			opt++;
+			if (opt > argc) {
+				role_san_usage(role);
+				exit(1);
+			}
+			serial = argv[opt];
+			continue;
+		}
+	}
+
+	if (serial == NULL) {
+		warn("no serial provided");
+		role_san_usage(role);
+		exit(1);
+	}
+
+	if (cert_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (agent_init(xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((op = authop_new((role) ? AUTHOP_ROLE_MOD : AUTHOP_ROLE_SAN,
+	    NULL, xerrz(&e))) == NULL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_S;
+	pv[0].v.s = serial;
+	pv[1].type = MDR_AS;
+	pv[1].v.as.items = (const char **)add;
+	pv[1].v.as.length = add_sz;
+	pv[2].type = MDR_AS;
+	pv[2].v.as.items = (const char **)del;
+	pv[2].v.as.length = del_sz;
+	if (pmdr_pack(&pm, (role) ? msg_cert_mod_roles : msg_cert_mod_sans,
+	    pv, PMDRVECLEN(pv)) == MDR_FAIL)
+		err(1, "pmdr_pack");
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(&e)) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(&e))) == -1) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL) {
+		xerr_print(&e);
+		exit(1);
+	}
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_MDR_OK:
+		break;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "mod failed: %s (%u)", uv[1].v.s.bytes,
+		    uv[0].v.u32);
+	case MDR_DCV_CERTES_ERROR:
+		if (umdr_unpack(&um, msg_error, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "mod failed: %s (%u)", uv[2].v.s.bytes,
+		    uv[1].v.u32);
+	default:
+		errx(1, "bad response from authority");
+	}
+}
+
+static void
+cli_cert_usage()
+{
+	printf("Usage: %s cert [-serial <serial>] [-find <pattern>]\n",
+	    CERTES_PROGNAME);
+	printf("\t-help             Prints this help\n");
+	printf("\t-serial <serial>  Serial of the certificate to display\n");
+	printf("\t-find <pattern>   List serials matching pattern\n");
+}
+
+static int
+print_str_ext(const char *s, void *args)
+{
+	printf("  - %s\n", s);
+	return 1;
+}
+
+void
+agent_cli_cert(int argc, char **argv)
+{
+	int               opt, r, i;
+	char             *serial = NULL;
+	char             *find = NULL;
+	struct pmdr       pm;
+	struct pmdr_vec   pv[1];
+	char              pbuf[CERTES_MAX_MSG_SIZE];
+	struct umdr       um;
+	struct umdr_vec   uv[3];
+	char              ubuf[CERTES_MAX_MSG_SIZE];
+	struct xerr       e;
+	struct authop    *op;
+	X509             *crt = NULL;
+	const uint8_t    *der;
+	uint32_t          flags;
+	time_t            revoked_at_sec;
+	char             *subject;
+	struct tm         tm;
+	struct tm        *ptm;
+	char              tstr[80];
+	const char      **serials;
+	size_t            serials_sz;
+	const char      **subjects;
+	size_t            subjects_sz;
+	uint32_t         *find_flags;
+	size_t            find_flags_sz;
+
+	for (opt = 0; opt < argc; opt++) {
+		if (argv[opt][0] != '-')
+			break;
+
+		if (strcmp(argv[opt], "-help") == 0) {
+			cli_cert_usage();
+			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-serial") == 0) {
+			opt++;
+			if (opt > argc) {
+				cli_cert_usage();
+				exit(1);
+			}
+			serial = argv[opt];
+			continue;
+		}
+
+		if (strcmp(argv[opt], "-find") == 0) {
+			opt++;
+			if (opt > argc) {
+				cli_cert_usage();
+				exit(1);
+			}
+			find = argv[opt];
+			continue;
+		}
+	}
+
+	if (serial == NULL && find == NULL) {
+		warn("no serial or pattern provided");
+		cli_cert_usage();
+		exit(1);
+	}
+
+	if (cert_init(xerrz(&e)) == -1)
+		goto fail;
+
+	if (agent_init(xerrz(&e)) == -1)
+		goto fail;
+
+	if ((op = authop_new(
+	    (serial == NULL) ? AUTHOP_CERT_FIND : AUTHOP_CERT_GET,
+	    NULL, xerrz(&e))) == NULL)
+		goto fail;
+
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	if (serial == NULL) {
+		pv[0].type = MDR_S;
+		pv[0].v.s = find;
+		if (pmdr_pack(&pm, msg_cert_find, pv,
+		    PMDRVECLEN(pv)) == MDR_FAIL)
+			err(1, "pmdr_pack");
+	} else {
+		pv[0].type = MDR_S;
+		pv[0].v.s = serial;
+		if (pmdr_pack(&pm, msg_cert_get, pv,
+		    PMDRVECLEN(pv)) == MDR_FAIL)
+			err(1, "pmdr_pack");
+	}
+
+
+	if (authop_send(op, pmdr_buf(&pm), pmdr_size(&pm), xerrz(&e)) == -1)
+		goto fail;
+
+	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(&e))) == -1)
+		goto fail;
+
+	if (umdr_init(&um, ubuf, r, MDR_FNONE) == MDR_FAIL)
+		goto fail;
+
+	switch (umdr_dcv(&um)) {
+	case MDR_DCV_CERTES_CERT_FIND_ANSWER:
+		if (find == NULL)
+			errx(1, "bad response from authority");
+		/* Success */
+		break;
+	case MDR_DCV_CERTES_CERT_GET_ANSWER:
+		if (serial == NULL)
+			errx(1, "bad response from authority");
+		/* Success */
+		break;
+	case MDR_DCV_MDR_ERROR:
+		if (umdr_unpack(&um, mdr_msg_error, uv, 2) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "revoke failed: %s (%u)", uv[1].v.s.bytes, uv[0].v.u32);
+	case MDR_DCV_CERTES_ERROR:
+		if (umdr_unpack(&um, msg_error, uv, UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "failed to unpack response");
+		errx(1, "revoke failed: %s (%u)", uv[2].v.s.bytes, uv[1].v.u32);
+	default:
+		errx(1, "bad response from authority");
+	}
+
+	if (serial == NULL) {
+		if (umdr_unpack(&um, msg_cert_find_answer, uv,
+		    UMDRVECLEN(uv)) == MDR_FAIL)
+			err(1, "umdr_unpack/msg_cert_get_answer");
+		serials_sz = umdr_vec_alen(&uv[0].v.as);
+		subjects_sz = umdr_vec_alen(&uv[1].v.as);
+		find_flags_sz = umdr_vec_alen(&uv[2].v.au32);
+
+		if (serials_sz != subjects_sz || serials_sz != find_flags_sz)
+			errx(1, "msg_cert_find_answer: not all arrays "
+			    "are same length; invalid response");
+
+		serials = malloc(sizeof(char *) * (serials_sz + 1));
+		subjects = malloc(sizeof(char *) * (subjects_sz + 1));
+		find_flags = malloc(sizeof(uint32_t) * find_flags_sz);
+		if (serials == NULL || subjects == NULL || find_flags == NULL)
+			err(1, "malloc");
+
+		if (umdr_vec_as(&uv[0].v.as, serials, serials_sz + 1)
+		    == MDR_FAIL)
+			err(1, "umdr_vec_as");
+		if (umdr_vec_as(&uv[1].v.as, subjects, subjects_sz + 1)
+		    == MDR_FAIL)
+			err(1, "umdr_vec_as");
+		if (umdr_vec_au32(&uv[2].v.au32, find_flags, find_flags_sz + 1)
+		    == MDR_FAIL)
+			err(1, "umdr_vec_au32");
+
+		for (i = 0; i < serials_sz; i++)
+			printf("%s\t%s\t0x%08x\n",
+			    serials[i], subjects[i], find_flags[i]);
+		free(serials);
+		free(subjects);
+		free(find_flags);
+		return;
+	}
+
+	if (umdr_unpack(&um, msg_cert_get_answer, uv,
+	    UMDRVECLEN(uv)) == MDR_FAIL)
+		err(1, "umdr_unpack/msg_cert_get_answer");
+
+	der = uv[0].v.b.bytes;
+	revoked_at_sec = uv[1].v.u64;
+	flags = uv[2].v.u32;
+
+	crt = d2i_X509(NULL, &der, uv[0].v.b.sz);
+	/* der is incremented */
+	if (crt == NULL) {
+		XERRF(&e, XLOG_APP, XLOG_BADMSG,
+		    "cert_get_answer reply did not contain a valid "
+		    "DER-encoded X.509, or alloc failed");
+		goto fail;
+	}
+
+	if ((serial = cert_serial_to_hex(crt, xerrz(&e))) == NULL)
+		goto fail;
+	printf("Serial:  %s\n", serial);
+	free(serial);
+
+	if ((subject = cert_subject_oneline(crt, xerrz(&e))) == NULL)
+		goto fail;
+	printf("Subject: %s\n", subject);
+	free(subject);
+
+	printf("Roles:\n");
+	if (cert_foreach_role(crt, &print_str_ext, NULL, xerrz(&e)) == -1)
+		printf(" N/A\n");
+
+	printf("SANs:\n");
+	if (cert_foreach_san(crt, &print_str_ext, NULL, xerrz(&e)) == -1)
+		printf(" N/A\n");
+
+	if (flags & CERTDB_FLAG_REVOKED) {
+		ptm = gmtime(&revoked_at_sec);
+		if (strftime(tstr, sizeof(tstr), "%F %H:%M:%S %z", ptm) == 0)
+			errx(1, "strftime() result too large");
+		printf("Revoked at: %s\n", tstr);
+	}
+
+	ASN1_TIME_to_tm(X509_get_notBefore(crt), &tm);
+	if (strftime(tstr, sizeof(tstr), "%F %H:%M:%S %z", &tm) == 0)
+		errx(1, "strftime() result too large");
+	printf("Not before: %s\n", tstr);
+
+	ASN1_TIME_to_tm(X509_get_notAfter(crt), &tm);
+	if (strftime(tstr, sizeof(tstr), "%F %H:%M:%S %z", &tm) == 0)
+		errx(1, "strftime() result too large");
+	printf("Not after:  %s\n", tstr);
+
+	if (PEM_write_X509(stdout, crt) == 0)
+		ERR_print_errors_fp(stderr);
+
+	X509_free(crt);
+	return;
+fail:
+	if (crt != NULL)
+		X509_free(crt);
+	xerr_print(&e);
+	exit(1);
+}
+
 static int
 agent_load_key(struct xerr *e)
 {
@@ -1499,6 +2432,7 @@ agent_load_key(struct xerr *e)
 void
 agent_cleanup()
 {
+	free_loaded_crls();
 	if (cert != NULL) {
 		X509_free(cert);
 		cert = NULL;
@@ -1529,6 +2463,30 @@ X509_STORE *
 agent_cert_store()
 {
 	return store;
+}
+
+int
+agent_get_crl(const char *issuer_cn, const X509_CRL **crl,
+    uint64_t *last_update)
+{
+	int i;
+	for (i = 0; i < loaded_crls.count; i++) {
+		if (strcmp(issuer_cn, loaded_crls.issuers[i]) == 0) {
+			if (last_update != NULL)
+				*last_update = loaded_crls.last_updates[i];
+			if (crl != NULL)
+				*crl = loaded_crls.crls[i];
+			return i;
+		}
+	}
+	return -1;
+}
+
+
+const struct loaded_crls *
+agent_get_loaded_crls()
+{
+	return &loaded_crls;
 }
 
 static int
@@ -1638,55 +2596,157 @@ fail:
 	return -1;
 }
 
+static void
+free_loaded_crls()
+{
+	int i;
+
+	if (loaded_crls.count > 0) {
+		free(loaded_crls.issuers);
+		free(loaded_crls.last_updates);
+		for (i = 0; i < loaded_crls.count; i++)
+			X509_CRL_free(loaded_crls.crls[i]);
+		free(loaded_crls.crls);
+	}
+}
+
 static int
 load_crls(struct xerr *e)
 {
-	DIR           *d;
-	struct dirent *de;
-	size_t         de_len;
-	char           crl_path[PATH_MAX];
+	DIR              *d = NULL;
+	struct dirent    *de;
+	size_t            de_len;
+	char              crl_path[PATH_MAX];
+	uint32_t          count = 0, i;
+	char            **issuers = NULL;
+	uint64_t         *last_updates = NULL;
+	X509_CRL         *crl = NULL, **crls = NULL;
+	const ASN1_TIME  *lu;
+	struct tm         tm;
+	X509_NAME        *issuer;
 
-	if (*certes_conf.crl_path != '\0') {
-		mkdir(certes_conf.crl_path, 0700);
-		if ((d = opendir(certes_conf.crl_path)) == NULL)
-			return XERRF(e, XLOG_ERRNO, errno, "opendir");
+	if (*certes_conf.crl_path == '\0')
+		return 0;
 
-		for (;;) {
-			errno = 0;
-			de = readdir(d);
-			if (de == NULL) {
-				if (errno == 0)
-					break;
-				XERRF(e, XLOG_ERRNO, errno, "readdir");
-				closedir(d);
-				return -1;
-			}
-			if (de->d_type != DT_REG)
-				continue;
-			de_len = strlen(de->d_name);
-			if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
-				continue;
+	if (mkdir(certes_conf.crl_path, 0700) == -1 && errno != EEXIST)
+		return XERRF(e, XLOG_ERRNO, errno, "mkdir: %s",
+		    certes_conf.crl_path);
+	if ((d = opendir(certes_conf.crl_path)) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "opendir: %s",
+		    certes_conf.crl_path);
 
-			snprintf(crl_path, sizeof(crl_path), "%s/%s",
-			    certes_conf.crl_path, de->d_name);
-			if (load_crl(crl_path, xerrz(e)) == -1) {
-				XERR_PREPENDFN(e);
-				closedir(d);
-				return -1;
-			}
+	for (;;) {
+		errno = 0;
+		de = readdir(d);
+		if (de == NULL) {
+			if (errno == 0)
+				break;
+			XERRF(e, XLOG_ERRNO, errno, "readdir");
+			goto fail;
 		}
-		closedir(d);
+		if (de->d_type != DT_REG)
+			continue;
+		de_len = strlen(de->d_name);
+		if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
+			continue;
+
+		count++;
 	}
+	rewinddir(d);
+
+	last_updates = malloc(count * sizeof(time_t));
+	if (last_updates == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+	issuers = malloc(count * (sizeof(char *) + 256));
+	if (issuers == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+	for (i = 0; i < count; i++)
+		issuers[i] = ((char *)issuers + (count * sizeof(char *))) +
+		    (i * 256);
+	crls = malloc(count * sizeof(X509_CRL *));
+	if (crls == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		goto fail;
+	}
+
+	for (i = 0; i < count;) {
+		errno = 0;
+		de = readdir(d);
+		if (de == NULL) {
+			if (errno == 0)
+				break;
+			XERRF(e, XLOG_ERRNO, errno, "readdir");
+			goto fail;
+		}
+		if (de->d_type != DT_REG)
+			continue;
+		de_len = strlen(de->d_name);
+		if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
+			continue;
+
+		snprintf(crl_path, sizeof(crl_path), "%s/%s",
+		    certes_conf.crl_path, de->d_name);
+		if ((crl = load_crl(crl_path, xerrz(e))) == NULL) {
+			XERR_PREPENDFN(e);
+			goto fail;
+		}
+
+		issuer = X509_CRL_get_issuer(crl);
+		if (X509_NAME_get_text_by_NID(issuer, NID_commonName,
+		    issuers[i], 256) < 0) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "X509_NAME_get_text_by_NID");
+			X509_CRL_free(crl);
+			goto fail;
+		}
+		xlog(LOG_INFO, NULL, "loaded CRL with issuer %s", issuers[i]);
+		if ((lu = X509_CRL_get0_lastUpdate(crl)) == NULL) {
+			xlog(LOG_ERR, NULL, "%s: crl for issuer %s has no "
+			    "lastUpdate field; skipping", __func__,
+			    issuers[i]);
+			X509_CRL_free(crl);
+			crl = NULL;
+			continue;
+		}
+		ASN1_TIME_to_tm(lu, &tm);
+		last_updates[i] = timegm(&tm);
+		crls[i] = crl;
+		i++;
+	}
+	closedir(d);
+	d = NULL;
+
+	free_loaded_crls();
+
+	loaded_crls.count = count;
+	loaded_crls.issuers = issuers;
+	loaded_crls.last_updates = last_updates;
+	loaded_crls.crls = crls;
+
 	return 0;
+fail:
+	if (d != NULL)
+		closedir(d);
+	if (issuers != NULL)
+		free(issuers);
+	if (last_updates != NULL)
+		free(last_updates);
+	if (crls != NULL) {
+		count = i;
+		for (i = 0; i < count; i++)
+			X509_CRL_free(crls[i]);
+		free(crls);
+	}
+	return -1;
 }
 
-int
-agent_init(struct xerr *e)
+static int
+agent_init2(int gen_crl, struct xerr *e)
 {
-
-	if (cert_init(xerrz(e)) == -1)
-		return XERR_PREPENDFN(e);
-
 	clock_gettime(CLOCK_MONOTONIC, &next_certdb_backup);
 	next_certdb_backup.tv_sec +=
 	    certes_conf.certdb_backup_interval_seconds;
@@ -1710,7 +2770,7 @@ agent_init(struct xerr *e)
 	if (agent_init_ctx(xerrz(e)) == -1)
 		return XERR_PREPENDFN(e);
 
-	if (is_authority) {
+	if (is_authority && gen_crl) {
 		if (*certes_conf.certdb_path == '\0')
 			return XERRF(e, XLOG_APP, XLOG_FAIL,
 			    "certdb_path is not set and we are an authority");
@@ -1726,6 +2786,12 @@ agent_init(struct xerr *e)
 		return XERR_PREPENDFN(e);
 
 	return 0;
+}
+
+int
+agent_init(struct xerr *e)
+{
+	return agent_init2(0, e);
 }
 
 int
@@ -1775,8 +2841,9 @@ agent_start(struct xerr *e)
 	int                lsock, lsock_flags;
 	struct sockaddr_un saddr;
 
-	if (agent_init(xerrz(e)) == -1)
+	if (agent_init2(1, xerrz(e)) == -1)
 		return XERR_PREPENDFN(e);
+
 	xlog(LOG_NOTICE, NULL, "%s: finished initialization; we are "
 	    "%san authority", __func__, (is_authority) ? "" : "not ");
 

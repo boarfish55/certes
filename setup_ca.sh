@@ -135,7 +135,7 @@ setup_root()
 		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 		-keyout $CERTES_DIR/ca/key.pem \
 		-out $CERTES_DIR/ca/root.pem -outform pem -days $expiry \
-		-subj "/emailAddress=certes@$CERTES_DOMAIN/O=$CERTES_ORG/CN=$CERTES_ORG CA"
+		-subj "/emailAddress=certes@$CERTES_DOMAIN/O=$CERTES_ORG/CN=root"
 	openssl ca -config $CERTES_SSL_CONFIG \
 		-gencrl -out $CERTES_DIR/ca/root.crl
 	openssl x509 -in $CERTES_DIR/ca/root.pem -text -noout

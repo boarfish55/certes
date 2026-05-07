@@ -1,5 +1,5 @@
 CC := gcc
-VERSION = 0.3.1
+VERSION = 0.4.0
 DEPDIR := .deps
 CFLAGS := -Wall -g -fstack-protector-strong -Wformat=0 \
 	  -Wdeprecated-declarations -fstack-clash-protection -fcf-protection \
@@ -7,6 +7,11 @@ CFLAGS := -Wall -g -fstack-protector-strong -Wformat=0 \
 LDFLAGS := $(shell pkg-config --libs libbsd-overlay libbsd-ctor \
 	   libcrypto libssl sqlite3 mdr flatconf) \
 	   -Wl,-z,relro -Wl,-z,now
+ifneq ($(OVERRIDE_MDR),)
+CFLAGS += -I$(OVERRIDE_MDR)
+LDFLAGS += -L$(OVERRIDE_MDR) -Wl,-rpath,$(OVERRIDE_MDR)
+endif
+
 DEPFLAGS = -MMD -MP -MF $(DEPDIR)/$@.d
 DESTDIR =
 prefix = ~

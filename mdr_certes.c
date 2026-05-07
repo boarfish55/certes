@@ -171,6 +171,116 @@ struct mdr_def msgdef_crls_gen = {
 };
 const struct mdr_spec *msg_crls_gen;
 
+struct mdr_def msgdef_fetch_outdated_crls = {
+	MDR_DCV_CERTES_FETCH_OUTDATED_CRLS,
+	"certes.fetch_outdated_crls",
+	{
+		MDR_S,    /* Operation identifier */
+		MDR_AS,   /* Authorities (CN) for which we have a CRL */
+		MDR_AU64, /* Last update field for each CRL (same order) */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_fetch_outdated_crls;
+
+struct mdr_def msgdef_send_updated_crls = {
+	MDR_DCV_CERTES_SEND_UPDATED_CRLS,
+	"certes.send_updated_crls",
+	{
+		MDR_S,     /* Operation identifier */
+		MDR_AU32,  /* How many CRLs are in the payload and how
+			      many bytes for each */
+		MDR_B,     /* The DER-encoded CRLs */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_send_updated_crls;
+
+struct mdr_def msgdef_cert_get = {
+	MDR_DCV_CERTES_CERT_GET,
+	"certes.cert_get",
+	{
+		MDR_S,   /* cert serial */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_get;
+
+struct mdr_def msgdef_cert_get_answer = {
+	MDR_DCV_CERTES_CERT_GET_ANSWER,
+	"certes.cert_get_answer",
+	{
+		MDR_B,    /* DER-encoded cert */
+		MDR_U64,  /* certdb revoked_at_sec */
+		MDR_U32,  /* certdb flags */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_get_answer;
+
+struct mdr_def msgdef_cert_find = {
+	MDR_DCV_CERTES_CERT_FIND,
+	"certes.cert_find",
+	{
+		MDR_S,   /* cert pattern */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_find;
+
+struct mdr_def msgdef_cert_find_answer = {
+	MDR_DCV_CERTES_CERT_FIND_ANSWER,
+	"certes.cert_find_answer",
+	{
+		MDR_AS,   /* matching serials */
+		MDR_AS,   /* matching subjects */
+		MDR_AU32, /* matching flags */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_find_answer;
+
+/*
+ * Edit certificate roles/SANs
+ */
+struct mdr_def msgdef_cert_mod_roles = {
+	MDR_DCV_CERTES_CERT_MOD_ROLES,
+	"certes.cert_mod_roles",
+	{
+		MDR_S,    /* cert serial */
+		MDR_AS,   /* add roles */
+		MDR_AS,   /* del roles */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_mod_roles;
+struct mdr_def msgdef_cert_mod_sans = {
+	MDR_DCV_CERTES_CERT_MOD_SANS,
+	"certes.cert_mod_sans",
+	{
+		MDR_S,    /* cert serial */
+		MDR_AS,   /* add SANs */
+		MDR_AS,   /* del SANs */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_cert_mod_sans;
+
+struct mdr_def msgdef_sign_req = {
+	MDR_DCV_CERTES_SIGN_REQ,
+	"certes.sign_req",
+	{
+		MDR_S,    /* Operation ID */
+		MDR_B,    /* DER-encoded REQ */
+		MDR_U32,  /* Cert validity in seconds */
+		MDR_AS,   /* Roles */
+		MDR_AS,   /* SANs */
+		MDR_U32,  /* Flags */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_sign_req;
+
 int
 beout_ok(struct mdrd_besession *sess, const char *op_id, uint32_t beout_flags)
 {
@@ -261,5 +371,32 @@ load_mdr_defs()
 		errx(1, "mdr_register_spec");
 	if ((msg_crls_gen =
 	    mdr_register_spec(&msgdef_crls_gen)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_fetch_outdated_crls =
+	    mdr_register_spec(&msgdef_fetch_outdated_crls)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_send_updated_crls =
+	    mdr_register_spec(&msgdef_send_updated_crls)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_get =
+	    mdr_register_spec(&msgdef_cert_get)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_get_answer =
+	    mdr_register_spec(&msgdef_cert_get_answer)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_find =
+	    mdr_register_spec(&msgdef_cert_find)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_find_answer =
+	    mdr_register_spec(&msgdef_cert_find_answer)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_mod_roles =
+	    mdr_register_spec(&msgdef_cert_mod_roles)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_cert_mod_sans =
+	    mdr_register_spec(&msgdef_cert_mod_sans)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_sign_req =
+	    mdr_register_spec(&msgdef_sign_req)) == NULL)
 		errx(1, "mdr_register_spec");
 }
