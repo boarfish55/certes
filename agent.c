@@ -827,10 +827,12 @@ agent_bootstrap(struct xerr *e)
 		goto fail;
 	}
 
+	free(req_buf);
 	xlog(LOG_INFO, NULL, "%s: awaiting challenge for authop id %s",
 	    __func__, op->id);
 	return 0;
 fail:
+	free(req_buf);
 	authop_free(op);
 	return -1;
 }
@@ -1266,6 +1268,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 			XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
 			goto fail;
 		}
+		X509_free(icrt);
 	}
 
 	fclose(f);
@@ -1279,6 +1282,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 
 	xlog(LOG_INFO, NULL, "%s: new cert written", __func__);
 
+	X509_free(cert);
 	cert = crt;
 	if (SSL_CTX_use_certificate_chain_file(ssl_ctx,
 	    certes_conf.cert_file) != 1) {

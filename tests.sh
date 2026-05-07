@@ -238,12 +238,36 @@ dbg_delay_to_backend_seconds = $DBG_DELAY
 
 allowed_mdr_domains = [ 0x00000002 ]
 
+EOF
+
+if [ -x /usr/bin/valgrind -a "$USE_VALGRIND" = "yes" ]; then
+	cat << EOF >> $basedir/client3/mdrd.conf
+backend_argv = [
+	"/usr/bin/valgrind"
+	"--log-file=$basedir/client3/valgrind.%p.out"
+	"--keep-stacktraces=none"
+	"--leak-check=full"
+	"--track-origins=yes"
+	"--show-leak-kinds=definite,possible,indirect"
+	"-s"
+	"$(realpath certes)"
+	"-config"
+	"$basedir/client3/certes.conf"
+	"mdrd-backend"
+]
+EOF
+else
+	cat << EOF >> $basedir/client3/mdrd.conf
 backend_argv = [
 	"$(realpath certes)"
 	"-config"
 	"$basedir/client3/certes.conf"
 	"mdrd-backend"
 ]
+EOF
+fi
+
+cat << EOF >> $basedir/client3/mdrd.conf
 backend_uid = $uid
 backend_gid = $uid
 backend_promises = "stdio rpath wpath cpath inet flock unix dns proc error"
