@@ -1,3 +1,70 @@
+certes (0.4.0-1) unstable; urgency=medium
+
+  * Fix crashes on authority connect
+  * Add cert check interval
+  * Fix certdb_get_cert/get_bootstrap subject length
+  * Client now refreshes CRLs
+  * Fixed pointer issue when unpacking intermediate certs
+  * Added CRL refresh function for agents. Compiles, but untested.
+  * Use the certdb to track the latest serial instead of a text file
+  * Only commit a new serial once we've created the certificate that uses it.
+    This way we don't waste serials
+  * Check if a cert exists before revoking it so we return a meaningful error
+  * Don't immediately delete certs when expired, leave some configurable
+    amount of time for retention
+  * Some certdb queries were not initialized; remove double umdr_unpack
+  * Fix agent_refresh_crls with missing unpack
+  * Logging
+  * Fix bad pack in authority_fetch_outdated_crls
+  * We have an outstanding issue where we don't send _new_ CRLs to a client
+  * Updating CRLs now works
+  * Changed root CA CN to just "root" since we use that as a filename
+  * Fix CRL refresh in clients; make CRL refresh interval configurable
+  * Add functionality to reload CRLs from peer authorities; untested
+  * Added cert -serial command to print a cert
+  * Added certs find functionality
+  * Added a role command to update cert roles
+  * Fix a few shutdown leaks, make tests configurable through env
+  * coverity fixes; dedup code
+  * Fix another leak in cert_new_serial()
+  * Fix invalid write in find_certs
+  * Fix leak in role mod
+  * Prevent backend from regenerating CRLs when we find a new CRL in our dir
+  * Fix more leaks
+  * Make sure we don't regen CRLs when running CLI client commands
+  * Add capability to modify SANs
+  * In doing so, we need to change how strlist_split/join work, since SANs
+    must be comma-separated, not \0.
+  * Validate input for bootstrap_setup and role_san_mod
+  * Fix issue where we wouldn't rollback the transaction on bad input
+  * Increase CRL scan interval so we get to test rejecting clients from the
+    backend more often
+  * Add OVERRIDE_MDR to point to a local path for the mdr lib
+  * Update mdrd_purge_sessions() to use the mdrd_recvhdl arg
+  * Don't use nonRepudiation, it can have legal consequences and we have no
+    system in place to enforce non-repudiation. See also:
+    https://docs.redhat.com/en/documentation/red_hat_certificate_system/9/html/administration_guide/standard_x.509_v3_certificate_extensions#Standard_X.509_v3_Certificate_Extensions-keyUsage.
+    Add keyEncipherment since we use those certs for TLS establishment, and
+    thus symmetric key transport. It's also what Let's Encrypt does.
+  * Make cert_sign_req more generic in preparation for MDR_DCV_CERTES_SIGN_REQ
+    messages
+  * Also replace nonRepudiation by keyEncipherment in our code too
+  * Always set the "agent" role when bootstrapping
+  * We can now sign REQs on the command line, but it does not yet add it to
+    the certDB. We'll also need a way for the CLI to download CRLs,
+    concatenated.
+  * Add manual certs to certdb
+  * We can now copy SANs on a REQ for manual signing
+  * We can specify that a manual cert gets the serverAuth ext usage
+  * Fixed a bug when unpacking intermediates where we weren't be32toh()'ing
+    intermediate DER sizes
+  * CLI can now fetch CRLs
+  * coverity fixes
+  * Override conf path with an env variable
+  * Fix a few agent-side leaks
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Thu, 07 May 2026 10:01:56 -0400
+
 certes (0.3.1-1) unstable; urgency=medium
 
   * 0.3.1
