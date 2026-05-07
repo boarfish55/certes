@@ -597,6 +597,10 @@ main(int argc, char **argv)
 	size_t          sz;
 	struct xerr     e;
 
+	if (getenv("CERTES_CONF") != NULL)
+		strlcpy(config_file_path, getenv("CERTES_CONF"),
+		    sizeof(config_file_path));
+
 	for (opt = 1; opt < argc; opt++) {
 		if (argv[opt][0] != '-')
 			break;
