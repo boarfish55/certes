@@ -509,7 +509,7 @@ agent_run(int lsock, struct xerr *e)
 }
 
 static struct authop *
-authop_new(enum authop_type type, const char *authority_fqdn, struct xerr *e)
+authop_new(enum authop_type type, const char *peer, struct xerr *e)
 {
 	char            host[302];
 	int             fd;
@@ -525,21 +525,29 @@ authop_new(enum authop_type type, const char *authority_fqdn, struct xerr *e)
 	}
 	bzero(op, sizeof(*op));
 
-	if (authority_fqdn == NULL) {
+	if (peer == NULL) {
 		if (certes_conf.authority_fqdn[0] == '\0') {
 			XERRF(e, XLOG_APP, XLOG_INVALID,
 			    "no destination address was specified");
 			goto fail;
 		}
-		authority_fqdn = certes_conf.authority_fqdn;
-	}
 
-	if (snprintf(host, sizeof(host), "%s:%llu",
-	    authority_fqdn, certes_conf.authority_port) >= sizeof(host)) {
-		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
-		    "resulting host:port is too long");
-		goto fail;
-	}
+		if (snprintf(host, sizeof(host), "%s:%llu",
+		    certes_conf.authority_fqdn,
+		    certes_conf.authority_port) >= sizeof(host)) {
+			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+			    "resulting host:port is too long");
+			goto fail;
+		}
+	} else if (strstr(peer, ":") == NULL) {
+		if (snprintf(host, sizeof(host), "%s:%llu",
+		    peer, certes_conf.authority_port) >= sizeof(host)) {
+			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+			    "resulting host:port is too long");
+			goto fail;
+		}
+	} else
+		strlcpy(host, peer, sizeof(host));
 
 	if ((op->bio = BIO_new_ssl_connect(ssl_ctx)) == NULL) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new_ssl_connect");
@@ -960,6 +968,7 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 	char             issuer_cn[256];
 	char             crl_path[PATH_MAX];
 	FILE            *f;
+	mode_t           save_umask;
 
 	if ((op = authop_new(AUTHOP_REFRESH_CRLS, peer_fqdn, xerrz(e))) == NULL)
 		return XERR_PREPENDFN(e);
@@ -1074,7 +1083,10 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 			goto fail;
 		}
 
-		if ((f = fopen(crl_path, "w")) == NULL) {
+		save_umask = umask(022);
+		f = fopen(crl_path, "w");
+		umask(save_umask);
+		if (f == NULL) {
 			XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
 			goto fail;
 		}

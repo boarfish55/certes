@@ -1,7 +1,57 @@
-CERTES
-======
+# CERTES
 
 Certes is an MDR (Minimal Data Representation) backend service acting as a
-certificate authority and role attributor. It issue X.509 certificates with
-a "role" extension, allowing services to grant privileges based on the
-client certificate's roles.
+certificate authority and role attributor. It issue X.509 certificates with a
+"role" extension, allowing services to grant privileges based on the client
+certificate's roles.
+
+## SETUP
+
+The setup instructions assume that:
+
+1) The root CA and the certes authority are running on different hosts
+2) On each host, the base directory is /etc/certes
+3) On the authority, the certes config is at /etc/certes/certes.conf,
+   the OpenSSL conf is at /etc/certes/openssl.cnf and the mdrd config
+   is at /etc/certes/mdrd.conf
+
+The paths for the base directory and configurations can be overriden using
+command line flags.
+
+### Creating the root CA
+
+rootca-host# setup_ca.sh -x 730 -O Example -D example.com setup-root
+
+In this example, our *root CA* cert is valid for 2 years.
+
+### Create authority CA
+
+Create the config under /etc/certes/certes.conf, then create the X.509 REQs
+needed for both mdrd and certes:
+
+ca-host# setup_ca.sh -O example -D example.com ca-reqs
+
+### Signing the authority CA certs
+
+rootca-host# setup_ca.sh sign-ca-req
+...
+rootca-host# setup_ca.sh sign-proxy-req
+...
+
+You'll be asked to paste in the PEM REQ, followed by Ctrl-D. The resulting cert
+will be printed on STDOUT and can be copied on the authority's
+/etc/certes/ca_cert.pem or /etc/certes/proxy_cert.pem, respectively. Or it can
+be copied using the source path also shown on STDOUT.
+
+Then copy the resulting certs to their respective location on ca-host. The
+certificate lifetime is specified in openssl.cnf on the root CA.
+
+### Run the service
+
+Create the necessary directories the service will need. Looking at certes.conf,
+you'll need to ensure certes and write its CRLs and renewed certes. Normally
+this could be under /var/certes or /var/lib/certes, owned by certes with mode
+0755.  The new cert and CRLs will need to be read by mdrd as well so make sure
+all directories in the path are accessible for reading and listing by mdrd.
+
+# mdrd
