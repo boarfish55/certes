@@ -1,3 +1,12 @@
+certes (0.4.2-1) unstable; urgency=medium
+
+  * Dedup paths in tests
+  * Draft instructions for setup
+  * Fix umask when writing CRLs
+  * Allow for a different port when contacting peer authorities
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Fri, 08 May 2026 16:06:34 -0400
+
 certes (0.4.1-1) unstable; urgency=medium
 
   * Default encrypt de CA root key, and add an option to keep it plaintext
