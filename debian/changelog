@@ -1,3 +1,10 @@
+certes (0.4.1-1) unstable; urgency=medium
+
+  * Default encrypt de CA root key, and add an option to keep it plaintext
+  * Fix [req] section; supplied is not valid in this context
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Thu, 07 May 2026 23:20:51 -0400
+
 certes (0.4.0-1) unstable; urgency=medium
 
   * Fix crashes on authority connect
