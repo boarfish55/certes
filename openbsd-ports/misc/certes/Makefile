@@ -1,6 +1,6 @@
 COMMENT =	Certificate authority and role designation service
 CATEGORIES =	misc
-VERSION =	0.4.0
+VERSION =	0.4.2
 DISTNAME =	certes-${VERSION}
 HOMEPAGE =	https://www.overnet.ca
 MAINTAINER =	Pascal Lalonde <plalonde@overnet.ca>

@@ -1377,6 +1377,7 @@ cert_gen_crl(struct xerr *e)
 	char       cn[256];
 	X509_NAME *subject;
 	char       crl_path[PATH_MAX];
+	mode_t     save_umask;
 
 	if ((crl = X509_CRL_new()) == NULL) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_CRL_new");
@@ -1436,7 +1437,10 @@ cert_gen_crl(struct xerr *e)
 		goto fail;
 	}
 
-	if ((f = fopen(crl_path, "w")) == NULL) {
+	save_umask = umask(022);
+	f = fopen(crl_path, "w");
+	umask(save_umask);
+	if (f == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", crl_path);
 		goto fail;
 	}

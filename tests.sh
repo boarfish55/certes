@@ -15,6 +15,8 @@ if [ -d testdata ]; then
 fi
 mkdir -p testdata
 basedir=`realpath testdata`
+authority_basedir="$basedir/authority1"
+client_basedir="$basedir/client3"
 cnf=`realpath openssl.cnf`
 if [ -z "$MDRD" ]; then
 	MDRD=mdrd
@@ -30,10 +32,10 @@ fail()
 
 cleanup()
 {
-	[ -f $basedir/authority1/mdrd.pid ] && \
-		kill `cat $basedir/authority1/mdrd.pid`
-	[ -f $basedir/client3/mdrd.pid ] && \
-		kill `cat $basedir/client3/mdrd.pid`
+	[ -f $authority_basedir/mdrd.pid ] && \
+		kill `cat $authority_basedir/mdrd.pid`
+	[ -f $client_basedir/mdrd.pid ] && \
+		kill `cat $client_basedir/mdrd.pid`
 }
 
 trap cleanup TERM INT EXIT
@@ -43,43 +45,43 @@ trap cleanup TERM INT EXIT
 #
 # Authority setup
 #
-mkdir -p $basedir/authority1/certdb
-cat << EOF > $basedir/authority1/certes.conf
+mkdir -p $authority_basedir/certdb
+cat << EOF > $authority_basedir/certes.conf
 enable_coredumps = true
 authority_fqdn = "localhost"
 authority_port = 9792
-certdb_path = "$basedir/authority1/certdb/certdb.sqlite"
-certdb_backup_path = "$basedir/authority1/certdb/certdb.sqlite.bk"
+certdb_path = "$authority_basedir/certdb/certdb.sqlite"
+certdb_backup_path = "$authority_basedir/certdb/certdb.sqlite.bk"
 certdb_backup_interval_seconds = 60
-root_cert_file = "$basedir/authority1/root.pem"
-crl_path = "$basedir/authority1/crls"
+root_cert_file = "$authority_basedir/root.pem"
+crl_path = "$authority_basedir/crls"
 crl_reload_interval_seconds = 30
-cert_file = "$basedir/authority1/ca_cert.pem"
-key_file = "$basedir/authority1/ca_key.pem"
-lock_file = "$basedir/authority1/agent.lock"
-agent_socket_path = "$basedir/authority1/agent.sock"
+cert_file = "$authority_basedir/ca_cert.pem"
+key_file = "$authority_basedir/ca_key.pem"
+lock_file = "$authority_basedir/agent.lock"
+agent_socket_path = "$authority_basedir/agent.sock"
 cert_org = "Example"
 cert_email = "certes@example.com"
 min_serial = "0x1000000"
 max_serial = "0x1ffffff"
 EOF
 
-cat << EOF > $basedir/authority1/mdrd.conf
+cat << EOF > $authority_basedir/mdrd.conf
 uid = $uid
 gid = $uid
 enable_coredumps = true
-ca_file = "$basedir/authority1/root.pem"
-crl_path = "$basedir/authority1/crls"
-cert_file = "$basedir/authority1/proxy_cert.pem"
-key_file = "$basedir/authority1/proxy_key.pem"
+ca_file = "$authority_basedir/root.pem"
+crl_path = "$authority_basedir/crls"
+cert_file = "$authority_basedir/proxy_cert.pem"
+key_file = "$authority_basedir/proxy_key.pem"
 require_client_cert = false
 crl_scan_interval_sec = 60
 
 port = 9792
 listen_backlog = 1024
 prefork = 1
-pid_file = "$basedir/authority1/mdrd.pid"
-counters_sock = "$basedir/authority1/counters.sock"
+pid_file = "$authority_basedir/mdrd.pid"
+counters_sock = "$authority_basedir/counters.sock"
 
 max_clients = 10000
 max_conn_per_ip = 25
@@ -98,10 +100,10 @@ allowed_mdr_domains = [ 0x00000002 ]
 EOF
 
 if [ -x /usr/bin/valgrind -a "$USE_VALGRIND" = "yes" ]; then
-	cat << EOF >> $basedir/authority1/mdrd.conf
+	cat << EOF >> $authority_basedir/mdrd.conf
 backend_argv = [
 	"/usr/bin/valgrind"
-	"--log-file=$basedir/authority1/valgrind.%p.out"
+	"--log-file=$authority_basedir/valgrind.%p.out"
 	"--keep-stacktraces=none"
 	"--leak-check=full"
 	"--track-origins=yes"
@@ -109,120 +111,120 @@ backend_argv = [
 	"-s"
 	"$(realpath certes)"
 	"-config"
-	"$basedir/authority1/certes.conf"
+	"$authority_basedir/certes.conf"
 	"mdrd-backend"
 ]
 EOF
 else
-	cat << EOF >> $basedir/authority1/mdrd.conf
+	cat << EOF >> $authority_basedir/mdrd.conf
 backend_argv = [
 	"$(realpath certes)"
 	"-config"
-	"$basedir/authority1/certes.conf"
+	"$authority_basedir/certes.conf"
 	"mdrd-backend"
 ]
 EOF
 fi
 
-cat << EOF >> $basedir/authority1/mdrd.conf
+cat << EOF >> $authority_basedir/mdrd.conf
 backend_uid = $uid
 backend_gid = $uid
 backend_promises = "stdio rpath wpath cpath inet flock unix dns proc error"
 backend_unveils = [
 	"x=$(realpath certes)"
-	"r=$basedir/authority1/certes.conf"
-	"r=$basedir/authority1/root.pem"
-	"r=$basedir/authority1/ca_key.pem"
-	"rw=$basedir/authority1/ca_cert.pem"
-	"rwc=$basedir/authority1/agent.lock"
-	"rwc=$basedir/authority1/agent.sock"
-	"rwc=$basedir/authority1/certdb"
-	"rwc=$basedir/authority1/crls"
+	"r=$authority_basedir/certes.conf"
+	"r=$authority_basedir/root.pem"
+	"r=$authority_basedir/ca_key.pem"
+	"rw=$authority_basedir/ca_cert.pem"
+	"rwc=$authority_basedir/agent.lock"
+	"rwc=$authority_basedir/agent.sock"
+	"rwc=$authority_basedir/certdb"
+	"rwc=$authority_basedir/crls"
 ]
 EOF
 
 serial=`cat $basedir/ca/serial`
-./setup_ca.sh -s $cnf -c $basedir/authority1/certes.conf \
-	-d $basedir/authority1 -O Example \
+./setup_ca.sh -s $cnf -c $authority_basedir/certes.conf \
+	-d $authority_basedir -O Example \
 	ca-reqs Authority1 authority1.example.com DNS:authority1.example.com
 
 ./setup_ca.sh -y -s $cnf -d $basedir \
-	sign-ca-req < $basedir/authority1/ca_req.pem
-cp $basedir/ca/root.pem $basedir/authority1/
-cp $basedir/ca/certs/$serial.pem $basedir/authority1/ca_cert.pem
-mkdir -p $basedir/authority1/crls/
-cp $basedir/ca/root.crl $basedir/authority1/crls/
+	sign-ca-req < $authority_basedir/ca_req.pem
+cp $basedir/ca/root.pem $authority_basedir/
+cp $basedir/ca/certs/$serial.pem $authority_basedir/ca_cert.pem
+mkdir -p $authority_basedir/crls/
+cp $basedir/ca/root.crl $authority_basedir/crls/
 
 serial=`cat $basedir/ca/serial`
 ./setup_ca.sh -y -s $cnf -d $basedir \
-	sign-proxy-req < $basedir/authority1/proxy_req.pem
-cp $basedir/ca/certs/$serial.pem $basedir/authority1/proxy_cert.pem
+	sign-proxy-req < $authority_basedir/proxy_req.pem
+cp $basedir/ca/certs/$serial.pem $authority_basedir/proxy_cert.pem
 
 ulimit -c unlimited
-$MDRD -c $basedir/authority1/mdrd.conf
+$MDRD -c $authority_basedir/mdrd.conf
 
 for i in 1 2 3 4 5; do
 	nc -vz localhost 9792 >/dev/null 2>&1 && break
 	sleep 1
 done
-echo "* Authority running with pid `cat $basedir/authority1/mdrd.pid`"
+echo "* Authority running with pid `cat $authority_basedir/mdrd.pid`"
 
 #
 # Agent setup; make the cert expiry short to force a refresh as well
 # as a purge from certs table, for testing
 #
 
-./certes -config $basedir/authority1/certes.conf \
+./certes -config $authority_basedir/certes.conf \
 	bootstrap-setup -san DNS:certes.example.com -cert_expiry 300
 echo "* Bootstrap setup done"
 
-bootstrap_key=$(sqlite3 $basedir/authority1/certdb/certdb.sqlite \
+bootstrap_key=$(sqlite3 $authority_basedir/certdb/certdb.sqlite \
 	"select base64(bootstrap_key) from bootstrap where
 	subject = '';")
 [ -z "$bootstrap_key" ] && fail "bootstrap key not found"
 
 # client3 will be used to test the full bootstrap process, everything
 # is generated by certes; REQ, key and cert bootstrap.
-mkdir -p $basedir/client3/crls
-cp $basedir/ca/root.crl $basedir/client3/crls/
-cp $basedir/ca/root.pem $basedir/client3/
+mkdir -p $client_basedir/crls
+cp $basedir/ca/root.crl $client_basedir/crls/
+cp $basedir/ca/root.pem $client_basedir/
 
-cat << EOF > $basedir/client3/certes.conf
+cat << EOF > $client_basedir/certes.conf
 enable_coredumps = true
 bootstrap_key = "$bootstrap_key"
 authority_fqdn = "localhost"
 authority_port = 9792
-root_cert_file = "$basedir/client3/root.pem"
-crl_path = "$basedir/client3/crls"
+root_cert_file = "$client_basedir/root.pem"
+crl_path = "$client_basedir/crls"
 crl_reload_interval_seconds = 30
-cert_file = "$basedir/client3/cert.pem"
-key_file = "$basedir/client3/key.pem"
-lock_file = "$basedir/client3/agent.lock"
-agent_socket_path = "$basedir/client3/agent.sock"
+cert_file = "$client_basedir/cert.pem"
+key_file = "$client_basedir/key.pem"
+lock_file = "$client_basedir/agent.lock"
+agent_socket_path = "$client_basedir/agent.sock"
 cert_org = "Example"
 cert_email = "cert@example.com"
 cert_check_interval_seconds = 30
 EOF
 
-./certes -config $basedir/client3/certes.conf init
+./certes -config $client_basedir/certes.conf init
 echo "* Agent initialized"
 
-cat << EOF > $basedir/client3/mdrd.conf
+cat << EOF > $client_basedir/mdrd.conf
 uid = $uid
 gid = $uid
 enable_coredumps = true
-ca_file = "$basedir/client3/root.pem"
-crl_path = "$basedir/client3/crls"
-cert_file = "$basedir/client3/cert.pem"
-key_file = "$basedir/client3/key.pem"
+ca_file = "$client_basedir/root.pem"
+crl_path = "$client_basedir/crls"
+cert_file = "$client_basedir/cert.pem"
+key_file = "$client_basedir/key.pem"
 require_client_cert = true
 crl_scan_interval_sec = 30
 
 port = 9790
 listen_backlog = 1024
 prefork = 1
-pid_file = "$basedir/client3/mdrd.pid"
-counters_sock = "$basedir/client3/counters.sock"
+pid_file = "$client_basedir/mdrd.pid"
+counters_sock = "$client_basedir/counters.sock"
 
 max_clients = 10000
 max_conn_per_ip = 25
@@ -241,10 +243,10 @@ allowed_mdr_domains = [ 0x00000002 ]
 EOF
 
 if [ -x /usr/bin/valgrind -a "$USE_VALGRIND" = "yes" ]; then
-	cat << EOF >> $basedir/client3/mdrd.conf
+	cat << EOF >> $client_basedir/mdrd.conf
 backend_argv = [
 	"/usr/bin/valgrind"
-	"--log-file=$basedir/client3/valgrind.%p.out"
+	"--log-file=$client_basedir/valgrind.%p.out"
 	"--keep-stacktraces=none"
 	"--leak-check=full"
 	"--track-origins=yes"
@@ -252,33 +254,33 @@ backend_argv = [
 	"-s"
 	"$(realpath certes)"
 	"-config"
-	"$basedir/client3/certes.conf"
+	"$client_basedir/certes.conf"
 	"mdrd-backend"
 ]
 EOF
 else
-	cat << EOF >> $basedir/client3/mdrd.conf
+	cat << EOF >> $client_basedir/mdrd.conf
 backend_argv = [
 	"$(realpath certes)"
 	"-config"
-	"$basedir/client3/certes.conf"
+	"$client_basedir/certes.conf"
 	"mdrd-backend"
 ]
 EOF
 fi
 
-cat << EOF >> $basedir/client3/mdrd.conf
+cat << EOF >> $client_basedir/mdrd.conf
 backend_uid = $uid
 backend_gid = $uid
 backend_promises = "stdio rpath wpath cpath inet flock unix dns proc error"
 backend_unveils = [
 	"x=$(realpath certes)"
-	"r=$basedir/client3"
-	"rwc=$basedir/client3/cert.pem"
-	"rwc=$basedir/client3/cert.pem.new"
-	"rwc=$basedir/client3/agent.lock"
-	"rwc=$basedir/client3/agent.sock"
-	"rwc=$basedir/client3/crls"
+	"r=$client_basedir"
+	"rwc=$client_basedir/cert.pem"
+	"rwc=$client_basedir/cert.pem.new"
+	"rwc=$client_basedir/agent.lock"
+	"rwc=$client_basedir/agent.sock"
+	"rwc=$client_basedir/crls"
 ]
 EOF
 
@@ -289,8 +291,8 @@ openssl req -config $cnf -nodes \
 	-out $basedir/user/req.pem -outform PEM \
 	-subj "/O=Example/CN=alice"
 
-$MDRD -c $basedir/client3/mdrd.conf
-echo "* Agent running with pid `cat $basedir/client3/mdrd.pid`"
+$MDRD -c $client_basedir/mdrd.conf
+echo "* Agent running with pid `cat $client_basedir/mdrd.pid`"
 
 mkdir -p $basedir/user
 openssl req -config $cnf -nodes \
@@ -299,7 +301,7 @@ openssl req -config $cnf -nodes \
 	-out $basedir/user/req.pem -outform PEM \
 	-subj "/O=Example/CN=alice" \
 	-addext "subjectAltName = DNS:user.example.com"
-./certes -config $basedir/authority1/certes.conf \
+./certes -config $authority_basedir/certes.conf \
 	sign-req -in $basedir/user/req.pem -out $basedir/user/cert.pem \
 	-role certadmin -server_auth
 echo "* User cert created at $basedir/user/cert.pem"
@@ -313,7 +315,7 @@ cert_file = "$basedir/user/cert.pem"
 key_file = "$basedir/user/key.pem"
 EOF
 cp $basedir/ca/root.pem $basedir/user/
-cp -R $basedir/authority1/crls $basedir/user/
+cp -R $authority_basedir/crls $basedir/user/
 
 ./certes -config $basedir/user/certes.conf update-crls
 
