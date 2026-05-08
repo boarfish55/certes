@@ -16,6 +16,8 @@ usage() {
 	echo "       -O <org>        Set Organization name"
 	echo "       -D <domain>     Set DNS domain name"
 	echo "       -y              Don't ask for openssl commands"
+	echo "       -d <dir>        Base directory for CA structure"
+	echo "       -p              Don't encrypt root CA key"
 	echo ""
 	echo "Commands:"
 	echo ""
@@ -44,8 +46,9 @@ CERTES_ORG=""
 
 expiry=365
 do_yes=false
+plain_key=false
 
-args=`getopt hs:d:O:D:x:yc:m: $*`
+args=`getopt hs:d:O:D:x:yc:m:p $*`
 if [ $? -ne 0 ]; then
         usage
         exit 2
@@ -93,6 +96,10 @@ while [ $# -ne 0 ]; do
 			do_yes=true
 			shift
 			;;
+		-p)
+			plain_key=true
+			shift
+			;;
 		--)
 			shift
 			break
@@ -130,7 +137,11 @@ setup_root()
 	# should be kept on a secure machine or even offline storage. The
 	# certificate and CRL will need to be deployed on all agents in the
 	# fleet.
-	openssl req -x509 -nodes -config $CERTES_SSL_CONFIG \
+	local nodes=""
+	if $plain_key; then
+		nodes="-nodes"
+	fi
+	openssl req -x509 $nodes -config $CERTES_SSL_CONFIG \
 		-extensions root_ext \
 		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 		-keyout $CERTES_DIR/ca/key.pem \
