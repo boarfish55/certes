@@ -1,3 +1,9 @@
+certes (0.4.4-1) unstable; urgency=medium
+
+  * Fix dir creation on install
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Fri, 08 May 2026 20:46:43 -0400
+
 certes (0.4.3-1) unstable; urgency=medium
 
   * include for umask
