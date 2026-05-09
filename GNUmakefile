@@ -1,5 +1,5 @@
 CC := gcc
-VERSION = 0.4.4
+VERSION = 0.4.5
 DEPDIR := .deps
 CFLAGS := -Wall -g -fstack-protector-strong -Wformat=0 \
 	  -Wdeprecated-declarations -fstack-clash-protection -fcf-protection \
@@ -35,8 +35,8 @@ clean:
 install: certes
 	install -D -m 0755 -s certes $(DESTDIR)$(prefix)/sbin/certes
 	install -d -m 0755 $(DESTDIR)$(prefix)/share/certes
-	install -d -m 0755 $(DESTDIR)$(prefix)/share/certes/doc
-	install -d -m 0755 $(DESTDIR)$(prefix)/share/certes/doc/examples
+	install -d -m 0755 $(DESTDIR)$(prefix)/share/doc/certes
+	install -d -m 0755 $(DESTDIR)$(prefix)/share/doc/certes/examples
 	install -m 0644 openssl.cnf $(DESTDIR)$(prefix)/share/certes
 	install -m 0755 setup_ca.sh $(DESTDIR)$(prefix)/share/certes
 	install -m 0644 README $(DESTDIR)$(prefix)/share/doc/certes
