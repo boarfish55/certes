@@ -48,64 +48,45 @@ expiry=365
 do_yes=false
 plain_key=false
 
-args=`getopt hs:d:O:D:x:yc:m:p $*`
-if [ $? -ne 0 ]; then
-        usage
-        exit 2
-fi
-set -- $args
-
-while [ $# -ne 0 ]; do
-	case "$1" in
-		-h)
+while getopts hs:d:O:D:x:yc:m:p name; do
+	case $name in
+		h)
 			setup_vars
 			usage
 			exit 0
 			;;
-		-c)
-			CERTES_CONFIG="$2"
-			shift
-			shift
+		c)
+			CERTES_CONFIG="$OPTARG"
 			;;
-		-s)
-			CERTES_SSL_CONFIG="$2"
-			shift
-			shift
+		s)
+			CERTES_SSL_CONFIG="$OPTARG"
 			;;
-		-d)
-			CERTES_DIR="$2"
-			shift
-			shift
+		d)
+			CERTES_DIR="$OPTARG"
 			;;
-		-D)
-			CERTES_DOMAIN="$2"
-			shift
-			shift
+		D)
+			CERTES_DOMAIN="$OPTARG"
 			;;
-		-O)
-			CERTES_ORG="$2"
-			shift
-			shift
+		O)
+			CERTES_ORG="$OPTARG"
 			;;
-		-x)
-			expiry="$2"
-			shift
-			shift
+		x)
+			expiry="$OPTARG"
 			;;
-		-y)
+		y)
 			do_yes=true
-			shift
 			;;
-		-p)
+		p)
 			plain_key=true
-			shift
 			;;
-		--)
-			shift
-			break
+		\?)
+			usage
+			exit 2
 			;;
 	esac
 done
+
+shift $(($OPTIND - 1))
 
 export CERTES_DIR
 export CERTES_DOMAIN
