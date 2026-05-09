@@ -1,3 +1,9 @@
+certes (0.4.5-1) unstable; urgency=medium
+
+  * Oops, wrong dir for docs
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Fri, 08 May 2026 20:51:03 -0400
+
 certes (0.4.4-1) unstable; urgency=medium
 
   * Fix dir creation on install
