@@ -5,6 +5,7 @@
  */
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
