@@ -1,3 +1,9 @@
+certes (0.4.6-1) unstable; urgency=medium
+
+  * Switch to builtin getopts which handles spaces better in OPTARG
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Fri, 08 May 2026 21:11:57 -0400
+
 certes (0.4.5-1) unstable; urgency=medium
 
   * Oops, wrong dir for docs
