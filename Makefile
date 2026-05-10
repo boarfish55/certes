@@ -1,6 +1,6 @@
 CC = cc
 EXTRA_CFLAGS =
-VERSION = 0.4.6
+VERSION = 0.4.7
 CFLAGS = -Wall -g ${EXTRA_CFLAGS} \
 	 `pkg-config --cflags libcrypto libssl mdr flatconf sqlite3`
 LDFLAGS = `pkg-config --libs libcrypto libssl mdr flatconf sqlite3`
