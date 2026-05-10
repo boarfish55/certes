@@ -40,7 +40,8 @@ cleanup()
 
 trap cleanup TERM INT EXIT
 
-./setup_ca.sh -p -s $cnf -d $basedir -O Example -D example.com setup-root
+./setup_ca.sh -p -s $cnf -d $basedir -O "Example Org" -E certes@example.com \
+	setup-root
 
 #
 # Authority setup
