@@ -70,6 +70,7 @@ struct certes_flatconf {
 	uint64_t   cert_expired_retention_seconds;
 	char       cert_org[256];
 	char       cert_email[512];
+	char       roles_oid[64];
 
 	/* Leave space for "0x" and terminating zero */
 	char       min_serial[MAX_HEX_SERIAL_LENGTH + 3];

@@ -29,7 +29,7 @@ const char *key_usage = "critical,digitalSignature,keyEncipherment";
 int
 cert_init(struct xerr *e)
 {
-	NID_certes_roles = OBJ_create("1.3.6.1.4.1.35910.3.1",
+	NID_certes_roles = OBJ_create(certes_conf.roles_oid,
 	    "certesRoles", "Certalator Security Roles");
 	if (NID_certes_roles == NID_undef)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "OBJ_create");
