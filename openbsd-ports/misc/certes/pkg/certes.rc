@@ -12,6 +12,10 @@ rc_pre() {
 	install -d -o _certesmdrd -g _certesmdrd /var/run/mdrd
 }
 
+rc_check() {
+	rc_exec "${daemon} ${daemon_flags} stat"
+}
+
 rc_stop() {
 	rc_exec "${daemon} ${daemon_flags} shutdown"
 }
