@@ -1,0 +1,19 @@
+#!/bin/ksh
+
+daemon="/usr/local/sbin/mdrd"
+daemon_flags="-c /etc/certes/mdrd.conf"
+
+. /etc/rc.d/rc.subr
+
+rc_reload=NO
+rc_check=NO
+
+rc_pre() {
+	install -d -o _certesmdrd -g _certesmdrd /var/run/mdrd
+}
+
+rc_stop() {
+	rc_exec "${daemon} ${daemon_flags} shutdown"
+}
+
+rc_cmd $1

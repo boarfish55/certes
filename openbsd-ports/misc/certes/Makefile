@@ -20,6 +20,7 @@ MAKE_FLAGS =	EXTRA_CFLAGS=-O2
 
 do-install:
 	${INSTALL_PROGRAM} ${WRKBUILD}/certes ${PREFIX}/sbin/
+	${INSTALL_DATA} ${WRKBUILD}/certes.rc ${PREFIX}/etc/rc.d/certes
 
 	${INSTALL_DATA_DIR} ${PREFIX}/share/doc/certes/
 	${INSTALL_DATA} ${WRKBUILD}/README ${PREFIX}/share/doc/certes/
