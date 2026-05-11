@@ -26,9 +26,9 @@ extern struct certes_flatconf certes_conf;
  * This will populate and save a bootstrap_entry in the certdb.
  */
 static int
-authority_make_bootstrap(const char *cn, const char **sans,
-    size_t sans_sz, const char **roles, size_t roles_sz, uint32_t cert_expiry,
-    uint32_t timeout, uint32_t flags, struct xerr *e)
+authority_make_bootstrap(const uint8_t *bootstrap_key, const char *cn,
+    const char **sans, size_t sans_sz, const char **roles, size_t roles_sz,
+    uint32_t cert_expiry, uint32_t timeout, uint32_t flags, struct xerr *e)
 {
 	int                    i, j, len, c;
 	char                   subject[CERTES_MAX_SUBJET_LENGTH] = "";
@@ -48,7 +48,7 @@ authority_make_bootstrap(const char *cn, const char **sans,
 			    "for commonName %s", cn);
 	}
 
-	arc4random_buf(be.bootstrap_key, sizeof(be.bootstrap_key));
+	memcpy(be.bootstrap_key, bootstrap_key, sizeof(be.bootstrap_key));
 
 	clock_gettime(CLOCK_REALTIME, &tp);
 
@@ -104,6 +104,10 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 	int32_t           sans_sz;
 	uint32_t          cert_expiry, timeout, flags;
 	struct umdr_vec   uv[6];
+	struct pmdr       pm;
+	struct pmdr_vec   pv[1];
+	char              pbuf[1024];
+	uint8_t           bootstrap_key[CERTES_BOOTSTRAP_KEY_LENGTH];
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
@@ -158,8 +162,10 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 	 */
 	roles[roles_sz] = ROLE_AGENT;
 
-	if (authority_make_bootstrap(subject, sans, sans_sz, roles,
-	    roles_sz + 1, cert_expiry, timeout, flags, xerrz(e)) == -1) {
+	arc4random_buf(bootstrap_key, sizeof(bootstrap_key));
+
+	if (authority_make_bootstrap(bootstrap_key, subject, sans, sans_sz,
+	    roles, roles_sz + 1, cert_expiry, timeout, flags, xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
@@ -167,9 +173,19 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 	free(sans);
 	free(roles);
 
-	if (mdrd_beout_ok(sess, MDRD_BEOUT_FNONE) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout_ok");
-		return -1;
+	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
+	pv[0].type = MDR_B;     /* bootstrap key */
+	pv[0].v.b.bytes = bootstrap_key;
+	pv[0].v.b.sz = sizeof(bootstrap_key);
+	if (pmdr_pack(&pm, msg_bootstrap_setup_ok,
+	    pv, PMDRVECLEN(pv)) == MDR_FAIL) {
+		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/msg_bootstrap_setup_ok");
+		goto fail;
+	}
+
+	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
+		goto fail;
 	}
 
 	return 0;

@@ -44,6 +44,16 @@ struct mdr_def msgdef_bootstrap_setup = {
 };
 const struct mdr_spec *msg_bootstrap_setup;
 
+struct mdr_def msgdef_bootstrap_setup_ok = {
+	MDR_DCV_CERTES_BOOTSTRAP_SETUP_OK,
+	"certes.bootstrap_setup_ok",
+	{
+		MDR_B,   /* Bootstrap key */
+		MDR_LAST
+	}
+};
+const struct mdr_spec *msg_bootstrap_setup_ok;
+
 struct mdr_def msgdef_revoke = {
 	MDR_DCV_CERTES_REVOKE,
 	"certes.revoke",
@@ -336,6 +346,9 @@ load_mdr_defs()
 		errx(1, "mdr_register_spec");
 	if ((msg_bootstrap_setup =
 	    mdr_register_spec(&msgdef_bootstrap_setup)) == NULL)
+		errx(1, "mdr_register_spec");
+	if ((msg_bootstrap_setup_ok =
+	    mdr_register_spec(&msgdef_bootstrap_setup_ok)) == NULL)
 		errx(1, "mdr_register_spec");
 	if ((msg_revoke = mdr_register_spec(&msgdef_revoke)) == NULL)
 		errx(1, "mdr_register_spec");

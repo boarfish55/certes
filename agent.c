@@ -1468,6 +1468,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 	char              ubuf[1024];
 	struct xerr       e;
 	struct authop    *op;
+	char              bootstrap_key[CERTES_BOOTSTRAP_KEY_LENGTH_B64 + 1];
 
 	for (opt = 0; opt < argc; opt++) {
 		if (argv[opt][0] != '-')
@@ -1585,7 +1586,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 	}
 
 	switch (umdr_dcv(&um)) {
-	case MDR_DCV_MDR_OK:
+	case MDR_DCV_CERTES_BOOTSTRAP_SETUP_OK:
 		break;
 	case MDR_DCV_MDR_ERROR:
 		if (umdr_unpack(&um, mdr_msg_error, uv,
@@ -1596,6 +1597,19 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 	default:
 		errx(1, "bad response from authority");
 	}
+
+	if (umdr_unpack(&um, msg_bootstrap_setup_ok,
+	    uv, UMDRVECLEN(uv)) == MDR_FAIL)
+		err(1, "umdr_unpack");
+
+	if (uv[0].v.b.bytes == NULL)
+		errx(1, "bootstrap key is NULL");
+
+	if (b64enc(bootstrap_key, sizeof(bootstrap_key),
+	    uv[0].v.b.bytes, uv[0].v.b.sz) == -1)
+		err(1, "b64enc");
+
+	printf("%s\n", bootstrap_key);
 
 	free(sans);
 	free(roles);

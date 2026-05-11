@@ -141,6 +141,13 @@ extern const struct mdr_spec *msg_cert_mod_sans;
 extern const struct mdr_spec *msg_sign_req;
 #define CERTES_SIGN_REQ_FSERVERAUTH 0x00000001
 
+/*
+ * Successful response when creating a bootstrap entry
+ */
+#define MDR_DCV_CERTES_BOOTSTRAP_SETUP_OK \
+    MDR_DCV(0x00000002, 0x0019, 0x0000)
+extern const struct mdr_spec *msg_bootstrap_setup_ok;
+
 /* Built-ins */
 extern const struct mdr_spec *msg_pack_beout;
 

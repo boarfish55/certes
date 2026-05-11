@@ -105,6 +105,7 @@ int
 b64enc(char *dst, size_t dst_sz, const uint8_t *bytes, size_t sz)
 {
 	BIO *b, *b64;
+	int  r;
 
 	if ((b64 = BIO_new(BIO_f_base64())) == NULL)
 		return -1;
@@ -122,11 +123,11 @@ b64enc(char *dst, size_t dst_sz, const uint8_t *bytes, size_t sz)
 	}
 	BIO_flush(b64);
 
-	if (BIO_read(b, dst, dst_sz) != dst_sz) {
+	if ((r = BIO_read(b, dst, dst_sz - 1)) <= 0) {
 		BIO_free_all(b64);
-		errno = EAGAIN;
 		return -1;
 	}
+	dst[r] = '\0';
 
 	BIO_free_all(b64);
 	return 0;
