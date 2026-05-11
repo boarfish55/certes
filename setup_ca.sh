@@ -152,14 +152,16 @@ ca_reqs()
 	local sans="$1"
 
 	if [ "`uname -s`" = "OpenBSD" ]; then
-		local hostname=`hostname`
+		local hostname=`hostname -s`
+		local fqdn=`hostname`
 	else
-		local hostname=`hostname -f`
+		local hostname=`hostname -s`
+		local fqdn=`hostname -f`
 	fi
 
 	local proxy_cn=$hostname
 	if [ -z "$sans" ]; then
-		sans="DNS:$hostname"
+		sans="DNS:$fqdn"
 	fi
 	if [ -z "$CERTES_CN" ]; then
 		CERTES_CN=$hostname
@@ -193,7 +195,7 @@ ca_reqs()
 	[ ! -z "$certes_gid" ] && chgrp "$certes_gid" $CERTES_DIR/ca_key.pem
 
 	echo "* Creating proxy REQ"
-	if [ "$CERTES_ORG" != "" -a "$proxy_cn" != "" ]; then
+	if [ "$CERTES_ORG" != "" ]; then
 		openssl req -config $CERTES_SSL_CONFIG -nodes \
 			-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 			-keyout $CERTES_DIR/proxy_key.pem -keyform PEM \
