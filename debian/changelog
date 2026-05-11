@@ -1,3 +1,11 @@
+certes (0.5.0-1) unstable; urgency=medium
+
+  * Return and print the bootstrap_key on bootstrap_setup. This is so we
+    can easily retrieve it for automation, or for the operator to be
+    able to setup the client.
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Mon, 11 May 2026 10:33:24 -0400
+
 certes (0.4.10-1) unstable; urgency=medium
 
   * Revamp a bit how we assign Org/CN/email in setup_ca.sh
