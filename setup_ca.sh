@@ -22,10 +22,10 @@ usage() {
 	echo ""
 	echo "Commands:"
 	echo ""
-	echo "        setup-root                         Create basic root CA structure"
-	echo "        ca-reqs <ca cn> <proxy cn> <sans>  Create CA & proxy REQ"
-	echo "        sign-ca-req                        Sign a CA REQ from STDIN"
-	echo "        sign-proxy-req <sans>              Sign a proxy REQ from STDIN"
+	echo "        setup-root      Create basic root CA structure"
+	echo "        ca-reqs <sans>  Create CA & proxy REQ"
+	echo "        sign-ca-req     Sign a CA REQ from STDIN"
+	echo "        sign-proxy-req  Sign a proxy REQ from STDIN"
 }
 
 setup_vars()
