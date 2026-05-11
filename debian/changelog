@@ -1,3 +1,17 @@
+certes (0.4.10-1) unstable; urgency=medium
+
+  * Revamp a bit how we assign Org/CN/email in setup_ca.sh
+  * Remove the role from the root cert, it's not needed. It's really ever
+    only need by clients for trust and to sign authorities
+  * Polish authority setup a bit
+  * Add rc script for OpenBSD
+  * Make the certesRoles OID configurable, so users can use their own PEN
+  * Fix perms for setup_ca.sh on OpenBSD
+  * Reduce verbosity for purge messages
+  * commonName has a limit of 64 chars
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Sun, 10 May 2026 22:57:44 -0400
+
 certes (0.4.6-1) unstable; urgency=medium
 
   * Switch to builtin getopts which handles spaces better in OPTARG
