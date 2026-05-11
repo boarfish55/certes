@@ -1,3 +1,10 @@
+certes (0.5.1-1) unstable; urgency=medium
+
+  * Make initialization run correctly on Linux
+  * Fix rundir perms on OpenBSD
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Mon, 11 May 2026 16:14:20 -0400
+
 certes (0.5.0-1) unstable; urgency=medium
 
   * Return and print the bootstrap_key on bootstrap_setup. This is so we
