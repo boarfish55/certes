@@ -29,7 +29,7 @@ const char *key_usage = "critical,digitalSignature,keyEncipherment";
 int
 cert_init(struct xerr *e)
 {
-	NID_certes_roles = OBJ_create("1.3.6.1.4.1.35910.3.1",
+	NID_certes_roles = OBJ_create(certes_conf.roles_oid,
 	    "certesRoles", "Certalator Security Roles");
 	if (NID_certes_roles == NID_undef)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "OBJ_create");
@@ -815,35 +815,16 @@ fail:
 static int
 cert_self(char *name, size_t name_sz, struct xerr *e)
 {
-	char             p[256];
-	int              r;
-	struct addrinfo  hints;
-	struct addrinfo *addrs;
-	struct addrinfo *ai;
+	char            *p;
 
-	if (gethostname(p, sizeof(p)) == -1)
+	if (gethostname(name, name_sz) == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "gethostname");
 
-	bzero(&hints, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	if ((r = getaddrinfo(p, NULL, &hints, &addrs)) != 0)
-		return XERRF(e, XLOG_EAI, r, "getaddrinfo: %s", p);
+	p = strchr(name, '.');
+	if (p != NULL)
+		*p = '\0';
 
-	for (ai = addrs; ai != NULL; ai = ai->ai_next) {
-		if (getnameinfo(ai->ai_addr, ai->ai_addrlen,
-		    name, name_sz, NULL, 0, 0) != 0)
-			continue;
-
-		if (strcmp(name, "localhost") != 0)
-			break;
-	}
-	freeaddrinfo(addrs);
-
-	if (ai != NULL)
-		return 0;
-
-	return XERRF(e, XLOG_APP, XLOG_NOTFOUND, "no name found");
+	return 0;
 }
 
 static X509 *
@@ -852,7 +833,7 @@ cert_selfsign(EVP_PKEY *pkey, struct xerr *e)
 	X509        *newcrt;
 	X509V3_CTX   ctx;
 	X509_NAME   *name;
-	char         hostname[NI_MAXHOST];
+	char         hostname[65]; /* 64 is the standard max for commonName */
 
 	if (cert_self(hostname, sizeof(hostname), xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);

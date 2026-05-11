@@ -13,18 +13,19 @@ usage() {
 	echo "       -s <config>     SSL config (default: $CERTES_SSL_CONFIG)"
 	echo "       -c <config>     certes config (default: $CERTES_CONFIG)"
 	echo "       -x <days>       Expiry (default: $expiry)"
-	echo "       -O <org>        Set Organization name"
-	echo "       -D <domain>     Set DNS domain name"
+	echo "       -C <cn>         Set REQ commonName"
+	echo "       -O <org>        Set REQ organizatioName"
+	echo "       -E <email>      Set REQ emailAddress"
 	echo "       -y              Don't ask for openssl commands"
 	echo "       -d <dir>        Base directory for CA structure"
 	echo "       -p              Don't encrypt root CA key"
 	echo ""
 	echo "Commands:"
 	echo ""
-	echo "        setup-root                         Create basic root CA structure"
-	echo "        ca-reqs <ca cn> <proxy cn> <sans>  Create CA & proxy REQ"
-	echo "        sign-ca-req                        Sign a CA REQ from STDIN"
-	echo "        sign-proxy-req <sans>              Sign a proxy REQ from STDIN"
+	echo "        setup-root      Create basic root CA structure"
+	echo "        ca-reqs <sans>  Create CA & proxy REQ"
+	echo "        sign-ca-req     Sign a CA REQ from STDIN"
+	echo "        sign-proxy-req  Sign a proxy REQ from STDIN"
 }
 
 setup_vars()
@@ -41,14 +42,15 @@ CERTES_DIR=/etc/certes
 CERTES_SSL_CONFIG=""
 CERTES_CONFIG=""
 CERTES_MDRD_CONFIG=""
-CERTES_DOMAIN=""
+CERTES_EMAIL=""
 CERTES_ORG=""
+CERTES_CN=""
 
 expiry=365
 do_yes=false
 plain_key=false
 
-while getopts hs:d:O:D:x:yc:m:p name; do
+while getopts hs:d:O:E:C:x:yc:m:p name; do
 	case $name in
 		h)
 			setup_vars
@@ -56,16 +58,19 @@ while getopts hs:d:O:D:x:yc:m:p name; do
 			exit 0
 			;;
 		c)
-			CERTES_CONFIG="$OPTARG"
+			CERTES_CONFIG=$(realpath "$OPTARG")
 			;;
 		s)
-			CERTES_SSL_CONFIG="$OPTARG"
+			CERTES_SSL_CONFIG=$(realpath "$OPTARG")
 			;;
 		d)
-			CERTES_DIR="$OPTARG"
+			CERTES_DIR=$(realpath "$OPTARG")
 			;;
-		D)
-			CERTES_DOMAIN="$OPTARG"
+		C)
+			CERTES_CN="$OPTARG"
+			;;
+		E)
+			CERTES_EMAIL="$OPTARG"
 			;;
 		O)
 			CERTES_ORG="$OPTARG"
@@ -89,7 +94,7 @@ done
 shift $(($OPTIND - 1))
 
 export CERTES_DIR
-export CERTES_DOMAIN
+export CERTES_EMAIL
 export CERTES_ORG
 
 setup_vars
@@ -107,9 +112,6 @@ shift
 
 setup_root()
 {
-	[ "$CERTES_DOMAIN" = "" ] && fail "CERTES_DOMAIN must be set"
-	[ "$CERTES_ORG" = "" ] && fail "CERTES_ORG must be set"
-
 	mkdir -p $CERTES_DIR/ca/certs
 	echo "01" > $CERTES_DIR/ca/serial
 	touch $CERTES_DIR/ca/index.txt
@@ -122,12 +124,24 @@ setup_root()
 	if $plain_key; then
 		nodes="-nodes"
 	fi
-	openssl req -x509 $nodes -config $CERTES_SSL_CONFIG \
-		-extensions root_ext \
-		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-		-keyout $CERTES_DIR/ca/key.pem \
-		-out $CERTES_DIR/ca/root.pem -outform pem -days $expiry \
-		-subj "/emailAddress=certes@$CERTES_DOMAIN/O=$CERTES_ORG/CN=root"
+	if [ -z "$CERTES_CN" ]; then
+		CERTES_CN=root
+	fi
+	if [ "$CERTES_EMAIL" != "" -a "$CERTES_ORG" != "" ]; then
+		openssl req -x509 $nodes -config $CERTES_SSL_CONFIG \
+			-extensions root_ext \
+			-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+			-keyout $CERTES_DIR/ca/key.pem \
+			-out $CERTES_DIR/ca/root.pem -outform pem -days $expiry \
+			-subj "/emailAddress=$CERTES_EMAIL/O=$CERTES_ORG/CN=$CERTES_CN"
+	else
+		openssl req -x509 $nodes -config $CERTES_SSL_CONFIG \
+			-extensions root_ext \
+			-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+			-keyout $CERTES_DIR/ca/key.pem \
+			-out $CERTES_DIR/ca/root.pem -outform pem -days $expiry
+	fi
+	echo "* Generating CRL"
 	openssl ca -config $CERTES_SSL_CONFIG \
 		-gencrl -out $CERTES_DIR/ca/root.crl
 	openssl x509 -in $CERTES_DIR/ca/root.pem -text -noout
@@ -135,19 +149,23 @@ setup_root()
 
 ca_reqs()
 {
-	local ca_cn="$1"
-	local proxy_cn="$2"
-	local sans="$3"
-	if [ -z "$ca_cn" ]; then
-		fail "must specify a CN for the CA"
+	local sans="$1"
+
+	if [ "`uname -s`" = "OpenBSD" ]; then
+		local hostname=`hostname -s`
+		local fqdn=`hostname`
+	else
+		local hostname=`hostname -s`
+		local fqdn=`hostname -f`
 	fi
-	if [ -z "$proxy_cn" ]; then
-		proxy_cn=`hostname -f`
-	fi
+
+	local proxy_cn=$hostname
 	if [ -z "$sans" ]; then
-		sans="DNS:`hostname -f`"
+		sans="DNS:$fqdn"
 	fi
-	[ "$CERTES_ORG" = "" ] && fail "CERTES_ORG must be set"
+	if [ -z "$CERTES_CN" ]; then
+		CERTES_CN=$hostname
+	fi
 
 	local mdrd_uid=$(egrep -o '^uid *= "*[a-zA-Z0-9\._-]+" *' \
 		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' "')
@@ -160,20 +178,37 @@ ca_reqs()
 		$CERTES_MDRD_CONFIG | cut -d= -f 2 | tr -d ' "')
 
 	umask 077
-	openssl req -config $CERTES_SSL_CONFIG -nodes \
-		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-		-keyout $CERTES_DIR/ca_key.pem -keyform PEM \
-		-out $CERTES_DIR/ca_req.pem -outform PEM \
-		-subj "/O=$CERTES_ORG/CN=$ca_cn"
+	echo "* Creating CA REQ"
+	if [ "$CERTES_ORG" != "" ]; then
+		openssl req -config $CERTES_SSL_CONFIG -nodes \
+			-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+			-keyout $CERTES_DIR/ca_key.pem -keyform PEM \
+			-out $CERTES_DIR/ca_req.pem -outform PEM \
+			-subj "/O=$CERTES_ORG/CN=$CERTES_CN"
+	else
+		openssl req -config $CERTES_SSL_CONFIG -nodes \
+			-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+			-keyout $CERTES_DIR/ca_key.pem -keyform PEM \
+			-out $CERTES_DIR/ca_req.pem -outform PEM
+	fi
 	[ ! -z "$certes_uid" ] && chown "$certes_uid" $CERTES_DIR/ca_key.pem
 	[ ! -z "$certes_gid" ] && chgrp "$certes_gid" $CERTES_DIR/ca_key.pem
 
-	openssl req -config $CERTES_SSL_CONFIG -nodes \
-		-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-		-keyout $CERTES_DIR/proxy_key.pem -keyform PEM \
-		-out $CERTES_DIR/proxy_req.pem -outform PEM \
-		-subj "/O=$CERTES_ORG/CN=$proxy_cn" \
-		-addext "subjectAltName = $sans"
+	echo "* Creating proxy REQ"
+	if [ "$CERTES_ORG" != "" ]; then
+		openssl req -config $CERTES_SSL_CONFIG -nodes \
+			-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+			-keyout $CERTES_DIR/proxy_key.pem -keyform PEM \
+			-out $CERTES_DIR/proxy_req.pem -outform PEM \
+			-addext "subjectAltName = $sans" \
+			-subj "/O=$CERTES_ORG/CN=$proxy_cn"
+	else
+		openssl req -config $CERTES_SSL_CONFIG -nodes \
+			-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+			-keyout $CERTES_DIR/proxy_key.pem -keyform PEM \
+			-out $CERTES_DIR/proxy_req.pem -outform PEM \
+			-addext "subjectAltName = $sans"
+	fi
 	[ ! -z "$mdrd_uid" ] && chown "$mdrd_uid" $CERTES_DIR/proxy_key.pem
 	[ ! -z "$mdrd_gid" ] && chgrp "$mdrd_gid" $CERTES_DIR/proxy_key.pem
 	umask 022

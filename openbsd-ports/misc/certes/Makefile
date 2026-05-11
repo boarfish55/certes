@@ -1,6 +1,6 @@
 COMMENT =	Certificate authority and role designation service
 CATEGORIES =	misc
-VERSION =	0.4.2
+VERSION =	0.4.10
 DISTNAME =	certes-${VERSION}
 HOMEPAGE =	https://www.overnet.ca
 MAINTAINER =	Pascal Lalonde <plalonde@overnet.ca>
@@ -29,6 +29,6 @@ do-install:
 
 	${INSTALL_DATA_DIR} ${PREFIX}/share/certes/
 	${INSTALL_DATA} ${WRKBUILD}/openssl.cnf ${PREFIX}/share/certes/
-	${INSTALL_DATA} ${WRKBUILD}/setup_ca.sh ${PREFIX}/share/certes/
+	${INSTALL_SCRIPT} ${WRKBUILD}/setup_ca.sh ${PREFIX}/share/certes/
 
 .include <bsd.port.mk>

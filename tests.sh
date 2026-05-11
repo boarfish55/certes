@@ -40,7 +40,8 @@ cleanup()
 
 trap cleanup TERM INT EXIT
 
-./setup_ca.sh -p -s $cnf -d $basedir -O Example -D example.com setup-root
+./setup_ca.sh -p -s $cnf -d $basedir -O "Example Org" -E certes@example.com \
+	setup-root
 
 #
 # Authority setup
@@ -60,7 +61,7 @@ cert_file = "$authority_basedir/ca_cert.pem"
 key_file = "$authority_basedir/ca_key.pem"
 lock_file = "$authority_basedir/agent.lock"
 agent_socket_path = "$authority_basedir/agent.sock"
-cert_org = "Example"
+cert_org = "Example Org"
 cert_email = "certes@example.com"
 min_serial = "0x1000000"
 max_serial = "0x1ffffff"
@@ -145,8 +146,8 @@ EOF
 
 serial=`cat $basedir/ca/serial`
 ./setup_ca.sh -s $cnf -c $authority_basedir/certes.conf \
-	-d $authority_basedir -O Example \
-	ca-reqs Authority1 authority1.example.com DNS:authority1.example.com
+	-d $authority_basedir -O "Example Org" -C Authority1 \
+	ca-reqs DNS:authority1.example.com
 
 ./setup_ca.sh -y -s $cnf -d $basedir \
 	sign-ca-req < $authority_basedir/ca_req.pem
@@ -201,7 +202,7 @@ cert_file = "$client_basedir/cert.pem"
 key_file = "$client_basedir/key.pem"
 lock_file = "$client_basedir/agent.lock"
 agent_socket_path = "$client_basedir/agent.sock"
-cert_org = "Example"
+cert_org = "Example Org"
 cert_email = "cert@example.com"
 cert_check_interval_seconds = 30
 EOF
@@ -289,7 +290,7 @@ openssl req -config $cnf -nodes \
 	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 	-keyout $basedir/user/key.pem -keyform PEM \
 	-out $basedir/user/req.pem -outform PEM \
-	-subj "/O=Example/CN=alice"
+	-subj "/O=Example Org/CN=alice"
 
 $MDRD -c $client_basedir/mdrd.conf
 echo "* Agent running with pid `cat $client_basedir/mdrd.pid`"
@@ -299,7 +300,7 @@ openssl req -config $cnf -nodes \
 	-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 	-keyout $basedir/user/key.pem -keyform PEM \
 	-out $basedir/user/req.pem -outform PEM \
-	-subj "/O=Example/CN=alice" \
+	-subj "/O=Example Org/CN=alice" \
 	-addext "subjectAltName = DNS:user.example.com"
 ./certes -config $authority_basedir/certes.conf \
 	sign-req -in $basedir/user/req.pem -out $basedir/user/cert.pem \

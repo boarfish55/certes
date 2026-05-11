@@ -35,6 +35,10 @@ authority_make_bootstrap(const char *cn, const char **sans,
 	struct bootstrap_entry be;
 	struct timespec        tp;
 
+	if (strlen(cn) > 64)
+		return XERRF(e, XLOG_APP, XLOG_OVERFLOW,
+		    "commonName is too long: %s > 64", cn);
+
 	if (flags & CERTDB_BOOTSTRAP_FLAG_SETSUBJECT) {
 		if (snprintf(subject, sizeof(subject),
 		    "/O=%s/CN=%s/emailAddress=%s", certes_conf.cert_org,
