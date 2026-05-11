@@ -6,7 +6,6 @@ daemon_flags="-c /etc/certes/mdrd.conf"
 . /etc/rc.d/rc.subr
 
 rc_reload=NO
-rc_check=NO
 
 rc_pre() {
 	install -d -o _certesmdrd -g _certesmdrd /var/run/mdrd
