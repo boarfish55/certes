@@ -2,13 +2,14 @@
 
 daemon="/usr/local/sbin/mdrd"
 daemon_flags="-c /etc/certes/mdrd.conf"
+daemon_execdir=/var/run/mdrd
 
 . /etc/rc.d/rc.subr
 
 rc_reload=NO
 
 rc_pre() {
-	install -d -o _certesmdrd -g _certesmdrd /var/run/mdrd
+	install -d -o _certesmdrd -g _certes -m 0775 ${daemon_execdir}
 }
 
 rc_check() {

@@ -1038,6 +1038,7 @@ cert_new_privkey(struct xerr *e)
 	EC_KEY       *ec_key = NULL;
 	FILE         *f;
 	X509         *selfcrt = NULL;
+	mode_t        save_umask;
 
 	if ((ec_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1)) == NULL)
 		return XERRF(e, XLOG_SSL, ERR_get_error(),
@@ -1101,11 +1102,13 @@ cert_new_privkey(struct xerr *e)
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	save_umask = umask(022);
 	if ((f = fopen(certes_conf.cert_file, "w")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
 		    certes_conf.cert_file);
 		goto fail;
 	}
+	umask(save_umask);
 	if (!PEM_write_X509(f, selfcrt)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
 		fclose(f);

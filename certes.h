@@ -43,6 +43,8 @@
 				       renewals */
 
 struct certes_flatconf {
+	// TODO: enable_coredumps is not used, and maybe not useful since
+	// it is a child of mdrd
 	int        enable_coredumps;
 	uint64_t   agent_bootstrap_port;
 	char       authority_fqdn[256];

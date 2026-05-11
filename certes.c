@@ -637,8 +637,6 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	umask(077);
-
 	if (flatconf_read(config_file_path, certes_config_vars, NULL) == -1)
 		err(1, "config_vars_read");
 
@@ -668,6 +666,8 @@ main(int argc, char **argv)
 
 	load_mdr_defs();
 
+	umask(077);
+
 	if (strcmp(command, "mdrd-backend") == 0) {
 		status = mdrd_backend();
 		certdb_shutdown();
@@ -684,8 +684,10 @@ main(int argc, char **argv)
 	} else if (strcmp(command, "sign-req") == 0) {
 		agent_cli_sign_req(argc - opt, argv + opt);
 	} else if (strcmp(command, "update-crls") == 0) {
+		umask(022);
 		agent_cli_update_crls(argc - opt, argv + opt);
 	} else if (strcmp(command, "init") == 0) {
+		umask(027);
 		/*
 		 * Do a standalone run to get our initial key/cert,
 		 * without mdrd.
