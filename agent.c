@@ -240,7 +240,7 @@ agent_tasks()
 
 	if (is_authority) {
 		if (now.tv_sec > last_certdb_purge.tv_sec + 300) {
-			xlog(LOG_INFO, NULL, "%s: purging expired certs and "
+			xlog(LOG_DEBUG, NULL, "%s: purging expired certs and "
 			    "bootstrap entries", __func__);
 			memcpy(&last_certdb_purge, &now, sizeof(now));
 			if (certdb_clean_expired_certs(
