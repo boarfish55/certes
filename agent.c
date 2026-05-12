@@ -311,7 +311,7 @@ agent_run(int lsock, struct xerr *e)
 	struct pollfd *fds;
 	int            ready, i;
 	int            fd, nfds, fds_sz = 32;
-	struct client *c, needle;
+	struct client *c, *next, needle;
 	ssize_t        r;
 	struct umdr    um;
 	uint64_t       um_sz;
@@ -500,7 +500,8 @@ agent_run(int lsock, struct xerr *e)
 			c->in_buf_used -= um_sz;
 		}
 	}
-	SPLAY_FOREACH(c, client_tree, &clients) {
+	for (c = SPLAY_MIN(client_tree, &clients); c != NULL; c = next) {
+		next = SPLAY_NEXT(client_tree, &clients, c);
 		SPLAY_REMOVE(client_tree, &clients, c);
 		client_free(c);
 	}
@@ -1192,6 +1193,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	uint64_t         der_chain_sz;
 	uint32_t         der_sz;
 	char             tmpfile[PATH_MAX];
+	mode_t           save_umask;
 
 	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(e))) == -1) {
 		XERR_PREPENDFN(e);
@@ -1251,10 +1253,12 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 		goto fail;
 	}
 
+	save_umask = umask(022);
 	if ((f = fopen(tmpfile, "w")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", tmpfile);
 		goto fail;
 	}
+	umask(save_umask);
 
 	if (PEM_write_X509(f, crt) == 0) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
@@ -1716,7 +1720,6 @@ agent_cli_sign_req(int argc, char **argv)
 		}
 
 		if (strcmp(argv[opt], "-copy_sans") == 0) {
-			opt++;
 			if (opt > argc) {
 				sign_req_usage();
 				exit(1);
@@ -1726,7 +1729,6 @@ agent_cli_sign_req(int argc, char **argv)
 		}
 
 		if (strcmp(argv[opt], "-server_auth") == 0) {
-			opt++;
 			if (opt > argc) {
 				sign_req_usage();
 				exit(1);
