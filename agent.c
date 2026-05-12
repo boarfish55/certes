@@ -311,7 +311,7 @@ agent_run(int lsock, struct xerr *e)
 	struct pollfd *fds;
 	int            ready, i;
 	int            fd, nfds, fds_sz = 32;
-	struct client *c, needle;
+	struct client *c, *next, needle;
 	ssize_t        r;
 	struct umdr    um;
 	uint64_t       um_sz;
@@ -500,7 +500,8 @@ agent_run(int lsock, struct xerr *e)
 			c->in_buf_used -= um_sz;
 		}
 	}
-	SPLAY_FOREACH(c, client_tree, &clients) {
+	for (c = SPLAY_MIN(client_tree, &clients); c != NULL; c = next) {
+		next = SPLAY_NEXT(client_tree, &clients, c);
 		SPLAY_REMOVE(client_tree, &clients, c);
 		client_free(c);
 	}
@@ -1716,7 +1717,6 @@ agent_cli_sign_req(int argc, char **argv)
 		}
 
 		if (strcmp(argv[opt], "-copy_sans") == 0) {
-			opt++;
 			if (opt > argc) {
 				sign_req_usage();
 				exit(1);
@@ -1726,7 +1726,6 @@ agent_cli_sign_req(int argc, char **argv)
 		}
 
 		if (strcmp(argv[opt], "-server_auth") == 0) {
-			opt++;
 			if (opt > argc) {
 				sign_req_usage();
 				exit(1);
