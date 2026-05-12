@@ -1193,6 +1193,7 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	uint64_t         der_chain_sz;
 	uint32_t         der_sz;
 	char             tmpfile[PATH_MAX];
+	mode_t           save_umask;
 
 	if ((r = authop_recv(op, ubuf, sizeof(ubuf), xerrz(e))) == -1) {
 		XERR_PREPENDFN(e);
@@ -1252,10 +1253,12 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 		goto fail;
 	}
 
+	save_umask = umask(022);
 	if ((f = fopen(tmpfile, "w")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", tmpfile);
 		goto fail;
 	}
+	umask(save_umask);
 
 	if (PEM_write_X509(f, crt) == 0) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
