@@ -357,7 +357,9 @@ agent_run(int lsock, struct xerr *e)
 			/* Handle our listening socket for new clients. */
 			if (fds[i].fd == lsock) {
 				if (client_tree_sz >= fds_sz) {
-					tmp = realloc(fds, client_tree_sz + 32);
+					tmp = reallocarray(fds,
+					    (client_tree_sz + 32),
+					    sizeof(struct pollfd));
 					if (tmp == NULL) {
 						xlog_strerror(LOG_ERR, errno,
 						    "%s: realloc", __func__);
