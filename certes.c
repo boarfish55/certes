@@ -381,6 +381,20 @@ task_reload_crls()
 	crls_gen = uv[0].v.u64;
 }
 
+void
+log_session(struct mdrd_besession *s, void *args)
+{
+	char        peer_name[512];
+	struct xerr e;
+
+	if (certes_client_name(s, peer_name, sizeof(peer_name),
+	    xerrz(&e)) == NULL) {
+		xlog(LOG_ERR, &e, __func__);
+		return;
+	}
+	xlog(LOG_INFO, NULL, "purged session for peer %s", peer_name);
+}
+
 int
 mdrd_backend()
 {
@@ -396,7 +410,7 @@ mdrd_backend()
 	    CERTES_MAX_MSG_SIZE + certes_conf.max_cert_size +
 	    sizeof(struct sockaddr_in6))];
 
-	xlog_init(CERTES_PROGNAME, NULL, NULL, 1);
+	xlog_init2(CERTES_PROGNAME, LOG_DAEMON, NULL, NULL, 1);
 
 	setproctitle("backend");
 
@@ -438,9 +452,9 @@ mdrd_backend()
 	while ((r = mdrd_recv(&mrh, 1000))) {
 		if (r == MDR_FAIL) {
 			if (errno == ETIMEDOUT) {
-				if ((r = mdrd_purge_sessions(&mrh,
-				    certes_conf.agent_recv_timeout_ms / 1000))
-				    > 0)
+				if ((r = mdrd_purge_sessions_cb(&mrh,
+				    certes_conf.agent_recv_timeout_ms / 1000,
+				    &log_session, NULL)) > 0)
 					xlog(LOG_NOTICE, NULL,
 					    "purged %d idle sessions", r);
 				task_reload_crls();
@@ -582,8 +596,8 @@ mdrd_backend()
 		}
 		task_reload_crls();
 	}
-	if ((r = mdrd_purge_sessions(NULL, 0)) > 0)
-		xlog(LOG_NOTICE, NULL, "purging %d sessions before exit", r);
+	if ((r = mdrd_purge_sessions_cb(NULL, 0, &log_session, NULL)) > 0)
+		xlog(LOG_NOTICE, NULL, "purged %d sessions before exit", r);
 	X509_STORE_CTX_free(ctx);
 	return 0;
 }

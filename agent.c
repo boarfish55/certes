@@ -2913,7 +2913,8 @@ agent_start(struct xerr *e)
 	if (null_fd > 2)
 		close(null_fd);
 
-	if (xlog_init(CERTES_AGENT_PROGNAME, NULL, NULL, 0) == -1) {
+	if (xlog_init2(CERTES_AGENT_PROGNAME, LOG_DAEMON,
+	    NULL, NULL, 0) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: xlog_init", __func__);
 		exit(1);
 	}
