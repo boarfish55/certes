@@ -3,6 +3,7 @@
  *
  * SPDX-License-Identifier: ISC
  */
+#include <sys/param.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -105,6 +106,7 @@ cert_foreach_role(X509 *crt, int(*cb)(const char *, void *), void *args,
     struct xerr *e)
 {
 	int                  roles_idx;
+	char                 role[CERTES_MAX_ROLE_LENGTH];
 	X509_EXTENSION      *ext;
 	ASN1_OCTET_STRING   *asn1str;
 	STACK_OF(ASN1_TYPE) *seq;
@@ -129,7 +131,15 @@ cert_foreach_role(X509 *crt, int(*cb)(const char *, void *), void *args,
 
 	for (i = 0; i < sk_ASN1_TYPE_num(seq); i++) {
 		v = sk_ASN1_TYPE_value(seq, i);
-		if (!cb((const char *)v->value.ia5string->data, args))
+		if (v->type != V_ASN1_IA5STRING) {
+			sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
+			return XERRF(e, XLOG_APP, XLOG_INVALID,
+			    "%s: certesRoles contains non-string values",
+			    __func__);
+		}
+		strlcpy(role, (const char *)v->value.ia5string->data,
+		    MIN(sizeof(role), v->value.ia5string->length + 1));
+		if (!cb(role, args))
 			break;
 	}
 	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
@@ -199,7 +209,7 @@ cert_foreach_san(X509 *crt, int(*cb)(const char *, void *), void *args,
 	STACK_OF(GENERAL_NAME) *sans = NULL;
 	GENERAL_NAME           *gname;
 	char                    name[512];
-	int                     i;
+	int                     i, namelen;
 
 	sans = (STACK_OF(GENERAL_NAME) *)X509_get_ext_d2i(crt,
 	    NID_subject_alt_name, NULL, NULL);
@@ -211,12 +221,22 @@ cert_foreach_san(X509 *crt, int(*cb)(const char *, void *), void *args,
 		gname = sk_GENERAL_NAME_value(sans, i);
 		switch (gname->type) {
 		case GEN_DNS:
-			snprintf(name, sizeof(name), "DNS:%s",
+			namelen = ASN1_STRING_length(gname->d.dNSName);
+			snprintf(name, sizeof(name), "DNS:%.*s", namelen,
 			    ASN1_STRING_get0_data(gname->d.dNSName));
 			break;
 		case GEN_IPADD:
-			snprintf(name, sizeof(name), "IP:%s",
-			    ASN1_STRING_get0_data(gname->d.iPAddress));
+			namelen = ASN1_STRING_length(gname->d.iPAddress);
+			if (namelen != 4 && namelen != 16)
+				return XERRF(e, XLOG_APP, XLOG_FAIL,
+				    "subjectAltName of type iPAddress "
+				    "has invalid length");
+			if (inet_ntop((namelen == 16) ? AF_INET6 : AF_INET,
+			    ASN1_STRING_get0_data(gname->d.iPAddress),
+			    name, sizeof(name)) == NULL)
+				return XERRF(e, XLOG_APP, XLOG_FAIL,
+				    "subjectAltName of type iPAddress "
+				    "could not be decoded");
 			break;
 		default:
 			GENERAL_NAMES_free(sans);
@@ -240,6 +260,7 @@ cert_req_foreach_san(X509_REQ *req, int(*cb)(const char *, void *), void *args,
 	int                       i;
 	STACK_OF(X509_EXTENSION) *exts = NULL;
 	int                       status = 0;
+	int                       namelen;
 
 	if ((exts = X509_REQ_get_extensions(req)) == NULL) {
 		status = XERRF(e, XLOG_APP, XLOG_NOTFOUND,
@@ -258,12 +279,26 @@ cert_req_foreach_san(X509_REQ *req, int(*cb)(const char *, void *), void *args,
 		gname = sk_GENERAL_NAME_value(sans, i);
 		switch (gname->type) {
 		case GEN_DNS:
-			snprintf(name, sizeof(name), "DNS:%s",
+			namelen = ASN1_STRING_length(gname->d.dNSName);
+			snprintf(name, sizeof(name), "DNS:%.*s", namelen,
 			    ASN1_STRING_get0_data(gname->d.dNSName));
 			break;
 		case GEN_IPADD:
-			snprintf(name, sizeof(name), "IP:%s",
-			    ASN1_STRING_get0_data(gname->d.iPAddress));
+			namelen = ASN1_STRING_length(gname->d.iPAddress);
+			if (namelen != 4 && namelen != 16) {
+				status = XERRF(e, XLOG_APP, XLOG_FAIL,
+				    "subjectAltName of type iPAddress "
+				    "has invalid length");
+				goto end;
+			}
+			if (inet_ntop((namelen == 16) ? AF_INET6 : AF_INET,
+			    ASN1_STRING_get0_data(gname->d.iPAddress),
+			    name, sizeof(name)) == NULL) {
+				status = XERRF(e, XLOG_APP, XLOG_FAIL,
+				    "subjectAltName of type iPAddress "
+				    "could not be decoded");
+				goto end;
+			}
 			break;
 		default:
 			GENERAL_NAMES_free(sans);

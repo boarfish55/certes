@@ -318,8 +318,8 @@ agent_run(int lsock, struct xerr *e)
 	void          *tmp;
 	int            status = 0;
 
-	if ((fds = malloc(sizeof(struct pollfd) * fds_sz)) == NULL)
-		return XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((fds = calloc(fds_sz, sizeof(struct pollfd))) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "calloc");
 
 	for (;;) {
 		fds[0].fd = lsock;
@@ -1048,9 +1048,9 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 	xlog(LOG_NOTICE, NULL, "%s: %u CRLs to update",
 	    __func__, crl_count);
 
-	crl_sizes = malloc(sizeof(uint32_t) * crl_count);
+	crl_sizes = calloc(crl_count, sizeof(uint32_t));
 	if (crl_sizes == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 
@@ -2338,11 +2338,11 @@ agent_cli_cert(int argc, char **argv)
 			errx(1, "msg_cert_find_answer: not all arrays "
 			    "are same length; invalid response");
 
-		serials = malloc(sizeof(char *) * (serials_sz + 1));
-		subjects = malloc(sizeof(char *) * (subjects_sz + 1));
-		find_flags = malloc(sizeof(uint32_t) * find_flags_sz);
+		serials = calloc(serials_sz + 1, sizeof(char *));
+		subjects = calloc(subjects_sz + 1, sizeof(char *));
+		find_flags = calloc(find_flags_sz, sizeof(uint32_t));
 		if (serials == NULL || subjects == NULL || find_flags == NULL)
-			err(1, "malloc");
+			err(1, "calloc");
 
 		if (umdr_vec_as(&uv[0].v.as, serials, serials_sz + 1)
 		    == MDR_FAIL)
@@ -2684,22 +2684,22 @@ load_crls(struct xerr *e)
 	}
 	rewinddir(d);
 
-	last_updates = malloc(count * sizeof(time_t));
+	last_updates = calloc(count, sizeof(time_t));
 	if (last_updates == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
-	issuers = malloc(count * (sizeof(char *) + 256));
+	issuers = calloc(count, sizeof(char *) + 256);
 	if (issuers == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 	for (i = 0; i < count; i++)
 		issuers[i] = ((char *)issuers + (count * sizeof(char *))) +
 		    (i * 256);
-	crls = malloc(count * sizeof(X509_CRL *));
+	crls = calloc(count, sizeof(X509_CRL *));
 	if (crls == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 

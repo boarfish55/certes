@@ -80,6 +80,11 @@ strlist_split(char ***strlist, const char *src, size_t src_len, char sep)
 		if (src[i] == '\0' || src[i] == sep)
 			sz++;
 
+	if ((SIZE_MAX - src_len) / sizeof(char *) <= sz + 1) {
+		errno = ERANGE;
+		return -1;
+	}
+
 	*strlist = malloc(((sz + 1) * sizeof(char *)) + src_len);
 	if (*strlist == NULL)
 		return -1;
@@ -155,9 +160,8 @@ b64dec(uint8_t *dst, size_t dst_sz, const char *str)
 	}
 	BIO_flush(b);
 
-	if ((r = BIO_read(b64, dst, dst_sz)) < dst_sz) {
+	if ((r = BIO_read(b64, dst, dst_sz)) <= 0) {
 		BIO_free_all(b64);
-		errno = EAGAIN;
 		return -1;
 	}
 

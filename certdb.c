@@ -449,22 +449,21 @@ certdb_get_bootstrap(const uint8_t *bootstrap_key, size_t bootstrap_key_sz,
 
 	switch ((r = sqlite3_step(qry_bootstrap_get.stmt))) {
 	case SQLITE_ROW:
-                break;
-        case SQLITE_DONE:
-                XERRF(e, XLOG_APP, XLOG_NOTFOUND,
-                    "sqlite3_step: entry not found, bootstrap_key=%s",
-		    bootstrap_key);
-                goto fail;
-        case SQLITE_BUSY:
-                XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
-                goto fail;
-        case SQLITE_MISUSE:
-        case SQLITE_ERROR:
-        default:
-                XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
-                    sqlite3_errmsg(db), r);
-                goto fail;
-        }
+		break;
+	case SQLITE_DONE:
+		XERRF(e, XLOG_APP, XLOG_NOTFOUND,
+		    "sqlite3_step: bootstrap_key entry not found");
+		goto fail;
+	case SQLITE_BUSY:
+		XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
+		goto fail;
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
+		    sqlite3_errmsg(db), r);
+		goto fail;
+	}
 
 	be->flags = (uint32_t)sqlite3_column_int(
 	    qry_bootstrap_get.stmt,
