@@ -1110,19 +1110,23 @@ cert_new_privkey(struct xerr *e)
 		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "EVP_PKEY_keygen");
 #endif
-	if ((f = fopen(certes_conf.key_file, "w")) == NULL) {
+	if ((fd = open(certes_conf.key_file,
+	    O_CREAT|O_TRUNC|O_WRONLY, 0640)) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "open: %s", certes_conf.key_file);
+		goto fail;
+	}
+	if ((f = fdopen(fd, "w")) == NULL) {
+		close(fd);
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
 		    certes_conf.key_file);
 		goto fail;
 	}
-
 	if (!PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "PEM_write_PrivateKey");
 		fclose(f);
 		goto fail;
 	}
-
 	if (fclose(f) == EOF) {
 		XERRF(e, XLOG_ERRNO, errno, "fclose: %s",
 		    certes_conf.key_file);
@@ -1140,13 +1144,7 @@ cert_new_privkey(struct xerr *e)
 		goto fail;
 	}
 	save_umask = umask(022);
-	if ((fd = open(certes_conf.cert_file,
-	    O_CREAT|O_TRUNC|O_WRONLY, 0640)) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "open: %s", certes_conf.cert_file);
-		goto fail;
-	}
-	if ((f = fdopen(fd, "w")) == NULL) {
-		close(fd);
+	if ((f = fopen(certes_conf.cert_file, "w")) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fdopen: %s",
 		    certes_conf.cert_file);
 		goto fail;
