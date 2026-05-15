@@ -756,6 +756,7 @@ agent_bootstrap(struct xerr *e)
 	int                  req_len;
 	int                  sockfd;
 	struct sockaddr_in6  addr;
+	const char          *in;
 	socklen_t            slen = sizeof(addr);
 	char                 ip6[INET6_ADDRSTRLEN];
 	struct umdr          um;
@@ -794,10 +795,17 @@ agent_bootstrap(struct xerr *e)
 		    "sock name does not fit in sockaddr");
 		goto fail;
 	}
-	if (inet_ntop(addr.sin6_family, &addr, ip6, slen) == NULL) {
+	if (addr.sin6_family == AF_INET6)
+		in = inet_ntop(AF_INET6, &addr.sin6_addr, ip6, sizeof(ip6));
+	else
+		in = inet_ntop(AF_INET,
+		    &((struct sockaddr_in *)&addr)->sin_addr, ip6, sizeof(ip6));
+
+	if (in == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "inet_ntop");
 		goto fail;
 	}
+
 	if (cert_new_selfreq(key, X509_get_subject_name(cert), ip6, &req_buf,
 	    &req_len, xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);

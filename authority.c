@@ -786,20 +786,13 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	    ? msg_bootstrap_dialback
 	    : msg_cert_renew_dialback,
 	    pv, PMDRVECLEN(pv)) == MDR_FAIL) {
-		status = -1;
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
-		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/dialback");
+		status = XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/dialback");
 	} else if ((r = BIO_write(bio, pmdr_buf(&pm), pmdr_size(&pm))) == -1) {
-		status = -1;
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "error during dialback write");
-		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
-	} else if (r < pmdr_size(&pm)) {
-		status = -1;
-		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
-		    "short write during dialback");
-		XERRF(e, XLOG_APP, XLOG_SHORTIO, "BIO_write");
+		status = XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
 	}
 
 	BIO_flush(bio);
