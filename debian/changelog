@@ -1,3 +1,26 @@
+certes (0.5.3-1) unstable; urgency=medium
+
+  * Fix bad realloc()
+  * Use calloc() instead of malloc() whenever we multiply values in the
+    malloc() args to avoid integer overflows
+  * Use memcpy for possible unaligned reads/writes to memory buffers
+  * Make proper use of ASN1_STRING_get0_data() and iPAddress SANs
+  * Validate that roles are V_ASN1_IA5STRING in cert_foreach_role(), and
+    check length too
+  * Don't attempt to log the binary bootstrap key
+  * Make sure to validate SSL target host in client connections
+  * Fix challenge handling where we were only comparing the first 8 bytes. We
+    now also use CRYPTO_memcmp()
+  * Make sure we actually reset perms if we ever rewrite the private key
+  * Make sure CN from authority doesn't contain weird characters since we use
+    its name in our CRL path
+  * copy-paste error resulting in wrong results returned
+  * Fix possible heap over-read if a DER-chain from an authority sends us past
+    the end of our byte field
+  * Fix inet_ntop usage; cleanup
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Fri, 15 May 2026 11:10:03 -0400
+
 certes (0.5.2-1) unstable; urgency=medium
 
   * Fix arg handling on sign-req
