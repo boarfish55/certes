@@ -1298,10 +1298,14 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	der_chain_sz = uv[2].v.b.sz;
 
 	for (dp = der_chain; dp - der_chain < der_chain_sz; ) {
+		if (der_chain_sz - (dp - der_chain) < sizeof(uint32_t)) {
+			XERRF(e, XLOG_APP, XLOG_BADMSG, "corrupted DER chain");
+			goto fail;
+		}
 		memcpy(&der_sz, dp, sizeof(uint32_t));
 		der_sz = be32toh(der_sz);
 		dp += sizeof(uint32_t);
-		if ((dp - der_chain) + der_sz > der_chain_sz) {
+		if (der_chain_sz - (dp - der_chain) < der_sz) {
 			XERRF(e, XLOG_APP, XLOG_BADMSG,
 			    "DER size exceeds our byte field length");
 			goto fail;
@@ -1914,10 +1918,12 @@ agent_cli_sign_req(int argc, char **argv)
 	der_chain_sz = uv[2].v.b.sz;
 
 	for (dp = der_chain; dp - der_chain < der_chain_sz; ) {
+		if (der_chain_sz - (dp - der_chain) < sizeof(uint32_t))
+			errx(1, "corrupted DER chain");
 		memcpy(&der_sz, dp, sizeof(uint32_t));
 		der_sz = be32toh(der_sz);
 		dp += sizeof(uint32_t);
-		if ((dp - der_chain) + der_sz > der_chain_sz)
+		if (der_chain_sz - (dp - der_chain) < der_sz)
 			errx(1, "DER size exceeds our byte field length");
 
 		icrt = d2i_X509(NULL, &dp, der_sz);
