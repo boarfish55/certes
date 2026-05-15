@@ -736,6 +736,15 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 		goto befail;
 	}
 
+	if (!SSL_set1_host(ssl, challenge_host)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_set1_host");
+		goto befail;
+	}
+	if (!SSL_set_tlsext_host_name(ssl, challenge_host)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_set_tlsext_host_name");
+		goto befail;
+	}
+
 	SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
 	BIO_set_conn_hostname(bio, challenge_host);
 	BIO_set_conn_port(bio, port);

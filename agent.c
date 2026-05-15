@@ -514,7 +514,7 @@ agent_run(int lsock, struct xerr *e)
 static struct authop *
 authop_new(enum authop_type type, const char *peer, struct xerr *e)
 {
-	char            host[302];
+	char            host[302], *p;
 	int             fd;
 	struct timeval  timeout;
 	SSL            *ssl = NULL;
@@ -528,13 +528,24 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 	}
 	bzero(op, sizeof(*op));
 
+	if ((op->bio = BIO_new_ssl_connect(ssl_ctx)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new_ssl_connect");
+		goto fail;
+	}
+
+	BIO_get_ssl(op->bio, &ssl);
+	if (ssl == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_get_ssl");
+		goto fail;
+	}
+	SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
+
 	if (peer == NULL) {
 		if (certes_conf.authority_fqdn[0] == '\0') {
 			XERRF(e, XLOG_APP, XLOG_INVALID,
 			    "no destination address was specified");
 			goto fail;
 		}
-
 		if (snprintf(host, sizeof(host), "%s:%llu",
 		    certes_conf.authority_fqdn,
 		    certes_conf.authority_port) >= sizeof(host)) {
@@ -552,19 +563,20 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 	} else
 		strlcpy(host, peer, sizeof(host));
 
-	if ((op->bio = BIO_new_ssl_connect(ssl_ctx)) == NULL) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new_ssl_connect");
-		goto fail;
-	}
-
-	BIO_get_ssl(op->bio, &ssl);
-	if (ssl == NULL) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_get_ssl");
-		goto fail;
-	}
-
-	SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
 	BIO_set_conn_hostname(op->bio, host);
+	// TODO: eventually add X509_VERIFY_PARAM_set1_ip_asc for IP-literal
+	// targets
+	if ((p = strrchr(host, ':')) != NULL)
+		*p = '\0';
+
+	if (!SSL_set1_host(ssl, host)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_set1_host");
+		goto fail;
+	}
+	if (!SSL_set_tlsext_host_name(ssl, host)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_set_tlsext_host_name");
+		goto fail;
+	}
 
 	if (BIO_do_connect(op->bio) <= 0) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_do_connect");
@@ -636,7 +648,8 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 
 	return op;
 fail:
-	BIO_free(op->bio);
+	if (op->bio != NULL)
+		BIO_free(op->bio);
 	free(op);
 	return NULL;
 }
