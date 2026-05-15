@@ -780,7 +780,7 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	pv[0].v.s = op_id;
 	pv[1].type = MDR_B;
 	pv[1].v.b.bytes = cs->challenge;
-	pv[1].v.b.sz = sizeof(cs->challenge);
+	pv[1].v.b.sz = sizeof(CERTES_CHALLENGE_LENGTH);
 	if (pmdr_pack(&pm,
 	    (dcv == MDR_DCV_CERTES_BOOTSTRAP_DIALBACK)
 	    ? msg_bootstrap_dialback
@@ -1131,8 +1131,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 		    "client failed challenge");
 	}
 
-	if (memcmp(cs->challenge, uv[1].v.b.bytes,
-	    MIN(sizeof(cs->challenge), uv[1].v.b.sz)) != 0) {
+	if (CRYPTO_memcmp(cs->challenge, uv[1].v.b.bytes,
+	    MIN(sizeof(CERTES_CHALLENGE_LENGTH), uv[1].v.b.sz)) != 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "failed challenge");
 		return XERRF(e, XLOG_APP, XLOG_DENIED,
@@ -1277,8 +1277,8 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 		    "client failed challenge");
 	}
 
-	if (memcmp(cs->challenge, uv[1].v.b.bytes,
-	    MIN(sizeof(cs->challenge), uv[1].v.b.sz)) != 0) {
+	if (CRYPTO_memcmp(cs->challenge, uv[1].v.b.bytes,
+	    MIN(sizeof(CERTES_CHALLENGE_LENGTH), uv[1].v.b.sz)) != 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "failed challenge");
 		return XERRF(e, XLOG_APP, XLOG_DENIED,
