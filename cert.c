@@ -1117,7 +1117,7 @@ cert_new_privkey(struct xerr *e)
 	}
 	if ((f = fdopen(fd, "w")) == NULL) {
 		close(fd);
-		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+		XERRF(e, XLOG_ERRNO, errno, "fdopen: %s",
 		    certes_conf.key_file);
 		goto fail;
 	}
