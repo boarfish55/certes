@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
+#include <ctype.h>
 #include <err.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -1215,6 +1216,19 @@ cert_subject_cn(const char *subject, char *cn, size_t cn_sz, struct xerr *e)
 	}
 
 	return XERRF(e, XLOG_APP, XLOG_NOTFOUND, "no CN in subject");
+}
+
+int
+cert_authority_cn_sane(const char *cn)
+{
+	int i, len;
+
+	for (i = 0, len = strlen(cn); i < len; i++) {
+		if (!isalnum(cn[i]) && cn[i] != '.')
+			return 0;
+	}
+
+	return 1;
 }
 
 char *

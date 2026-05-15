@@ -1092,6 +1092,12 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 			goto fail;
 		}
 
+		if (!cert_authority_cn_sane(issuer_cn)) {
+			XERRF(e, XLOG_APP, XLOG_INVALID, "authority CN "
+			    "contains dubious characters: %s", issuer_cn);
+			goto fail;
+		}
+
 		if (snprintf(crl_path, sizeof(crl_path), "%s/%s.crl",
 		    certes_conf.crl_path, issuer_cn) >= sizeof(crl_path)) {
 			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
