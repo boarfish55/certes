@@ -1072,6 +1072,7 @@ cert_new_privkey(struct xerr *e)
 	EVP_PKEY     *pkey = NULL;
 	EC_KEY       *ec_key = NULL;
 	FILE         *f;
+	int           fd;
 	X509         *selfcrt = NULL;
 	mode_t        save_umask;
 
@@ -1138,8 +1139,14 @@ cert_new_privkey(struct xerr *e)
 		goto fail;
 	}
 	save_umask = umask(022);
-	if ((f = fopen(certes_conf.cert_file, "w")) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+	if ((fd = open(certes_conf.cert_file,
+	    O_CREAT|O_TRUNC|O_WRONLY, 0640)) == -1) {
+		XERRF(e, XLOG_ERRNO, errno, "open: %s", certes_conf.cert_file);
+		goto fail;
+	}
+	if ((f = fdopen(fd, "w")) == NULL) {
+		close(fd);
+		XERRF(e, XLOG_ERRNO, errno, "fdopen: %s",
 		    certes_conf.cert_file);
 		goto fail;
 	}
