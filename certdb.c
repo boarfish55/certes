@@ -953,24 +953,27 @@ certdb_find_certs(const char *pattern,
 			}
 
 			sans_len = sqlite3_column_bytes(
-			    qry_cert_get.stmt,
-			    qry_cert_get.o_sans);
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_sans);
 			if (sans_len > 0) {
 				if ((ce.sans_sz = strlist_split(&ce.sans,
-				    sqlite3_column_blob(qry_cert_get.stmt,
-				    qry_cert_get.o_sans), sans_len, ',')) == -1) {
-					status = XERRF(e, XLOG_ERRNO, errno, "malloc");
+				    sqlite3_column_blob(qry_find_certs.stmt,
+				    qry_find_certs.o_sans),
+				    sans_len, ',')) == -1) {
+					status = XERRF(e, XLOG_ERRNO,
+					    errno, "malloc");
 					goto end;
 				}
 			}
 
 			roles_len = sqlite3_column_bytes(
-			    qry_cert_get.stmt,
-			    qry_cert_get.o_roles);
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_roles);
 			if (roles_len > 0) {
 				if ((ce.roles_sz = strlist_split(&ce.roles,
-				    sqlite3_column_blob(qry_cert_get.stmt,
-				    qry_cert_get.o_roles), roles_len, ',')) == -1) {
+				    sqlite3_column_blob(qry_find_certs.stmt,
+				    qry_find_certs.o_roles),
+				    roles_len, ',')) == -1) {
 					status = XERRF(e, XLOG_ERRNO,
 					    errno, "malloc");
 					goto end;
