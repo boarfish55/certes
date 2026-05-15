@@ -41,5 +41,6 @@ int             cert_gen_crl(struct xerr *);
 int             cert_copy_extension(X509 *, X509_REQ *, int, struct xerr *);
 int             cert_req_foreach_san(X509_REQ *, int(*)(const char *, void *),
                     void *, struct xerr *);
+int             cert_authority_cn_sane(const char *);
 
 #endif

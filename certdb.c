@@ -449,22 +449,21 @@ certdb_get_bootstrap(const uint8_t *bootstrap_key, size_t bootstrap_key_sz,
 
 	switch ((r = sqlite3_step(qry_bootstrap_get.stmt))) {
 	case SQLITE_ROW:
-                break;
-        case SQLITE_DONE:
-                XERRF(e, XLOG_APP, XLOG_NOTFOUND,
-                    "sqlite3_step: entry not found, bootstrap_key=%s",
-		    bootstrap_key);
-                goto fail;
-        case SQLITE_BUSY:
-                XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
-                goto fail;
-        case SQLITE_MISUSE:
-        case SQLITE_ERROR:
-        default:
-                XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
-                    sqlite3_errmsg(db), r);
-                goto fail;
-        }
+		break;
+	case SQLITE_DONE:
+		XERRF(e, XLOG_APP, XLOG_NOTFOUND,
+		    "sqlite3_step: bootstrap_key entry not found");
+		goto fail;
+	case SQLITE_BUSY:
+		XERRF(e, XLOG_APP, XLOG_BUSY, "sqlite3_step");
+		goto fail;
+	case SQLITE_MISUSE:
+	case SQLITE_ERROR:
+	default:
+		XERRF(e, XLOG_DB, r, "sqlite3_step: %s (%d)",
+		    sqlite3_errmsg(db), r);
+		goto fail;
+	}
 
 	be->flags = (uint32_t)sqlite3_column_int(
 	    qry_bootstrap_get.stmt,
@@ -954,24 +953,27 @@ certdb_find_certs(const char *pattern,
 			}
 
 			sans_len = sqlite3_column_bytes(
-			    qry_cert_get.stmt,
-			    qry_cert_get.o_sans);
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_sans);
 			if (sans_len > 0) {
 				if ((ce.sans_sz = strlist_split(&ce.sans,
-				    sqlite3_column_blob(qry_cert_get.stmt,
-				    qry_cert_get.o_sans), sans_len, ',')) == -1) {
-					status = XERRF(e, XLOG_ERRNO, errno, "malloc");
+				    sqlite3_column_blob(qry_find_certs.stmt,
+				    qry_find_certs.o_sans),
+				    sans_len, ',')) == -1) {
+					status = XERRF(e, XLOG_ERRNO,
+					    errno, "malloc");
 					goto end;
 				}
 			}
 
 			roles_len = sqlite3_column_bytes(
-			    qry_cert_get.stmt,
-			    qry_cert_get.o_roles);
+			    qry_find_certs.stmt,
+			    qry_find_certs.o_roles);
 			if (roles_len > 0) {
 				if ((ce.roles_sz = strlist_split(&ce.roles,
-				    sqlite3_column_blob(qry_cert_get.stmt,
-				    qry_cert_get.o_roles), roles_len, ',')) == -1) {
+				    sqlite3_column_blob(qry_find_certs.stmt,
+				    qry_find_certs.o_roles),
+				    roles_len, ',')) == -1) {
 					status = XERRF(e, XLOG_ERRNO,
 					    errno, "malloc");
 					goto end;

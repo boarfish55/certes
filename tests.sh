@@ -147,7 +147,7 @@ EOF
 serial=`cat $basedir/ca/serial`
 ./setup_ca.sh -s $cnf -c $authority_basedir/certes.conf \
 	-d $authority_basedir -O "Example Org" -C Authority1 \
-	ca-reqs DNS:authority1.example.com
+	ca-reqs DNS:authority1.example.com,DNS:localhost
 
 ./setup_ca.sh -y -s $cnf -d $basedir \
 	sign-ca-req < $authority_basedir/ca_req.pem

@@ -139,12 +139,12 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 	timeout = uv[4].v.u32;
 	flags = uv[5].v.u32;
 
-	if ((sans = malloc(sizeof(char *) * sans_sz)) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((sans = calloc(sans_sz, sizeof(char *))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
-	if ((roles = malloc(sizeof(char *) * (roles_sz + 1))) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((roles = calloc(roles_sz + 1, sizeof(char *))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 
@@ -243,12 +243,12 @@ authority_role_san_mod(int role, struct mdrd_besession *sess, struct umdr *m,
 	serial = uv[0].v.s.bytes;
 	add_sz = umdr_vec_alen(&uv[1].v.as);
 	del_sz = umdr_vec_alen(&uv[2].v.as);
-	if ((add = malloc(sizeof(char *) * (add_sz + 1))) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((add = calloc(add_sz + 1, sizeof(char *))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
-	if ((del = malloc(sizeof(char *) * (del_sz + 1))) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((del = calloc(del_sz + 1, sizeof(char *))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 	if (umdr_vec_as(&uv[1].v.as, add, add_sz + 1) == MDR_FAIL) {
@@ -736,6 +736,15 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 		goto befail;
 	}
 
+	if (!SSL_set1_host(ssl, challenge_host)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_set1_host");
+		goto befail;
+	}
+	if (!SSL_set_tlsext_host_name(ssl, challenge_host)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_set_tlsext_host_name");
+		goto befail;
+	}
+
 	SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
 	BIO_set_conn_hostname(bio, challenge_host);
 	BIO_set_conn_port(bio, port);
@@ -771,26 +780,19 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	pv[0].v.s = op_id;
 	pv[1].type = MDR_B;
 	pv[1].v.b.bytes = cs->challenge;
-	pv[1].v.b.sz = sizeof(cs->challenge);
+	pv[1].v.b.sz = CERTES_CHALLENGE_LENGTH;
 	if (pmdr_pack(&pm,
 	    (dcv == MDR_DCV_CERTES_BOOTSTRAP_DIALBACK)
 	    ? msg_bootstrap_dialback
 	    : msg_cert_renew_dialback,
 	    pv, PMDRVECLEN(pv)) == MDR_FAIL) {
-		status = -1;
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
-		XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/dialback");
+		status = XERRF(e, XLOG_ERRNO, errno, "pmdr_pack/dialback");
 	} else if ((r = BIO_write(bio, pmdr_buf(&pm), pmdr_size(&pm))) == -1) {
-		status = -1;
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "error during dialback write");
-		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
-	} else if (r < pmdr_size(&pm)) {
-		status = -1;
-		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
-		    "short write during dialback");
-		XERRF(e, XLOG_APP, XLOG_SHORTIO, "BIO_write");
+		status = XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_write");
 	}
 
 	BIO_flush(bio);
@@ -937,6 +939,7 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 	int             i, status = 0;
 	int             sz;
 	uint8_t        *p, *der;
+	uint32_t        be32;
 
 	*der_chain = NULL;
 	*chain_sz = 0;
@@ -981,7 +984,8 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 			    "i2d_X509");
 			goto end;
 		}
-		*((uint32_t *)p) = htobe32(sz);
+		be32 = htobe32(sz);
+		memcpy(p, &be32, sizeof(be32));
 		p += sizeof(uint32_t);
 		memcpy(p, der, sz);
 		p += sz;
@@ -996,8 +1000,9 @@ static int
 pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
     struct xerr *e)
 {
-	int      sz;
-	uint8_t *p, *der;
+	int       sz;
+	uint8_t  *p, *der;
+	uint32_t  be32;
 
 	*der_chain = NULL;
 	*chain_sz = 0;
@@ -1023,7 +1028,8 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
 	}
 
-	*((uint32_t *)p) = htobe32(sz);
+	be32 = htobe32(sz);
+	memcpy(p, &be32, sizeof(be32));
 	p += sizeof(uint32_t);
 	memcpy(p, der, sz);
 	free(der);
@@ -1118,8 +1124,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 		    "client failed challenge");
 	}
 
-	if (memcmp(cs->challenge, uv[1].v.b.bytes,
-	    MIN(sizeof(cs->challenge), uv[1].v.b.sz)) != 0) {
+	if (CRYPTO_memcmp(cs->challenge, uv[1].v.b.bytes,
+	    MIN(CERTES_CHALLENGE_LENGTH, uv[1].v.b.sz)) != 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "failed challenge");
 		return XERRF(e, XLOG_APP, XLOG_DENIED,
@@ -1264,8 +1270,8 @@ authority_cert_renew_answer(struct mdrd_besession *sess, struct umdr *msg,
 		    "client failed challenge");
 	}
 
-	if (memcmp(cs->challenge, uv[1].v.b.bytes,
-	    MIN(sizeof(cs->challenge), uv[1].v.b.sz)) != 0) {
+	if (CRYPTO_memcmp(cs->challenge, uv[1].v.b.bytes,
+	    MIN(CERTES_CHALLENGE_LENGTH, uv[1].v.b.sz)) != 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "failed challenge");
 		return XERRF(e, XLOG_APP, XLOG_DENIED,
@@ -1505,21 +1511,21 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 		goto fail;
 	}
 
-	if ((issuers = malloc(sizeof(char *) * crl_count)) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((issuers = calloc(crl_count, sizeof(char *))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
-	if ((last_updates = malloc(sizeof(uint64_t) * crl_count)) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((last_updates = calloc(crl_count, sizeof(uint64_t))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 
-	if ((upd_issuers = malloc(sizeof(char *) * crl_count)) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((upd_issuers = calloc(crl_count, sizeof(char *))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
-	if ((upd_crl_sizes = malloc(sizeof(uint32_t) * crl_count)) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((upd_crl_sizes = calloc(crl_count, sizeof(uint32_t))) == NULL) {
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 
@@ -1658,8 +1664,8 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	req_flags = uv[5].v.u32;
 
 	if (roles_sz > 0) {
-		if ((roles = malloc(sizeof(char *) * roles_sz)) == NULL) {
-			XERRF(e, XLOG_ERRNO, errno, "malloc");
+		if ((roles = calloc(roles_sz, sizeof(char *))) == NULL) {
+			XERRF(e, XLOG_ERRNO, errno, "calloc");
 			goto fail;
 		}
 		if (umdr_vec_as(&uv[3].v.as, roles, roles_sz) == MDR_FAIL) {
@@ -1668,8 +1674,8 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		}
 	}
 	if (sans_sz > 0) {
-		if ((sans = malloc(sizeof(char *) * sans_sz)) == NULL) {
-			XERRF(e, XLOG_ERRNO, errno, "malloc");
+		if ((sans = calloc(sans_sz, sizeof(char *))) == NULL) {
+			XERRF(e, XLOG_ERRNO, errno, "calloc");
 			goto fail;
 		}
 		if (umdr_vec_as(&uv[4].v.as, sans, sans_sz) == MDR_FAIL) {

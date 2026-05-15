@@ -318,8 +318,8 @@ agent_run(int lsock, struct xerr *e)
 	void          *tmp;
 	int            status = 0;
 
-	if ((fds = malloc(sizeof(struct pollfd) * fds_sz)) == NULL)
-		return XERRF(e, XLOG_ERRNO, errno, "malloc");
+	if ((fds = calloc(fds_sz, sizeof(struct pollfd))) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "calloc");
 
 	for (;;) {
 		fds[0].fd = lsock;
@@ -357,7 +357,9 @@ agent_run(int lsock, struct xerr *e)
 			/* Handle our listening socket for new clients. */
 			if (fds[i].fd == lsock) {
 				if (client_tree_sz >= fds_sz) {
-					tmp = realloc(fds, client_tree_sz + 32);
+					tmp = reallocarray(fds,
+					    (client_tree_sz + 32),
+					    sizeof(struct pollfd));
 					if (tmp == NULL) {
 						xlog_strerror(LOG_ERR, errno,
 						    "%s: realloc", __func__);
@@ -512,7 +514,7 @@ agent_run(int lsock, struct xerr *e)
 static struct authop *
 authop_new(enum authop_type type, const char *peer, struct xerr *e)
 {
-	char            host[302];
+	char            host[302], *p;
 	int             fd;
 	struct timeval  timeout;
 	SSL            *ssl = NULL;
@@ -526,13 +528,24 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 	}
 	bzero(op, sizeof(*op));
 
+	if ((op->bio = BIO_new_ssl_connect(ssl_ctx)) == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new_ssl_connect");
+		goto fail;
+	}
+
+	BIO_get_ssl(op->bio, &ssl);
+	if (ssl == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_get_ssl");
+		goto fail;
+	}
+	SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
+
 	if (peer == NULL) {
 		if (certes_conf.authority_fqdn[0] == '\0') {
 			XERRF(e, XLOG_APP, XLOG_INVALID,
 			    "no destination address was specified");
 			goto fail;
 		}
-
 		if (snprintf(host, sizeof(host), "%s:%llu",
 		    certes_conf.authority_fqdn,
 		    certes_conf.authority_port) >= sizeof(host)) {
@@ -550,19 +563,20 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 	} else
 		strlcpy(host, peer, sizeof(host));
 
-	if ((op->bio = BIO_new_ssl_connect(ssl_ctx)) == NULL) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_new_ssl_connect");
-		goto fail;
-	}
-
-	BIO_get_ssl(op->bio, &ssl);
-	if (ssl == NULL) {
-		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_get_ssl");
-		goto fail;
-	}
-
-	SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
 	BIO_set_conn_hostname(op->bio, host);
+	// TODO: eventually add X509_VERIFY_PARAM_set1_ip_asc for IP-literal
+	// targets
+	if ((p = strrchr(host, ':')) != NULL)
+		*p = '\0';
+
+	if (!SSL_set1_host(ssl, host)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_set1_host");
+		goto fail;
+	}
+	if (!SSL_set_tlsext_host_name(ssl, host)) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "SSL_set_tlsext_host_name");
+		goto fail;
+	}
 
 	if (BIO_do_connect(op->bio) <= 0) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BIO_do_connect");
@@ -634,7 +648,8 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 
 	return op;
 fail:
-	BIO_free(op->bio);
+	if (op->bio != NULL)
+		BIO_free(op->bio);
 	free(op);
 	return NULL;
 }
@@ -741,6 +756,7 @@ agent_bootstrap(struct xerr *e)
 	int                  req_len;
 	int                  sockfd;
 	struct sockaddr_in6  addr;
+	const char          *in;
 	socklen_t            slen = sizeof(addr);
 	char                 ip6[INET6_ADDRSTRLEN];
 	struct umdr          um;
@@ -779,10 +795,17 @@ agent_bootstrap(struct xerr *e)
 		    "sock name does not fit in sockaddr");
 		goto fail;
 	}
-	if (inet_ntop(addr.sin6_family, &addr, ip6, slen) == NULL) {
+	if (addr.sin6_family == AF_INET6)
+		in = inet_ntop(AF_INET6, &addr.sin6_addr, ip6, sizeof(ip6));
+	else
+		in = inet_ntop(AF_INET,
+		    &((struct sockaddr_in *)&addr)->sin_addr, ip6, sizeof(ip6));
+
+	if (in == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "inet_ntop");
 		goto fail;
 	}
+
 	if (cert_new_selfreq(key, X509_get_subject_name(cert), ip6, &req_buf,
 	    &req_len, xerrz(e)) == -1) {
 		XERR_PREPENDFN(e);
@@ -1046,9 +1069,9 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 	xlog(LOG_NOTICE, NULL, "%s: %u CRLs to update",
 	    __func__, crl_count);
 
-	crl_sizes = malloc(sizeof(uint32_t) * crl_count);
+	crl_sizes = calloc(crl_count, sizeof(uint32_t));
 	if (crl_sizes == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 
@@ -1074,6 +1097,12 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 		    issuer_cn, sizeof(issuer_cn)) < 0) {
 			XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "X509_NAME_get_text_by_NID");
+			goto fail;
+		}
+
+		if (!cert_authority_cn_sane(issuer_cn)) {
+			XERRF(e, XLOG_APP, XLOG_INVALID, "authority CN "
+			    "contains dubious characters: %s", issuer_cn);
 			goto fail;
 		}
 
@@ -1269,8 +1298,18 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	der_chain_sz = uv[2].v.b.sz;
 
 	for (dp = der_chain; dp - der_chain < der_chain_sz; ) {
-		der_sz = be32toh(*(uint32_t *)dp);
+		if (der_chain_sz - (dp - der_chain) < sizeof(uint32_t)) {
+			XERRF(e, XLOG_APP, XLOG_BADMSG, "corrupted DER chain");
+			goto fail;
+		}
+		memcpy(&der_sz, dp, sizeof(uint32_t));
+		der_sz = be32toh(der_sz);
 		dp += sizeof(uint32_t);
+		if (der_chain_sz - (dp - der_chain) < der_sz) {
+			XERRF(e, XLOG_APP, XLOG_BADMSG,
+			    "DER size exceeds our byte field length");
+			goto fail;
+		}
 		icrt = d2i_X509(NULL, &dp, der_sz);
 		/* dp is incremented */
 		if (icrt == NULL) {
@@ -1879,8 +1918,14 @@ agent_cli_sign_req(int argc, char **argv)
 	der_chain_sz = uv[2].v.b.sz;
 
 	for (dp = der_chain; dp - der_chain < der_chain_sz; ) {
-		der_sz = be32toh(*(uint32_t *)dp);
+		if (der_chain_sz - (dp - der_chain) < sizeof(uint32_t))
+			errx(1, "corrupted DER chain");
+		memcpy(&der_sz, dp, sizeof(uint32_t));
+		der_sz = be32toh(der_sz);
 		dp += sizeof(uint32_t);
+		if (der_chain_sz - (dp - der_chain) < der_sz)
+			errx(1, "DER size exceeds our byte field length");
+
 		icrt = d2i_X509(NULL, &dp, der_sz);
 		/* dp is incremented */
 		if (icrt == NULL) {
@@ -2336,11 +2381,11 @@ agent_cli_cert(int argc, char **argv)
 			errx(1, "msg_cert_find_answer: not all arrays "
 			    "are same length; invalid response");
 
-		serials = malloc(sizeof(char *) * (serials_sz + 1));
-		subjects = malloc(sizeof(char *) * (subjects_sz + 1));
-		find_flags = malloc(sizeof(uint32_t) * find_flags_sz);
+		serials = calloc(serials_sz + 1, sizeof(char *));
+		subjects = calloc(subjects_sz + 1, sizeof(char *));
+		find_flags = calloc(find_flags_sz, sizeof(uint32_t));
 		if (serials == NULL || subjects == NULL || find_flags == NULL)
-			err(1, "malloc");
+			err(1, "calloc");
 
 		if (umdr_vec_as(&uv[0].v.as, serials, serials_sz + 1)
 		    == MDR_FAIL)
@@ -2682,22 +2727,22 @@ load_crls(struct xerr *e)
 	}
 	rewinddir(d);
 
-	last_updates = malloc(count * sizeof(time_t));
+	last_updates = calloc(count, sizeof(time_t));
 	if (last_updates == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
-	issuers = malloc(count * (sizeof(char *) + 256));
+	issuers = calloc(count, sizeof(char *) + 256);
 	if (issuers == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 	for (i = 0; i < count; i++)
 		issuers[i] = ((char *)issuers + (count * sizeof(char *))) +
 		    (i * 256);
-	crls = malloc(count * sizeof(X509_CRL *));
+	crls = calloc(count, sizeof(X509_CRL *));
 	if (crls == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "malloc");
+		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
 
@@ -2913,7 +2958,8 @@ agent_start(struct xerr *e)
 	if (null_fd > 2)
 		close(null_fd);
 
-	if (xlog_init(CERTES_AGENT_PROGNAME, NULL, NULL, 0) == -1) {
+	if (xlog_init2(CERTES_AGENT_PROGNAME, LOG_DAEMON,
+	    NULL, NULL, 0) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: xlog_init", __func__);
 		exit(1);
 	}
