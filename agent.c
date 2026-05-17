@@ -637,7 +637,7 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 
 	op->type = type;
 	clock_gettime(CLOCK_MONOTONIC, &op->created_at);
-	if (snprintf(op->id, sizeof(op->id), "%llu-%lld.%lu",
+	if (snprintf(op->id, sizeof(op->id), "%llu-%lld.%ld",
 	    (unsigned long long)next_authop_id,
 	    (long long int)op->created_at.tv_sec,
 	    op->created_at.tv_nsec) >= sizeof(op->id)) {
