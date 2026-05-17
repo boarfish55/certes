@@ -708,6 +708,7 @@ load_crl(const char *crl_path, struct xerr *e)
 	fclose(f);
 
 	if (!X509_STORE_add_crl(store, crl)) {
+		X509_CRL_free(crl);
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_STORE_add_crl");
 		return NULL;
 	}
@@ -1348,8 +1349,10 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 
 	return 0;
 fail:
-	if (crt != NULL)
+	if (crt != NULL) {
 		X509_free(crt);
+		cert = NULL;
+	}
 	if (f != NULL) {
 		fclose(f);
 		unlink(tmpfile);
@@ -1937,6 +1940,7 @@ agent_cli_sign_req(int argc, char **argv)
 			ERR_print_errors_fp(stderr);
 			exit(1);
 		}
+		X509_free(icrt);
 	}
 
 	fclose(f);
@@ -2680,6 +2684,7 @@ free_loaded_crls()
 		for (i = 0; i < loaded_crls.count; i++)
 			X509_CRL_free(loaded_crls.crls[i]);
 		free(loaded_crls.crls);
+		loaded_crls.count = 0;
 	}
 }
 

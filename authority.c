@@ -695,7 +695,8 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	int                    r, status = 0;
 	struct certes_session *cs = (struct certes_session *)sess->data;
 
-	if ((cs->challenge = malloc(CERTES_CHALLENGE_LENGTH)) == NULL) {
+	if (cs->challenge == NULL &&
+	    (cs->challenge = malloc(CERTES_CHALLENGE_LENGTH)) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto befail;
 	}
@@ -902,8 +903,8 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 		goto fail;
 	}
 
-	if ((cs->bootstrap_key = malloc(CERTES_BOOTSTRAP_KEY_LENGTH))
-	    == NULL) {
+	if (cs->bootstrap_key == NULL &&
+	    (cs->bootstrap_key = malloc(CERTES_BOOTSTRAP_KEY_LENGTH)) == NULL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
@@ -980,6 +981,7 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 		sz = i2d_X509(c, &der);
 		if (sz < 0) {
 			free(*der_chain);
+			*der_chain = NULL;
 			status = XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "i2d_X509");
 			goto end;
@@ -1025,6 +1027,7 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 	sz = i2d_X509(agent_cert(), &der);
 	if (sz < 0) {
 		free(*der_chain);
+		*der_chain = NULL;
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
 	}
 
@@ -1142,7 +1145,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	    CERTES_BOOTSTRAP_KEY_LENGTH, e)) == NULL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "no such bootstrap entry");
-		return XERR_PREPENDFN(e);
+		XERR_PREPENDFN(e);
+		goto fail;
 	}
 
 	crt = cert_sign_req(cs->req,
@@ -1226,7 +1230,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 fail:
 	if (in_txn && certdb_rollback_txn(xerrz(&e2)) == -1)
 		xlog(LOG_ERR, &e2, __func__);
-	certdb_bootstrap_free(be);
+	if (be != NULL)
+		certdb_bootstrap_free(be);
 	free(crt_buf);
 	if (crt != NULL)
 		X509_free(crt);
@@ -1798,5 +1803,6 @@ fail_no_reply:
 	free(roles);
 	free(sans);
 	free(der_chain);
+	free(der);
 	return -1;
 }
