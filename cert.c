@@ -1078,7 +1078,7 @@ cert_new_selfreq(EVP_PKEY *key, const X509_NAME *subject, const char *ip6,
 	free(sans);
 	return 0;
 fail:
-	if (exts == NULL)
+	if (exts != NULL)
 		sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
 	X509_REQ_free(req);
 	if (sans != NULL)
