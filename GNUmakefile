@@ -1,8 +1,8 @@
 CC := gcc
 VERSION = 0.5.3
 DEPDIR := .deps
-CFLAGS := -Wall -g -fstack-protector-strong -Wformat=0 \
-	  -Wdeprecated-declarations -fstack-clash-protection -fcf-protection \
+CFLAGS := -Wall -g -fstack-protector-strong -DOPENSSL_API_COMPAT=0x10101000L \
+	  -fstack-clash-protection -fcf-protection \
 	  $(shell pkg-config --cflags libbsd-overlay libbsd-ctor mdr flatconf)
 LDFLAGS := $(shell pkg-config --libs libbsd-overlay libbsd-ctor \
 	   libcrypto libssl sqlite3 mdr flatconf) \

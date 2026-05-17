@@ -861,6 +861,8 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 		return XERR_PREPENDFN(e);
 	}
 
+	if (cs->req != NULL)
+		X509_REQ_free(cs->req);
 	cs->req = d2i_X509_REQ(NULL, (const unsigned char **)&uv[2].v.b.bytes,
 	    uv[2].v.b.sz);
 	if (cs->req == NULL) {
@@ -1638,6 +1640,7 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	struct xerr        e2;
 	struct tm          tm;
 	struct cert_entry  ce;
+	int                in_txn = 0;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
@@ -1703,6 +1706,7 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	in_txn = 1;
 
 	clock_gettime(CLOCK_REALTIME, &now);
 	crt = cert_sign_req(req, NULL, now.tv_sec, now.tv_sec + cert_validity,
@@ -1711,8 +1715,6 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	    "clientAuth,serverAuth" :
 	    "clientAuth", xerrz(e));
 	if (crt == NULL) {
-		if (certdb_rollback_txn(xerrz(&e2)) == -1)
-			xlog(LOG_ERR, &e2, __func__);
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
@@ -1759,6 +1761,7 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	in_txn = 0;
 
 	if (pack_intermediates(crt, &der_chain, &der_chain_sz,
 	    xerrz(e)) == -1) {
@@ -1796,6 +1799,9 @@ fail:
 	mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 	    "backend failure");
 fail_no_reply:
+	if (in_txn)
+		if (certdb_rollback_txn(xerrz(&e2)) == -1)
+			xlog(LOG_ERR, &e2, __func__);
 	if (crt != NULL)
 		X509_free(crt);
 	if (req != NULL)

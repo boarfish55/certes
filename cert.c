@@ -198,12 +198,12 @@ has_role(const char *role, void *args)
 int
 cert_has_role(X509 *crt, const char *role, struct xerr *e)
 {
-	int                  r;
 	struct has_role_args a = { role, 0 };
 
-	r = cert_foreach_role(crt, &has_role, &a, xerrz(e));
-	if (r == -1 && !xerr_is(e, XLOG_APP, XLOG_NOTFOUND))
-		return XERR_PREPENDFN(e);
+	if (cert_foreach_role(crt, &has_role, &a, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return 0;
+	}
 	return a.found;
 }
 
@@ -349,12 +349,12 @@ has_san(const char *san, void *args)
 int
 cert_has_san(X509 *crt, const char *san, struct xerr *e)
 {
-	int                 r;
 	struct has_san_args a = { san, 0 };
 
-	r = cert_foreach_san(crt, &has_san, &a, xerrz(e));
-	if (r == -1)
-		return XERR_PREPENDFN(e);
+	if (cert_foreach_san(crt, &has_san, &a, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return 0;
+	}
 	return a.found;
 }
 
@@ -1167,12 +1167,13 @@ cert_new_privkey(struct xerr *e)
 		goto fail;
 	}
 	save_umask = umask(022);
-	if ((f = fopen(certes_conf.cert_file, "w")) == NULL) {
+	f = fopen(certes_conf.cert_file, "w");
+	umask(save_umask);
+	if (f  == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fdopen: %s",
 		    certes_conf.cert_file);
 		goto fail;
 	}
-	umask(save_umask);
 	if (!PEM_write_X509(f, selfcrt)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
 		fclose(f);

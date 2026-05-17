@@ -632,7 +632,7 @@ main(int argc, char **argv)
 		}
 		if (strcmp(argv[opt], "-config") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				usage();
 				exit(1);
 			}

@@ -548,14 +548,16 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 		}
 		if (snprintf(host, sizeof(host), "%s:%llu",
 		    certes_conf.authority_fqdn,
-		    certes_conf.authority_port) >= sizeof(host)) {
+		    (unsigned long long)certes_conf.authority_port)
+		    >= sizeof(host)) {
 			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "resulting host:port is too long");
 			goto fail;
 		}
 	} else if (strstr(peer, ":") == NULL) {
 		if (snprintf(host, sizeof(host), "%s:%llu",
-		    peer, certes_conf.authority_port) >= sizeof(host)) {
+		    peer, (unsigned long long)certes_conf.authority_port)
+		    >= sizeof(host)) {
 			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "resulting host:port is too long");
 			goto fail;
@@ -636,8 +638,9 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 	op->type = type;
 	clock_gettime(CLOCK_MONOTONIC, &op->created_at);
 	if (snprintf(op->id, sizeof(op->id), "%llu-%lld.%lu",
-	    next_authop_id, op->created_at.tv_sec, op->created_at.tv_nsec)
-	    >= sizeof(op->id)) {
+	    (unsigned long long)next_authop_id,
+	    (long long int)op->created_at.tv_sec,
+	    op->created_at.tv_nsec) >= sizeof(op->id)) {
 		XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 		    "resulting authop id too long; this is a bug");
 		goto fail;
@@ -1284,11 +1287,12 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	}
 
 	save_umask = umask(022);
-	if ((f = fopen(tmpfile, "w")) == NULL) {
+	f = fopen(tmpfile, "w");
+	umask(save_umask);
+	if (f == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fopen: %s", tmpfile);
 		goto fail;
 	}
-	umask(save_umask);
 
 	if (PEM_write_X509(f, crt) == 0) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
@@ -1527,7 +1531,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-timeout") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				bootstrap_setup_usage();
 				exit(1);
 			}
@@ -1537,7 +1541,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-cert_expiry") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				bootstrap_setup_usage();
 				exit(1);
 			}
@@ -1547,7 +1551,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-san") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				bootstrap_setup_usage();
 				exit(1);
 			}
@@ -1560,7 +1564,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-cn") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				bootstrap_setup_usage();
 				exit(1);
 			}
@@ -1571,7 +1575,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-role") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				bootstrap_setup_usage();
 				exit(1);
 			}
@@ -1733,7 +1737,7 @@ agent_cli_sign_req(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-out") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				sign_req_usage();
 				exit(1);
 			}
@@ -1743,7 +1747,7 @@ agent_cli_sign_req(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-in") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				sign_req_usage();
 				exit(1);
 			}
@@ -1753,7 +1757,7 @@ agent_cli_sign_req(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-cert_expiry") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				sign_req_usage();
 				exit(1);
 			}
@@ -1762,7 +1766,7 @@ agent_cli_sign_req(int argc, char **argv)
 		}
 
 		if (strcmp(argv[opt], "-copy_sans") == 0) {
-			if (opt > argc) {
+			if (opt >= argc) {
 				sign_req_usage();
 				exit(1);
 			}
@@ -1771,7 +1775,7 @@ agent_cli_sign_req(int argc, char **argv)
 		}
 
 		if (strcmp(argv[opt], "-server_auth") == 0) {
-			if (opt > argc) {
+			if (opt >= argc) {
 				sign_req_usage();
 				exit(1);
 			}
@@ -1781,7 +1785,7 @@ agent_cli_sign_req(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-role") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				sign_req_usage();
 				exit(1);
 			}
@@ -1981,7 +1985,7 @@ agent_cli_revoke(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-serial") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				revoke_usage();
 				exit(1);
 			}
@@ -2128,7 +2132,7 @@ agent_cli_role_sans(int role, int argc, char **argv)
 
 		if (strcmp(argv[opt], "-add") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				role_san_usage(role);
 				exit(1);
 			}
@@ -2141,7 +2145,7 @@ agent_cli_role_sans(int role, int argc, char **argv)
 
 		if (strcmp(argv[opt], "-del") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				role_san_usage(role);
 				exit(1);
 			}
@@ -2154,7 +2158,7 @@ agent_cli_role_sans(int role, int argc, char **argv)
 
 		if (strcmp(argv[opt], "-serial") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				role_san_usage(role);
 				exit(1);
 			}
@@ -2289,7 +2293,7 @@ agent_cli_cert(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-serial") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				cli_cert_usage();
 				exit(1);
 			}
@@ -2299,7 +2303,7 @@ agent_cli_cert(int argc, char **argv)
 
 		if (strcmp(argv[opt], "-find") == 0) {
 			opt++;
-			if (opt > argc) {
+			if (opt >= argc) {
 				cli_cert_usage();
 				exit(1);
 			}
@@ -2766,8 +2770,11 @@ load_crls(struct xerr *e)
 		if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
 			continue;
 
-		snprintf(crl_path, sizeof(crl_path), "%s/%s",
-		    certes_conf.crl_path, de->d_name);
+		if (snprintf(crl_path, sizeof(crl_path), "%s/%s",
+		    certes_conf.crl_path, de->d_name) >= sizeof(crl_path)) {
+			XERRF(e, XLOG_ALL, XLOG_OVERFLOW, "crl_path too long");
+			goto fail;
+		}
 		if ((crl = load_crl(crl_path, xerrz(e))) == NULL) {
 			XERR_PREPENDFN(e);
 			goto fail;
