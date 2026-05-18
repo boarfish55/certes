@@ -1,12 +1,17 @@
 #!/usr/bin/make -f
+
 export DH_VERBOSE = 1
 export DH_OPTIONS=-v
  
 # see FEATURE AREAS in dpkg-buildflags(1)
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+DESTDIR = debian/tmp/usr
  
 %:
 	dh $@
  
+override_dh_auto_build:
+	make EXTRA_CFLAGS="-O2 -D_FORTIFY_SOURCE=2"
+
 override_dh_auto_install:
-	dh_auto_install -- prefix=/usr
+	dh_auto_install --destdir=debian/tmp/usr
