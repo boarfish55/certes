@@ -1,5 +1,5 @@
 CC := gcc
-VERSION = 0.5.6
+VERSION = 0.5.7
 DEPDIR := .deps
 CFLAGS := -Wall -g -fstack-protector-strong -DOPENSSL_API_COMPAT=0x10101000L \
 	  -fstack-clash-protection -fcf-protection \
