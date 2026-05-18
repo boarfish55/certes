@@ -2608,8 +2608,7 @@ agent_init_ctx(struct xerr *e)
 	f = NULL;
 
 	is_authority = cert_has_role(cert, ROLE_AUTHORITY, xerrz(e));
-	if (!xerr_is(e, XLOG_APP, XLOG_NOTFOUND) &&
-	    !xerr_is(e, XLOG_NONE, XLOG_SUCCESS)) {
+	if (xerr_fail(e) && !xerr_is(e, XLOG_APP, XLOG_NOTFOUND)) {
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
@@ -2661,10 +2660,14 @@ agent_init_ctx(struct xerr *e)
 fail:
 	if (f != NULL)
 		fclose(f);
-	if (cert != NULL)
+	if (cert != NULL) {
 		X509_free(cert);
-	if (store != NULL)
+		cert = NULL;
+	}
+	if (store != NULL) {
 		X509_STORE_free(store);
+		store = NULL;
+	}
 	return -1;
 }
 

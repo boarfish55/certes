@@ -105,7 +105,7 @@ if [ -x /usr/bin/valgrind -a "$USE_VALGRIND" = "yes" ]; then
 backend_argv = [
 	"/usr/bin/valgrind"
 	"--log-file=$authority_basedir/valgrind.%p.out"
-	"--keep-stacktraces=none"
+	"--keep-stacktraces=alloc-and-free"
 	"--leak-check=full"
 	"--track-origins=yes"
 	"--show-leak-kinds=definite,possible,indirect"
@@ -245,7 +245,7 @@ if [ -x /usr/bin/valgrind -a "$USE_VALGRIND" = "yes" ]; then
 backend_argv = [
 	"/usr/bin/valgrind"
 	"--log-file=$client_basedir/valgrind.%p.out"
-	"--keep-stacktraces=none"
+	"--keep-stacktraces=alloc-and-free"
 	"--leak-check=full"
 	"--track-origins=yes"
 	"--show-leak-kinds=definite,possible,indirect"
