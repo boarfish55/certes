@@ -1567,7 +1567,8 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 		/*
 		 * Compare client's CRLs against the ones we have in-memory.
 		 * If the client's last update for a CRL is older than ours,
-		 * we update it. If we don't find the issuer, we 
+		 * we update it. If we don't find the issuer, we send it as
+		 * well.
 		 */
 		for (j = 0; j < crl_count; j++) {
 			if (strcmp(loaded_crls->issuers[i], issuers[j]) != 0)
