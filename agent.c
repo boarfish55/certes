@@ -5,7 +5,6 @@
  */
 #include <arpa/inet.h>
 #include <sys/file.h>
-#include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -777,9 +776,13 @@ agent_bootstrap(struct xerr *e)
 		return XERRF(e, XLOG_APP, XLOG_INVALID,
 		    "bad bootstrap key format in configuration; bad length");
 
-	if (b64dec(bootstrap_key, sizeof(bootstrap_key),
-	    certes_conf.bootstrap_key) < sizeof(bootstrap_key))
+	r = b64dec(bootstrap_key, sizeof(bootstrap_key),
+	    certes_conf.bootstrap_key);
+	if (r == -1)
 		return XERRF(e, XLOG_ERRNO, errno, "b64dec");
+	if (r < sizeof(bootstrap_key))
+		return XERRF(e, XLOG_APP, XLOG_INVALID,
+		    "bootstrap_key is malformed");
 
 	if ((op = authop_new(AUTHOP_BOOTSTRAP, NULL, xerrz(e))) == NULL) {
 		cert_fetch_in_progress = 0;
@@ -1087,6 +1090,12 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 	for (i = 0, p = uv[2].v.b.bytes;
 	    i < crl_count && (p - (uint8_t *)uv[2].v.b.bytes) < uv[2].v.b.sz;
 	    i++) {
+		if (uv[2].v.b.sz - (p - (uint8_t *)uv[2].v.b.bytes)
+		    < crl_sizes[i]) {
+			XERRF(e, XLOG_APP, XLOG_BADMSG,
+			    "CRL size exceeds remaining bytes");
+			goto fail;
+		}
 		crl = d2i_X509_CRL(NULL, &p, crl_sizes[i]);
 		/* p is incremented */
 		if (crl == NULL) {
@@ -2481,10 +2490,8 @@ fail:
 static int
 agent_load_key(struct xerr *e)
 {
-	FILE          *f;
-#ifndef __OpenBSD__
-	int            pkey_sz;
-#endif
+	FILE *f;
+
 	if ((f = fopen(certes_conf.key_file, "r")) == NULL)
 		return XERRF(e, XLOG_ERRNO, errno, "fopen");
 	if ((key = PEM_read_PrivateKey(f, NULL, NULL, NULL)) == NULL) {
@@ -2493,20 +2500,7 @@ agent_load_key(struct xerr *e)
 		    "PEM_read_PrivateKey");
 	}
 	fclose(f);
-#ifndef __OpenBSD__
-	if (!(pkey_sz = EVP_PKEY_size(key))) {
-		EVP_PKEY_free(key);
-		key = NULL;
-		return XERRF(e, XLOG_SSL, ERR_get_error(), "EVP_PKEY_size");
-	}
 
-	/* pledge() doesn't allow mlock() */
-	if (mlock(key, pkey_sz) == -1) {
-		EVP_PKEY_free(key);
-		key = NULL;
-		return XERRF(e, XLOG_ERRNO, errno, "mlock");
-	}
-#endif
 	return 0;
 }
 
@@ -2618,7 +2612,8 @@ agent_init_ctx(struct xerr *e)
 	f = NULL;
 
 	is_authority = cert_has_role(cert, ROLE_AUTHORITY, xerrz(e));
-	if (is_authority == -1) {
+	if (!xerr_is(e, XLOG_APP, XLOG_NOTFOUND) &&
+	    !xerr_is(e, XLOG_NONE, XLOG_SUCCESS)) {
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
