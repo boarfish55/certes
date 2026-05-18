@@ -1247,7 +1247,7 @@ cert_authority_cn_sane(const char *cn)
 	int i, len;
 
 	for (i = 0, len = strlen(cn); i < len; i++) {
-		if (!isalnum(cn[i]) && cn[i] != '.')
+		if (!isalnum(cn[i]) && cn[i] != '.' && cn[i] != '-')
 			return 0;
 	}
 
