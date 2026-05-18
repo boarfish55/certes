@@ -1,5 +1,5 @@
 CC := gcc
-VERSION = 0.5.4
+VERSION = 0.5.5
 DEPDIR := .deps
 CFLAGS := -Wall -g -fstack-protector-strong -DOPENSSL_API_COMPAT=0x10101000L \
 	  -fstack-clash-protection -fcf-protection \
@@ -38,15 +38,15 @@ install: certes
 	mkdir -p ${DESTDIR}/share/man/man5
 	mkdir -p ${DESTDIR}/share/man/man8
 
-	install -m 0755 -s certes $(DESTDIR)/sbin/certes
-	install -m 0644 openssl.cnf $(DESTDIR)/share/certes
-	install -m 0755 setup_ca.sh $(DESTDIR)/share/certes
-	install -m 0644 README $(DESTDIR)/share/doc/certes
-	install -m 0644 LICENSE $(DESTDIR)/share/doc/certes
+	install -m 0755 -s certes ${DESTDIR}/sbin/certes
+	install -m 0644 openssl.cnf ${DESTDIR}/share/certes
+	install -m 0755 setup_ca.sh ${DESTDIR}/share/certes
+	install -m 0644 README ${DESTDIR}/share/doc/certes
+	install -m 0644 LICENSE ${DESTDIR}/share/doc/certes
 	install -m 0644 certes.conf.sample \
-		$(DESTDIR)/share/doc/certes/examples
+		${DESTDIR}/share/doc/certes/examples
 	install -m 0644 certes_authority.conf.sample \
-		$(DESTDIR)$share/doc/certes/examples
+		${DESTDIR}/share/doc/certes/examples
 	install -m 0644 man/*.5 ${DESTDIR}/share/man/man5/
 	install -m 0644 man/*.8 ${DESTDIR}/share/man/man8/
 
