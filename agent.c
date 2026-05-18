@@ -1354,18 +1354,14 @@ agent_recv_cert(struct authop *op, struct xerr *e)
 	X509_free(cert);
 	cert = crt;
 	if (SSL_CTX_use_certificate_chain_file(ssl_ctx,
-	    certes_conf.cert_file) != 1) {
-		XERRF(e, XLOG_SSL, ERR_get_error(),
+	    certes_conf.cert_file) != 1)
+		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "SSL_CTX_use_certificate_chain_file");
-		goto fail;
-	}
 
 	return 0;
 fail:
-	if (crt != NULL) {
+	if (crt != NULL)
 		X509_free(crt);
-		cert = NULL;
-	}
 	if (f != NULL) {
 		fclose(f);
 		unlink(tmpfile);
