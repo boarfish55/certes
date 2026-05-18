@@ -47,7 +47,7 @@ install: certes
 		${DESTDIR}/share/doc/certes/examples
 	install -m 0644 certes_authority.conf.sample \
 		${DESTDIR}/share/doc/certes/examples
-	install -m 0644 man/*.5 ${DESTDIR}/share/man/man5/
-	install -m 0644 man/*.8 ${DESTDIR}/share/man/man8/
+	install -m 0644 *.5 ${DESTDIR}/share/man/man5/
+	install -m 0644 *.8 ${DESTDIR}/share/man/man8/
 
 -include $(DEPDIR)/*
