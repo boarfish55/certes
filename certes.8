@@ -1,0 +1,363 @@
+.\" Copyright (c) 2026 Pascal Lalonde <plalonde@overnet.ca>
+.\"
+.\" SPDX-License-Identifier: ISC
+.\"
+.Dd $Mdocdate: May 17 2026 $
+.Dt CERTES 8
+.Os
+.Sh NAME
+.Nm certes
+.Nd certificate authority and role attributor
+.Sh SYNOPSIS
+.Nm certes
+.Op Fl debug
+.Op Fl config Ar path
+.Ar command
+.Op Ar arguments
+.Sh DESCRIPTION
+.Nm
+is an
+.Xr mdrd 8
+backend service that acts as a certificate authority and role attributor.
+It issues X.509 certificates carrying a custom
+.Dq roles
+extension, allowing services to grant privileges based on a client
+certificate's roles in addition to identity.
+.Pp
+The same binary runs in two modes:
+.Bl -tag -width Ds
+.It Sy authority
+The signing side, holding the CA key and the
+.Xr sqlite3 1
+certificate database.
+Run via
+.Nm mdrd
+using the
+.Cm mdrd-backend
+command.
+.It Sy agent
+A client that bootstraps against an authority to obtain a certificate
+and renews it automatically.
+Also run via
+.Nm mdrd
+using the
+.Cm mdrd-backend
+command.
+.El
+.Pp
+Subcommands not run via
+.Xr mdrd 8
+are administrative one-shots: bootstrap setup, certificate inspection,
+role and SAN modifications, revocation, request signing, and CRL refresh.
+.Sh OPTIONS
+.Bl -tag -width "-config path"
+.It Fl debug
+Do not fork; print errors to standard error.
+.It Fl config Ar path
+Use
+.Ar path
+as the configuration file instead of the default
+.Pa /etc/certes/certes.conf .
+The environment variable
+.Ev CERTES_CONF
+overrides the default but is itself overridden by this flag.
+.El
+.Sh COMMANDS
+.Bl -tag -width Ds
+.It Cm mdrd-backend
+Run as an
+.Xr mdrd 8
+backend.
+This is the long-running daemon mode used for both authority and agent
+roles; the role is inferred from the loaded certificate's
+.Dq roles
+extension.
+.It Cm init
+Generate the agent's initial private key and a temporary self-signed
+certificate.
+Required once per agent before
+.Xr mdrd 8
+can start the backend.
+On subsequent startups the agent uses the existing key and the
+authority-signed certificate written during bootstrap.
+.It Cm init-db
+Create the authority's certificate database and exit.
+Run once on the authority host before starting
+.Xr mdrd 8 .
+.It Cm bootstrap-setup Oo Fl cn Ar commonName Oc Oo Fl san Ar SAN Oc Oo Fl role Ar role Oc Oo Fl cert_expiry Ar seconds Oc Oo Fl timeout Ar seconds Oc
+Create a bootstrap entry on the authority and print its base64
+bootstrap key on standard output.
+The key is single-use: an agent presents it once during bootstrap to
+obtain a signed certificate with the SANs and roles given here.
+.Pp
+Options:
+.Bl -tag -width "-cert_expiry"
+.It Fl cn Ar commonName
+Subject CN to assign to the issued certificate.
+If omitted, the agent's REQ subject is preserved.
+.It Fl san Ar SAN
+Add a Subject Alternative Name.
+May be repeated.
+SANs are
+.Xr X509v3 7
+strings such as
+.Sy DNS:host.example.com
+or
+.Sy IP:192.0.2.1 .
+.It Fl role Ar role
+Add a role to the issued certificate.
+May be repeated.
+Roles must be alphanumeric.
+The
+.Sy agent
+role is always added implicitly.
+.It Fl cert_expiry Ar seconds
+Certificate lifetime, in seconds.
+Default: 604800 (7 days).
+.It Fl timeout Ar seconds
+Validity of the bootstrap entry itself, in seconds.
+Default: 600.
+After this period the entry is purged and the bootstrap key becomes
+unusable.
+.El
+.Pp
+Must be run on the authority host with a certificate carrying the
+.Sy bootstrap
+role.
+.It Cm cert Oo Fl serial Ar hex Oc Oo Fl find Ar pattern Oc
+Display a certificate from the authority's database, or list serials
+whose subject matches a pattern.
+With
+.Fl serial ,
+prints the full certificate including roles and SANs.
+With
+.Fl find ,
+prints serial, subject, and flags for each match.
+.Pp
+Requires a certificate with the
+.Sy certadmin
+role.
+.It Cm role Fl serial Ar hex Oo Fl add Ar role Oc Oo Fl del Ar role Oc
+Modify the roles on an existing certificate in the authority's
+database.
+The
+.Fl add
+and
+.Fl del
+flags may be repeated.
+Note that this modifies the database record but does not re-issue the
+certificate; the client must renew to get a certificate with the new
+roles.
+.Pp
+Requires the
+.Sy certadmin
+role.
+.It Cm san Fl serial Ar hex Oo Fl add Ar SAN Oc Oo Fl del Ar SAN Oc
+Like
+.Cm role ,
+but for Subject Alternative Names.
+.It Cm revoke Fl serial Ar hex
+Revoke a certificate by serial.
+The revocation is reflected in the next CRL generation.
+.Pp
+Requires the
+.Sy certadmin
+role.
+.It Cm sign-req Fl in Ar file Fl out Ar file Oo Fl cert_expiry Ar seconds Oc Oo Fl role Ar role Oc Oo Fl server_auth Oc Oo Fl copy_sans Oc
+Sign a PEM-encoded X.509 certificate signing request and write the
+resulting certificate.
+Unlike
+.Cm bootstrap-setup ,
+this is a one-shot operation that does not provision the recipient as
+an agent.
+.Pp
+Options:
+.Bl -tag -width "-cert_expiry"
+.It Fl in Ar file
+Path to the PEM-encoded REQ.
+.It Fl out Ar file
+Where to write the resulting PEM-encoded certificate.
+.It Fl cert_expiry Ar seconds
+Certificate lifetime, in seconds.
+Default: 604800 (7 days).
+.It Fl role Ar role
+Add a role to the certificate.
+May be repeated.
+.It Fl server_auth
+Add the
+.Sy serverAuth
+extended key usage in addition to
+.Sy clientAuth .
+.It Fl copy_sans
+Copy SANs from the REQ into the issued certificate.
+.El
+.Pp
+Requires the
+.Sy certadmin
+role.
+.It Cm update-crls
+Fetch updated CRLs from the configured authority and write them under
+.Va crl_path .
+The agent does this automatically on its CRL refresh interval;
+this command forces an immediate refresh.
+.Pp
+Primarily intended for
+.Sy certadmin
+operators running
+.Nm
+from a workstation: their CLI invocations of
+.Cm cert , role , san , revoke ,
+and
+.Cm sign-req
+validate the authority's certificate against the locally-stored CRLs,
+so running
+.Cm update-crls
+beforehand ensures those checks use current revocation data.
+.El
+.Sh ROLES
+The
+.Dq roles
+extension is an authority-defined OID (default
+.Sy 1.3.6.1.4.1.35910.3.1 )
+encoding a list of alphanumeric strings.
+Roles used internally by
+.Nm
+are:
+.Bl -tag -width "certadmin"
+.It Sy authority
+The certificate belongs to an authority.
+Authorities trust each other when forwarding dialback challenges and
+fetching CRLs.
+.It Sy bootstrap
+Permitted to call
+.Cm bootstrap-setup
+on an authority.
+.It Sy certadmin
+Permitted to call
+.Cm cert , role , san , revoke ,
+and
+.Cm sign-req
+on an authority.
+.It Sy agent
+Implicitly granted to every bootstrapped agent.
+Permitted to request its own certificate renewal.
+.It Sy caproxy
+A trusted proxy in front of an authority.
+.El
+.Pp
+Applications may define their own roles freely.
+.Sh DEPLOYMENT
+The two modes have different filesystem layouts.
+.Ss Agents
+.Nm
+rewrites
+.Va cert_file
+on every successful bootstrap and renewal, typically every few days.
+The cert, key, lock file, agent socket, and CRL directory must
+therefore live under a writable state directory such as
+.Pa /var/lib/certes
+.Pq Debian
+or
+.Pa /var/certes ,
+not under
+.Pa /etc .
+.Pp
+.Nm
+and
+.Xr mdrd 8
+typically run as the same user on agent hosts, and both must be able to
+read
+.Va cert_file
+and
+.Va crl_path .
+.Xr mdrd 8
+loads the cert at startup and again whenever it detects a change.
+.Ss Authorities
+On authority hosts,
+.Nm
+and
+.Xr mdrd 8
+usually run as separate users, each with its own
+.Va cert_file
+and
+.Va key_file .
+.Nm
+holds the CA signing key
+.Pq Pa ca_key.pem ,
+which is read once and never rewritten;
+.Xr mdrd 8
+holds a server cert
+.Pq Pa proxy_cert.pem
+issued by the authority itself.
+Both can live under
+.Pa /etc/certes
+since neither file is touched at runtime by its owning process.
+The
+.Va certdb_path
+SQLite database and the
+.Va crl_path
+directory are written by
+.Nm
+and must be under a writable state directory.
+.Sh ENVIRONMENT
+.Bl -tag -width CERTES_CONF
+.It Ev CERTES_CONF
+Path to the configuration file.
+Overridden by
+.Fl config .
+.El
+.Sh FILES
+.Bl -tag -width "/etc/certes/certes.conf"
+.It Pa /etc/certes/certes.conf
+Default configuration file.
+.It Pa /etc/certes/ca_cert.pem
+Authority's signing certificate.
+.It Pa /etc/certes/ca_key.pem
+Authority's signing key.
+.It Pa /etc/certes/root.pem
+Root CA certificate used to validate the authority.
+.It Pa /var/certes/certdb.sqlite
+Authority's certificate database.
+.It Pa /var/certes/crls
+Directory of CRLs, one file per issuing authority.
+.El
+.Sh EXAMPLES
+Create a bootstrap entry that allows an agent to obtain a 5-minute
+certificate with one SAN:
+.Bd -literal -offset indent
+# certes bootstrap-setup -san DNS:certes.example.com -cert_expiry 300
+.Ed
+.Pp
+On the agent host, write the printed key to the
+.Va bootstrap_key
+field of
+.Pa certes.conf ,
+generate the initial key, then start
+.Xr mdrd 8 :
+.Bd -literal -offset indent
+# certes init
+# mdrd -c /etc/certes/mdrd.conf
+.Ed
+.Pp
+Sign a REQ for a user, granting the
+.Sy certadmin
+role and
+.Sy serverAuth
+extended usage:
+.Bd -literal -offset indent
+# certes sign-req -in req.pem -out cert.pem \e
+    -role certadmin -server_auth
+.Ed
+.Pp
+Force the agent to refresh CRLs from the authority:
+.Bd -literal -offset indent
+$ certes update-crls
+.Ed
+.Sh SEE ALSO
+.Xr openssl 1 ,
+.Xr sqlite3 1 ,
+.Xr x509 1 ,
+.Xr certes.conf 5 ,
+.Xr mdrd 8
+.Sh AUTHORS
+.An Pascal Lalonde Aq Mt plalonde@overnet.ca

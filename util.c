@@ -182,8 +182,10 @@ open_wflock(const char *path, int flags, mode_t mode, int lk)
 		if (flock(fd, lk|LOCK_NB) == 0)
 			return fd;
 
-		if (errno != EWOULDBLOCK)
+		if (errno != EWOULDBLOCK) {
+			close(fd);
 			break;
+		}
 
 		close(fd);
 		memcpy(&req, &tp, sizeof(req));

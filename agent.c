@@ -2701,11 +2701,16 @@ load_crls(struct xerr *e)
 	const ASN1_TIME  *lu;
 	struct tm         tm;
 	X509_NAME        *issuer;
+	mode_t            save_umask;
+	int               r;
 
 	if (*certes_conf.crl_path == '\0')
 		return 0;
 
-	if (mkdir(certes_conf.crl_path, 0700) == -1 && errno != EEXIST)
+	save_umask = umask(022);
+	r = mkdir(certes_conf.crl_path, 0755);
+	umask(save_umask);
+	if (r == -1 && errno != EEXIST)
 		return XERRF(e, XLOG_ERRNO, errno, "mkdir: %s",
 		    certes_conf.crl_path);
 	if ((d = opendir(certes_conf.crl_path)) == NULL)

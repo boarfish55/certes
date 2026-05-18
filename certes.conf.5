@@ -1,0 +1,282 @@
+.\" Copyright (c) 2026 Pascal Lalonde <plalonde@overnet.ca>
+.\"
+.\" SPDX-License-Identifier: ISC
+.\"
+.Dd $Mdocdate: May 17 2026 $
+.Dt CERTES.CONF 5
+.Os
+.Sh NAME
+.Nm certes.conf
+.Nd configuration file for certes
+.Sh DESCRIPTION
+The
+.Nm
+file configures
+.Xr certes 8 ,
+both in agent mode and in authority mode.
+Some options apply only to one mode; these are noted below.
+.Pp
+The file is a flat list of
+.Ar name No = Ar value
+assignments, one per line.
+Lines beginning with
+.Sq #
+are comments.
+Booleans are
+.Sy true
+or
+.Sy false ,
+integers are unquoted decimal, strings are double-quoted, and string
+lists are bracketed and whitespace-separated.
+Durations are expressed in seconds unless the option name ends in
+.Sy _ms ,
+in which case they are in milliseconds.
+.Sh OPTIONS
+.Ss Common options
+These apply to both agents and authorities.
+.Bl -tag -width Ds
+.It Ic enable_coredumps Ar bool
+Raise the core dump limit on startup.
+Useful for debugging crashes; should be
+.Sy false
+in production.
+Default:
+.Sy false .
+.It Ic authority_fqdn Ar string
+For agents, the FQDN of the authority to contact.
+For an authority, its own FQDN, which must match the CN in
+.Ic cert_file .
+.It Ic authority_port Ar uint
+TCP port the authority listens on.
+Default:
+.Sy 9790 .
+.It Ic agent_bootstrap_port Ar uint
+Port the agent listens on for incoming dialback challenges during
+bootstrap and renewal.
+Default:
+.Sy 9790 .
+.It Ic root_cert_file Ar path
+PEM file containing the root CA certificate used to validate peer
+certificates.
+Default:
+.Pa ca.pem .
+.It Ic cert_file Ar path
+PEM file containing this host's certificate.
+For agents, this is rewritten on each successful bootstrap or renewal,
+so the path should live under a writable state directory such as
+.Pa /var/lib/certes
+on Debian or
+.Pa /var/certes
+elsewhere, not under
+.Pa /etc .
+On agents,
+.Nm certes
+and
+.Xr mdrd 8
+typically run as the same user, and the cert must be readable by both.
+On authorities they usually run as separate users, each with its own
+.Ic cert_file
+and
+.Ic key_file ;
+the authority's signing cert lives in
+.Pa /etc/certes
+and is not rewritten at runtime.
+Default:
+.Pa cert.pem .
+.It Ic key_file Ar path
+PEM file containing this host's private key.
+Created by
+.Cm certes init
+on agents and persists across renewals.
+Same placement guidance as
+.Ic cert_file :
+agent keys live under a writable state directory, authority signing
+keys under
+.Pa /etc/certes .
+Default:
+.Pa key.pem .
+.It Ic crl_path Ar path
+Directory where CRLs are stored, one file per issuing authority named
+.Pa <CN>.crl .
+The directory is created with mode
+.Sy 0755
+if missing, so the CRLs are readable by other processes on the host.
+Must be readable by both
+.Nm certes
+and
+.Xr mdrd 8 ,
+which consult it independently when verifying peer certificates.
+.It Ic crl_reload_interval_seconds Ar uint
+How often to poll the authority for updated CRLs.
+Default:
+.Sy 300 .
+.It Ic lock_file Ar path
+File used with
+.Xr flock 2
+to ensure only one
+.Nm certes
+process per host.
+Default:
+.Pa agent.lock .
+.It Ic agent_socket_path Ar path
+Unix-domain socket used by local administrative commands to
+communicate with the running backend.
+Default:
+.Pa agent.sock .
+.It Ic agent_send_timeout_ms Ar uint
+Send timeout (milliseconds) for connections to the authority.
+Default:
+.Sy 60000 .
+.It Ic agent_recv_timeout_ms Ar uint
+Receive timeout (milliseconds) for connections to the authority.
+Default:
+.Sy 60000 .
+.It Ic max_cert_size Ar uint
+Upper bound (in bytes) on a DER-encoded certificate.
+Used to size network buffers.
+Default:
+.Sy 4096 .
+.It Ic roles_oid Ar string
+OID for the
+.Dq roles
+X.509 extension.
+All agents and authorities in the same deployment must agree on this
+value.
+Default:
+.Sy 1.3.6.1.4.1.35910.3.1 .
+.El
+.Ss Agent options
+These apply only when running as an agent.
+.Bl -tag -width Ds
+.It Ic bootstrap_key Ar string
+Base64-encoded one-time key obtained from
+.Cm certes bootstrap-setup
+on the authority.
+Used on first startup to obtain a signed certificate.
+Once bootstrap completes, the value is no longer consulted; it may be
+left in the file or removed.
+.It Ic cert_check_interval_seconds Ar uint
+How often the agent checks whether its certificate needs renewal.
+Default:
+.Sy 600 .
+.It Ic cert_min_lifetime_seconds Ar uint
+If the current certificate's remaining lifetime drops below this,
+the agent attempts renewal.
+Default:
+.Sy 345600
+(4 days).
+.It Ic challenge_timeout_seconds Ar uint
+Time the agent will wait for a dialback challenge from the authority
+during bootstrap or renewal.
+Default:
+.Sy 30 .
+.El
+.Ss Authority options
+These apply only when running as an authority.
+.Bl -tag -width Ds
+.It Ic cert_org Ar string
+Organization (O) field used in the Subject DN of issued certificates.
+.It Ic cert_email Ar string
+emailAddress field used in the Subject DN of issued certificates.
+.It Ic cert_renew_lifetime_seconds Ar uint
+Lifetime assigned to a certificate when an agent renews it.
+Default:
+.Sy 864000
+(10 days).
+.It Ic cert_expired_retention_seconds Ar uint
+How long expired certificate records are kept in the database after
+their
+.Sy not_after_sec ,
+for forensic purposes.
+Default:
+.Sy 86400
+(1 day).
+.It Ic certdb_path Ar path
+.Xr sqlite3 1
+database storing issued certificates, bootstrap entries, and the
+serial counter.
+.It Ic certdb_backup_path Ar path
+Destination for online backups of
+.Ic certdb_path .
+Backups are taken using SQLite's incremental backup API.
+Leave empty to disable backups.
+.It Ic certdb_backup_interval_seconds Ar uint
+Frequency of online backups.
+Set to
+.Sy 0
+to disable.
+Default:
+.Sy 86400 .
+.It Ic certdb_backup_pages_per_step Ar uint
+Number of pages copied per step of the incremental backup.
+.Sy 0
+or less means all remaining pages in one step (which blocks writers
+for the duration of the backup).
+Default:
+.Sy 0 .
+.It Ic min_serial Ar hex
+.It Ic max_serial Ar hex
+Inclusive range of serial numbers this authority may issue, given as
+OpenSSL bignum hex strings starting with
+.Sy 0x .
+When running multiple authorities against the same population of
+clients, assign each a non-overlapping range to avoid collisions.
+.It Ic peer_authorities Ar list
+List of FQDNs of peer authorities whose CRLs this authority should
+fetch and serve.
+For example:
+.Bd -literal -offset indent
+peer_authorities = [ "auth2.example.com" "auth3.example.com" ]
+.Ed
+.El
+.Sh FILES
+.Bl -tag -width "/etc/certes/certes.conf"
+.It Pa /etc/certes/certes.conf
+Default location.
+Overridden by the
+.Fl config
+flag or the
+.Ev CERTES_CONF
+environment variable.
+.El
+.Sh EXAMPLES
+A minimal agent configuration:
+.Bd -literal -offset indent
+authority_fqdn = "auth.example.com"
+authority_port = 9790
+bootstrap_key  = "nL67iJsE/6dQRG+ZZYmgZm3bSyM22pSlO2UYMYLfxvxKpXELW3VfrZFrnPfbLPty"
+root_cert_file = "/etc/certes/root.pem"
+cert_file      = "/var/lib/certes/cert.pem"
+key_file       = "/var/lib/certes/key.pem"
+crl_path       = "/var/lib/certes/crls"
+lock_file      = "/var/lib/certes/agent.lock"
+agent_socket_path = "/var/lib/certes/agent.sock"
+.Ed
+.Pp
+A minimal authority configuration:
+.Bd -literal -offset indent
+authority_fqdn = "auth.example.com"
+authority_port = 9790
+root_cert_file = "/etc/certes/root.pem"
+cert_file      = "/etc/certes/ca_cert.pem"
+key_file       = "/etc/certes/ca_key.pem"
+crl_path       = "/var/certes/crls"
+lock_file      = "/var/certes/agent.lock"
+agent_socket_path = "/var/certes/agent.sock"
+
+cert_org       = "Example"
+cert_email     = "cert@example.com"
+certdb_path    = "/var/certes/certdb.sqlite"
+certdb_backup_path = "/var/certes/certdb.sqlite.bk"
+certdb_backup_interval_seconds = 3600
+
+min_serial     = "0x1000000"
+max_serial     = "0x1ffffff"
+.Ed
+.Sh SEE ALSO
+.Xr openssl 1 ,
+.Xr sqlite3 1 ,
+.Xr certes 8 ,
+.Xr mdrd 8
+.Sh AUTHORS
+.An Pascal Lalonde Aq Mt plalonde@overnet.ca
