@@ -1,3 +1,9 @@
+certes (0.5.6-2) unstable; urgency=medium
+
+  * Fix rules and add install file
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Mon, 18 May 2026 00:16:35 -0400
+
 certes (0.5.6-1) unstable; urgency=medium
 
   * Fix install target
