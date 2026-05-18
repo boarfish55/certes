@@ -1,3 +1,30 @@
+certes (0.5.4-1) unstable; urgency=medium
+
+  * Fix multiple leaks, mostly in error paths
+  * Fix a bug introduced from an inverted condition
+  * Use the more fine graind -DOPENSSL_API_COMPAT=0x10101000L to silence
+    deprecation warnings from older calls (that we need to use for LibreSSL)
+  * Turn off -Wformat=0, and cast where needed
+  * Fix some umask bugs
+  * Fix off-by-one in arg parsing for multiple CLI commands
+  * Make sure to rollback sqlite transaction on error in a few functions
+  * Make cert_foreach_role/cert_foreach_san easier to use by returning 
+    "not found" on error. If users want to see if an actual error occured
+    they can check 'e'.
+  * Remove mlock() which didn't do what we wanted; we'll have to rely on
+    swap encryption.
+  * Fixed a few out-of-bounds reads
+  * Fixed overflow in authority_fetch_outdated_crls when we were sending
+    more CRLs than the client had to compare
+  * Fix non-portable calloc() usage where we initialized at zero elements
+  * Create crl_path with mode 0755
+  * Make some alloc errors from sqlite3_column_blob verbose, before they
+    would've been silent
+  * Fix error path in certdb_backup
+  * Added config sample comments and manpages
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Sun, 17 May 2026 23:45:48 -0400
+
 certes (0.5.3-1) unstable; urgency=medium
 
   * Fix bad realloc()
