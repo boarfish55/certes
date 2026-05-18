@@ -1,27 +1,59 @@
+# Sample certes authority configuration.
+#
+# This config is for hosts running as a certificate authority. For agents
+# (clients of an authority), see certes.conf.sample.
+#
+# Time values are in seconds unless suffixed with "_ms" (milliseconds).
+# Boolean values are "true" or "false". Paths and serials are quoted strings.
+
+# Enable core dumps for crash debugging. Should be false in production.
 enable_coredumps = false
+
+# FQDN and port this authority listens on. The FQDN must match the CN in
+# the authority's certificate so peers can validate it.
 authority_fqdn = "localhost"
 authority_port = 9790
 
+# Authority's signing key, signing certificate, and the root CA that
+# issued the signing certificate.
 key_file = "/etc/certes/ca_key.pem"
 cert_file = "/etc/certes/ca_cert.pem"
 root_cert_file = "/etc/certes/root.pem"
+
+# Directory where the authority writes its own CRL (and stores CRLs
+# fetched from peer authorities). One file per issuing authority, named
+# "<CN>.crl".
 crl_path = "/var/certes/crls"
 
+# Lock file used to ensure only one authority process runs per host.
 lock_file = "/var/certes/agent.lock"
+
+# Unix socket used by local commands (bootstrap-setup, revoke, etc.) to
+# communicate with the running authority.
 agent_socket_path = "/var/certes/agent.sock"
 
 #
-# This section is for certes authorities. It sets default parameters
-# for certificate generation and renewals.
+# Authority-specific options below: certificate generation defaults and
+# certdb storage.
 #
 
+# Organization and email used in the Subject DN of certificates issued
+# by this authority. Per-cert overrides are not supported.
 cert_org = "Example"
 cert_email = "cert@example.com"
+
+# SQLite database storing issued certs, bootstrap entries, and the
+# serial counter.
 certdb_path = "/var/certes/certdb.sqlite"
+
+# Path and frequency for online backups of the certdb. Backups use
+# SQLite's incremental backup API; set certdb_backup_interval_seconds
+# to 0 to disable. Leaving certdb_backup_path empty also disables it.
 certdb_backup_path = "/var/certes/certdb.sqlite.bk"
 certdb_backup_interval_seconds = 60
 
-# This supports OpenSSL's bignum integers, we can shard amongst authorities
-# to avoid serial collisions.
+# Range for issued certificate serial numbers, as OpenSSL bignum hex
+# (must start with "0x"). When running multiple authorities, give each
+# a non-overlapping range to avoid serial collisions.
 min_serial = "0x1000000"
 max_serial = "0x1ffffff"

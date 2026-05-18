@@ -76,12 +76,16 @@ cert_encode_certes_roles(const char **roles, size_t sz)
 	if ((len = i2d_ASN1_SEQUENCE_ANY((STACK_OF(ASN1_TYPE) *)sk, &data)) < 0)
 		goto fail;
 	sk_ASN1_TYPE_pop_free(sk, ASN1_TYPE_free);
+	sk = NULL;
 
 	/*
 	 * Copy our DER-encoded stack of roles in an ASN1 octet string,
 	 * then free the DER data.
 	 */
-	asn1str = ASN1_OCTET_STRING_new();
+	if ((asn1str = ASN1_OCTET_STRING_new()) == NULL) {
+		free(data);
+		goto fail;
+	}
 	if (!ASN1_OCTET_STRING_set(asn1str, data, len)) {
 		free(data);
 		ASN1_OCTET_STRING_free(asn1str);
@@ -194,12 +198,12 @@ has_role(const char *role, void *args)
 int
 cert_has_role(X509 *crt, const char *role, struct xerr *e)
 {
-	int                  r;
 	struct has_role_args a = { role, 0 };
 
-	r = cert_foreach_role(crt, &has_role, &a, xerrz(e));
-	if (r == -1 && !xerr_is(e, XLOG_APP, XLOG_NOTFOUND))
-		return XERR_PREPENDFN(e);
+	if (cert_foreach_role(crt, &has_role, &a, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return 0;
+	}
 	return a.found;
 }
 
@@ -211,6 +215,7 @@ cert_foreach_san(X509 *crt, int(*cb)(const char *, void *), void *args,
 	GENERAL_NAME           *gname;
 	char                    name[512];
 	int                     i, namelen;
+	int                     status = 0;
 
 	sans = (STACK_OF(GENERAL_NAME) *)X509_get_ext_d2i(crt,
 	    NID_subject_alt_name, NULL, NULL);
@@ -228,27 +233,32 @@ cert_foreach_san(X509 *crt, int(*cb)(const char *, void *), void *args,
 			break;
 		case GEN_IPADD:
 			namelen = ASN1_STRING_length(gname->d.iPAddress);
-			if (namelen != 4 && namelen != 16)
-				return XERRF(e, XLOG_APP, XLOG_FAIL,
+			if (namelen != 4 && namelen != 16) {
+				status = XERRF(e, XLOG_APP, XLOG_FAIL,
 				    "subjectAltName of type iPAddress "
 				    "has invalid length");
+				goto end;
+			}
 			if (inet_ntop((namelen == 16) ? AF_INET6 : AF_INET,
 			    ASN1_STRING_get0_data(gname->d.iPAddress),
-			    name, sizeof(name)) == NULL)
-				return XERRF(e, XLOG_APP, XLOG_FAIL,
+			    name, sizeof(name)) == NULL) {
+				status = XERRF(e, XLOG_APP, XLOG_FAIL,
 				    "subjectAltName of type iPAddress "
 				    "could not be decoded");
+				goto end;
+			}
 			break;
 		default:
-			GENERAL_NAMES_free(sans);
-			return XERRF(e, XLOG_APP, XLOG_FAIL,
+			status = XERRF(e, XLOG_APP, XLOG_FAIL,
 			    "unknown subjectAltName type");
+			goto end;
 		}
 		if (!cb(name, args))
 			break;
 	}
+end:
 	GENERAL_NAMES_free(sans);
-	return 0;
+	return status;
 }
 
 int
@@ -302,7 +312,6 @@ cert_req_foreach_san(X509_REQ *req, int(*cb)(const char *, void *), void *args,
 			}
 			break;
 		default:
-			GENERAL_NAMES_free(sans);
 			status = XERRF(e, XLOG_APP, XLOG_FAIL,
 			    "unknown subjectAltName type");
 			goto end;
@@ -340,12 +349,12 @@ has_san(const char *san, void *args)
 int
 cert_has_san(X509 *crt, const char *san, struct xerr *e)
 {
-	int                 r;
 	struct has_san_args a = { san, 0 };
 
-	r = cert_foreach_san(crt, &has_san, &a, xerrz(e));
-	if (r == -1)
-		return XERR_PREPENDFN(e);
+	if (cert_foreach_san(crt, &has_san, &a, xerrz(e)) == -1) {
+		XERR_PREPENDFN(e);
+		return 0;
+	}
 	return a.found;
 }
 
@@ -641,13 +650,13 @@ cert_sign_req(X509_REQ *req, const char *subject, time_t not_before_sec,
 		    X509_REQ_get_subject_name(req))) {
 			XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "X509_set_subject_name");
-			return NULL;
+			goto fail;
 		}
 	}
 
 	if (!X509_set_pubkey(newcrt, X509_REQ_get0_pubkey(req))) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_set_pubkey");
-		return NULL;
+		goto fail;
 	}
 
 	X509_time_adj(X509_get_notBefore(newcrt), 0, &not_before_sec);
@@ -656,7 +665,7 @@ cert_sign_req(X509_REQ *req, const char *subject, time_t not_before_sec,
 	if (sans_sz > 0) {
 		if ((strlist_join(sans, sans_sz, &sans_joined, ',')) == -1) {
 			XERRF(e, XLOG_ERRNO, errno, "strlist_join");
-			return NULL;
+			goto fail;
 		}
 		if (!cert_add_ext(&ctx, newcrt, NID_subject_alt_name,
 		    sans_joined)) {
@@ -696,7 +705,13 @@ cert_sign_req(X509_REQ *req, const char *subject, time_t not_before_sec,
 
 	if (roles_sz > 0) {
 		ex = cert_encode_certes_roles(roles, roles_sz);
+		if (ex == NULL) {
+			XERRF(e, XLOG_SSL, ERR_get_error(),
+			    "cert_encode_certes_roles");
+			goto fail;
+		}
 		if (!X509_add_ext(newcrt, ex, -1)) {
+			X509_EXTENSION_free(ex);
 			XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "X509_add_ext / roles");
 			goto fail;
@@ -817,7 +832,12 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 	}
 
 	ex = cert_encode_certes_roles((const char **)ce->roles, ce->roles_sz);
+	if (ex == NULL) {
+		XERRF(e, XLOG_SSL, ERR_get_error(), "cert_encode_certes_roles");
+		goto fail;
+	}
 	if (!X509_add_ext(newcrt, ex, -1)) {
+		X509_EXTENSION_free(ex);
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_add_ext / roles");
 		goto fail;
 	}
@@ -993,7 +1013,7 @@ cert_new_selfreq(EVP_PKEY *key, const X509_NAME *subject, const char *ip6,
 	X509_REQ                 *req;
 	X509_EXTENSION           *ex;
 	char                     *sans = NULL;
-	STACK_OF(X509_EXTENSION) *exts;
+	STACK_OF(X509_EXTENSION) *exts = NULL;
 
 	if ((req = X509_REQ_new()) == NULL)
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "X509_REQ_new");
@@ -1031,6 +1051,7 @@ cert_new_selfreq(EVP_PKEY *key, const X509_NAME *subject, const char *ip6,
 		goto fail;
         }
 	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	exts = NULL;
 
 	if (!X509_REQ_sign(req, key, NULL)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "X509_reqsign");
@@ -1057,6 +1078,8 @@ cert_new_selfreq(EVP_PKEY *key, const X509_NAME *subject, const char *ip6,
 	free(sans);
 	return 0;
 fail:
+	if (exts != NULL)
+		sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
 	X509_REQ_free(req);
 	if (sans != NULL)
 		free(sans);
@@ -1144,12 +1167,13 @@ cert_new_privkey(struct xerr *e)
 		goto fail;
 	}
 	save_umask = umask(022);
-	if ((f = fopen(certes_conf.cert_file, "w")) == NULL) {
+	f = fopen(certes_conf.cert_file, "w");
+	umask(save_umask);
+	if (f  == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "fdopen: %s",
 		    certes_conf.cert_file);
 		goto fail;
 	}
-	umask(save_umask);
 	if (!PEM_write_X509(f, selfcrt)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "PEM_write_X509");
 		fclose(f);
@@ -1161,6 +1185,7 @@ cert_new_privkey(struct xerr *e)
 		goto fail;
 	}
 
+	EVP_PKEY_free(pkey);
 	X509_free(selfcrt);
 
 	return 0;

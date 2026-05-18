@@ -1,17 +1,47 @@
+# Sample certes agent configuration.
+#
+# This config is for hosts running as agents (clients of an authority). For
+# the authority itself, see certes_authority.conf.sample.
+#
+# Time values are in seconds unless suffixed with "_ms" (milliseconds).
+# Boolean values are "true" or "false". Paths and serials are quoted strings.
+
+# Enable core dumps for crash debugging. Should be false in production.
 enable_coredumps = true
 
+# Base64-encoded one-time bootstrap key issued by the authority via
+# `certes bootstrap-setup`. Used on first startup to obtain a signed cert.
+# Once bootstrap completes, the key is no longer needed.
 bootstrap_key = "nL67iJsE/6dQRG+ZZYmgZm3bSyM22pSlO2UYMYLfxvxKpXELW3VfrZFrnPfbLPty"
 
+# Authority this agent talks to for bootstrap, renewals, and CRL updates.
 authority_fqdn = "localhost"
 authority_port = 9790
+
+# Port the agent listens on for incoming dialback challenges from the
+# authority during bootstrap and renewal.
 agent_bootstrap_port = 9791
+
+# Maximum size in bytes for a DER-encoded certificate. Used to size
+# message buffers; certificates larger than this will be rejected.
 max_cert_size = 4096
 
+# PEM file containing the root CA certificate. Used to validate the
+# authority's certificate chain.
 root_cert_file = "/home/plalonde/prog/certes/testdata/ca/root.pem"
+
+# Directory where CRLs fetched from the authority are stored. One file
+# per issuing authority, named "<CN>.crl".
 crl_path = "/home/plalonde/prog/certes/testdata/authority1/crl_store"
 
+# Agent's certificate and private key. The certificate is created during
+# bootstrap and rewritten on each renewal. The private key persists.
 cert_file = "/home/plalonde/prog/certes/testdata/client3/cert.pem"
 key_file = "/home/plalonde/prog/certes/testdata/client3/key.pem"
 
-lock_file = "/home/plalonde/prog/certes/testdata/client3/coordinator.lock"
-coordinator_socket_path = "/home/plalonde/prog/certes/testdata/client3/coordinator.sock"
+# Lock file used to ensure only one agent process runs per host.
+lock_file = "/home/plalonde/prog/certes/testdata/client3/agent.lock"
+
+# Unix socket used by local commands (cert renew, sign-req, etc.) to
+# communicate with the running agent.
+agent_socket_path = "/home/plalonde/prog/certes/testdata/client3/agent.sock"

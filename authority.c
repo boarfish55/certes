@@ -139,22 +139,26 @@ authority_bootstrap_setup(struct mdrd_besession *sess, struct umdr *m,
 	timeout = uv[4].v.u32;
 	flags = uv[5].v.u32;
 
-	if ((sans = calloc(sans_sz, sizeof(char *))) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "calloc");
-		goto fail;
+	if (sans_sz > 0) {
+		if ((sans = calloc(sans_sz, sizeof(char *))) == NULL) {
+			XERRF(e, XLOG_ERRNO, errno, "calloc");
+			goto fail;
+		}
+		if (umdr_vec_as(&uv[1].v.as, sans, sans_sz) == MDR_FAIL) {
+			XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
+			goto fail;
+		}
 	}
+
 	if ((roles = calloc(roles_sz + 1, sizeof(char *))) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "calloc");
 		goto fail;
 	}
-
-	if (umdr_vec_as(&uv[1].v.as, sans, sans_sz) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
-		goto fail;
-	}
-	if (umdr_vec_as(&uv[2].v.as, roles, roles_sz + 1) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
-		goto fail;
+	if (roles_sz > 0) {
+		if (umdr_vec_as(&uv[2].v.as, roles, roles_sz) == MDR_FAIL) {
+			XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
+			goto fail;
+		}
 	}
 
 	/*
@@ -595,8 +599,12 @@ find_certs(const struct cert_entry *ce, void *args)
 	return 1;
 fail:
 	free(a->serials);
+	a->serials = NULL;
 	free(a->subjects);
+	a->subjects = NULL;
 	free(a->flags);
+	a->flags = NULL;
+
 	a->error = 1;
 	return 0;
 }
@@ -661,13 +669,14 @@ authority_cert_find(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	free(a.subjects);
 	free(a.flags);
 
-	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1) {
-		XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
-		goto fail;
-	}
+	if (mdrd_beout(sess, MDRD_BEOUT_FNONE, &pm) == -1)
+		return XERRF(e, XLOG_ERRNO, errno, "mdrd_beout");
 
 	return 0;
 fail:
+	free(a.serials);
+	free(a.subjects);
+	free(a.flags);
 	mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 	    "backend failure");
 	return -1;
@@ -695,7 +704,8 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	int                    r, status = 0;
 	struct certes_session *cs = (struct certes_session *)sess->data;
 
-	if ((cs->challenge = malloc(CERTES_CHALLENGE_LENGTH)) == NULL) {
+	if (cs->challenge == NULL &&
+	    (cs->challenge = malloc(CERTES_CHALLENGE_LENGTH)) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
 		goto befail;
 	}
@@ -860,6 +870,8 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 		return XERR_PREPENDFN(e);
 	}
 
+	if (cs->req != NULL)
+		X509_REQ_free(cs->req);
 	cs->req = d2i_X509_REQ(NULL, (const unsigned char **)&uv[2].v.b.bytes,
 	    uv[2].v.b.sz);
 	if (cs->req == NULL) {
@@ -902,8 +914,8 @@ authority_bootstrap_dialin(struct mdrd_besession *sess, struct umdr *msg,
 		goto fail;
 	}
 
-	if ((cs->bootstrap_key = malloc(CERTES_BOOTSTRAP_KEY_LENGTH))
-	    == NULL) {
+	if (cs->bootstrap_key == NULL &&
+	    (cs->bootstrap_key = malloc(CERTES_BOOTSTRAP_KEY_LENGTH)) == NULL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "backend failed");
 		XERRF(e, XLOG_ERRNO, errno, "malloc");
@@ -980,6 +992,7 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 		sz = i2d_X509(c, &der);
 		if (sz < 0) {
 			free(*der_chain);
+			*der_chain = NULL;
 			status = XERRF(e, XLOG_SSL, ERR_get_error(),
 			    "i2d_X509");
 			goto end;
@@ -1025,6 +1038,7 @@ pack_intermediates(X509 *crt, uint8_t **der_chain, size_t *chain_sz,
 	sz = i2d_X509(agent_cert(), &der);
 	if (sz < 0) {
 		free(*der_chain);
+		*der_chain = NULL;
 		return XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509");
 	}
 
@@ -1142,7 +1156,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 	    CERTES_BOOTSTRAP_KEY_LENGTH, e)) == NULL) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_DENIED,
 		    "no such bootstrap entry");
-		return XERR_PREPENDFN(e);
+		XERR_PREPENDFN(e);
+		goto fail;
 	}
 
 	crt = cert_sign_req(cs->req,
@@ -1226,7 +1241,8 @@ authority_bootstrap_answer(struct mdrd_besession *sess, struct umdr *msg,
 fail:
 	if (in_txn && certdb_rollback_txn(xerrz(&e2)) == -1)
 		xlog(LOG_ERR, &e2, __func__);
-	certdb_bootstrap_free(be);
+	if (be != NULL)
+		certdb_bootstrap_free(be);
 	free(crt_buf);
 	if (crt != NULL)
 		X509_free(crt);
@@ -1478,7 +1494,6 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 	uint32_t                  crl_count;
 	const char              **issuers = NULL;
 	uint64_t                 *last_updates = NULL;
-	const char              **upd_issuers = NULL;
 	uint32_t                 *upd_crl_sizes = NULL;
 	int                       i, j, k, update;
 	const struct loaded_crls *loaded_crls = agent_get_loaded_crls();
@@ -1511,30 +1526,31 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 		goto fail;
 	}
 
-	if ((issuers = calloc(crl_count, sizeof(char *))) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "calloc");
-		goto fail;
-	}
-	if ((last_updates = calloc(crl_count, sizeof(uint64_t))) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "calloc");
-		goto fail;
+	if (crl_count > 0) {
+		if ((issuers = calloc(crl_count, sizeof(char *))) == NULL) {
+			XERRF(e, XLOG_ERRNO, errno, "calloc");
+			goto fail;
+		}
+		if (umdr_vec_as(&uv[1].v.as, issuers, crl_count) == MDR_FAIL) {
+			XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
+			goto fail;
+		}
+
+		if ((last_updates = calloc(crl_count,
+		    sizeof(uint64_t))) == NULL) {
+			XERRF(e, XLOG_ERRNO, errno, "calloc");
+			goto fail;
+		}
+		if (umdr_vec_au64(&uv[2].v.au64, last_updates,
+		    crl_count) == MDR_FAIL) {
+			XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
+			goto fail;
+		}
 	}
 
-	if ((upd_issuers = calloc(crl_count, sizeof(char *))) == NULL) {
+	if ((upd_crl_sizes = calloc(loaded_crls->count,
+	    sizeof(uint32_t))) == NULL) {
 		XERRF(e, XLOG_ERRNO, errno, "calloc");
-		goto fail;
-	}
-	if ((upd_crl_sizes = calloc(crl_count, sizeof(uint32_t))) == NULL) {
-		XERRF(e, XLOG_ERRNO, errno, "calloc");
-		goto fail;
-	}
-
-	if (umdr_vec_as(&uv[1].v.as, issuers, crl_count) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
-		goto fail;
-	}
-	if (umdr_vec_au64(&uv[2].v.au64, last_updates, crl_count) == MDR_FAIL) {
-		XERRF(e, XLOG_ERRNO, errno, "umdr_vec_as");
 		goto fail;
 	}
 
@@ -1548,6 +1564,12 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 	pv[2].v.b.sz = 0;
 	for (p = crl_buf, i = 0, k = 0; i < loaded_crls->count; i++) {
 		update = 1;
+		/*
+		 * Compare client's CRLs against the ones we have in-memory.
+		 * If the client's last update for a CRL is older than ours,
+		 * we update it. If we don't find the issuer, we send it as
+		 * well.
+		 */
 		for (j = 0; j < crl_count; j++) {
 			if (strcmp(loaded_crls->issuers[i], issuers[j]) != 0)
 				continue;
@@ -1560,12 +1582,12 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 			continue;
 
 		der_sz = i2d_X509_CRL(loaded_crls->crls[i], NULL);
-		if ((p - crl_buf) + der_sz > sizeof(crl_buf)) {
+		if (sizeof(crl_buf) - (p - crl_buf) < der_sz) {
 			XERRF(e, XLOG_APP, XLOG_OVERFLOW,
 			    "CRL data too large to fit in MDR");
 			goto fail;
 		}
-		if (der_sz < i2d_X509_CRL(loaded_crls->crls[i], &p)) {
+		if (i2d_X509_CRL(loaded_crls->crls[i], &p) < 0) {
 			XERRF(e, XLOG_SSL, ERR_get_error(), "i2d_X509_CRL");
 			goto fail;
 		}
@@ -1574,7 +1596,6 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 		    "client (size=%d)",
 		    __func__, loaded_crls->issuers[i], der_sz);
 
-		upd_issuers[k] = loaded_crls->issuers[i];
 		upd_crl_sizes[k] = der_sz;
 		pv[2].v.b.sz += der_sz;
 		k++;
@@ -1590,7 +1611,6 @@ authority_fetch_outdated_crls(struct mdrd_besession *sess, struct umdr *msg,
 	}
 
 	free(issuers);
-	free(upd_issuers);
 	free(upd_crl_sizes);
 	free(last_updates);
 
@@ -1600,8 +1620,6 @@ fail:
 		free(last_updates);
 	if (issuers != NULL)
 		free(issuers);
-	if (upd_issuers != NULL)
-		free(upd_issuers);
 	if (upd_crl_sizes != NULL)
 		free(upd_crl_sizes);
 	beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
@@ -1633,6 +1651,7 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	struct xerr        e2;
 	struct tm          tm;
 	struct cert_entry  ce;
+	int                in_txn = 0;
 
 	xlog(LOG_NOTICE, NULL, "%s: handling for %s", __func__,
 	    certes_client_name(sess, NULL, 0, xerrz(e)));
@@ -1698,6 +1717,7 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	in_txn = 1;
 
 	clock_gettime(CLOCK_REALTIME, &now);
 	crt = cert_sign_req(req, NULL, now.tv_sec, now.tv_sec + cert_validity,
@@ -1706,8 +1726,6 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 	    "clientAuth,serverAuth" :
 	    "clientAuth", xerrz(e));
 	if (crt == NULL) {
-		if (certdb_rollback_txn(xerrz(&e2)) == -1)
-			xlog(LOG_ERR, &e2, __func__);
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
@@ -1754,6 +1772,7 @@ authority_sign_req(struct mdrd_besession *sess, struct umdr *m, struct xerr *e)
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	in_txn = 0;
 
 	if (pack_intermediates(crt, &der_chain, &der_chain_sz,
 	    xerrz(e)) == -1) {
@@ -1791,6 +1810,9 @@ fail:
 	mdrd_beout_error(sess, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 	    "backend failure");
 fail_no_reply:
+	if (in_txn)
+		if (certdb_rollback_txn(xerrz(&e2)) == -1)
+			xlog(LOG_ERR, &e2, __func__);
 	if (crt != NULL)
 		X509_free(crt);
 	if (req != NULL)
@@ -1798,5 +1820,6 @@ fail_no_reply:
 	free(roles);
 	free(sans);
 	free(der_chain);
+	free(der);
 	return -1;
 }

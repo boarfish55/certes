@@ -485,6 +485,11 @@ certdb_get_bootstrap(const uint8_t *bootstrap_key, size_t bootstrap_key_sz,
 	if (b != NULL) {
 		memcpy(be->subject, b, subject_len);
 		be->subject[subject_len] = '\0';
+	} else if (subject_len > 0) {
+		free(be->subject);
+		XERRF(e, XLOG_APP, XLOG_FAIL,
+		    "sqlite3_column_blob alloc failure");
+		goto fail;
 	} else
 		be->subject[0] = '\0';
 
@@ -683,6 +688,11 @@ certdb_get_cert(const char *serial, struct xerr *e)
 	if (b != NULL) {
 		memcpy(dst->subject, b, subject_len);
 		dst->subject[subject_len] = '\0';
+	} else if (subject_len > 0) {
+		free(dst->subject);
+		XERRF(e, XLOG_APP, XLOG_FAIL,
+		    "sqlite3_column_blob alloc failure");
+		goto fail;
 	} else
 		dst->subject[0] = '\0';
 
@@ -1429,7 +1439,7 @@ fail:
 int
 certdb_backup(const char *path, int pages, struct xerr *e)
 {
-	int             r;
+	int             r, status = 0;
 	sqlite3        *bkdb;
 	sqlite3_backup *bk;
 
@@ -1438,9 +1448,9 @@ certdb_backup(const char *path, int pages, struct xerr *e)
 		    sqlite3_errmsg(bkdb));
 
 	if ((bk = sqlite3_backup_init(bkdb, "main", db, "main")) == NULL) {
-		XERRF(e, XLOG_DB, r, "sqlite3_backup_init: %s",
+		status = XERRF(e, XLOG_DB, r, "sqlite3_backup_init: %s",
 		    sqlite3_errmsg(bkdb));
-		goto fail;
+		goto fail_init;
 	}
 
 	if (pages < 1)
@@ -1449,25 +1459,22 @@ certdb_backup(const char *path, int pages, struct xerr *e)
 	for (;;) {
 		switch ((r = sqlite3_backup_step(bk, pages))) {
 		case SQLITE_DONE:
-			if ((r = sqlite3_backup_finish(bk))) {
-				XERRF(e, XLOG_DB, r,
-				    "sqlite3_backup_finish: %s",
-				    sqlite3_errmsg(bkdb));
-				goto fail;
-			}
-			sqlite3_close(bkdb);
-			return 0;
+			goto end;
 		case SQLITE_OK:
 			break;
 		default:
-			XERRF(e, XLOG_DB, r, "sqlite3_backup_step: %s",
+			status = XERRF(e, XLOG_DB, r, "sqlite3_backup_step: %s",
 			    sqlite3_errmsg(bkdb));
-			goto fail;
+			goto end;
 		}
 	}
-fail:
+end:
+	if (sqlite3_backup_finish(bk))
+		xlog(LOG_ERR, NULL, "sqlite3_backup_finish: %s",
+		    sqlite3_errmsg(bkdb));
+fail_init:
 	sqlite3_close(bkdb);
-	return -1;
+	return status;
 }
 
 int
