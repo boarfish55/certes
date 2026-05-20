@@ -2607,7 +2607,8 @@ agent_init_ctx(struct xerr *e)
 	fclose(f);
 	f = NULL;
 
-	is_authority = cert_has_role(cert, ROLE_AUTHORITY, xerrz(e));
+	xerrz(e);
+	is_authority = cert_has_role(cert, ROLE_AUTHORITY, e);
 	if (xerr_fail(e) && !xerr_is(e, XLOG_APP, XLOG_NOTFOUND)) {
 		XERR_PREPENDFN(e);
 		goto fail;
