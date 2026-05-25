@@ -1,3 +1,9 @@
+certes (0.5.7-2) unstable; urgency=medium
+
+  * Fix dep
+
+ -- Pascal Lalonde <plalonde@overnet.ca>  Mon, 25 May 2026 16:29:13 -0400
+
 certes (0.5.7-1) unstable; urgency=medium
 
   * We should allow '-' in authority CN
