@@ -50,7 +50,7 @@ if [ "$RESP" = "y" -o "$RESP" = "Y" ]; then
 	sed -i "s/^VERSION = [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$/VERSION = $major.$minor.$patch/" Makefile
 	sed -i "s/^VERSION = [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$/VERSION = $major.$minor.$patch/" GNUmakefile
 	sed -i "s/^\(VERSION =[ \t]*\)[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$/\\1$major.$minor.$patch/" openbsd-ports/misc/certes/Makefile
-	git add Makefile GNUmakefile
+	git add Makefile GNUmakefile openbsd-ports/misc/certes/Makefile
 	git commit -m "$major.$minor.$patch"
 	git tag -m "v$major.$minor.$patch" "$major.$minor.$patch"
 fi
