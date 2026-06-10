@@ -14,7 +14,7 @@ PERMIT_PACKAGE =	Yes
 WANTLIB +=      sqlite3 mdr flatconf
 
 LIB_DEPENDS =   databases/sqlite3 \
-                devel/libmdr
+                devel/libmdr>=0.8.6
 
 MAKE_FLAGS =	EXTRA_CFLAGS=-O2
 
