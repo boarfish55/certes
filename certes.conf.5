@@ -46,6 +46,12 @@ Default:
 For agents, the FQDN of the authority to contact.
 For an authority, its own FQDN, which must match the CN in
 .Ic cert_file .
+The
+.Fl peer
+option of
+.Cm bootstrap-setup
+overrides this for a single invocation; see
+.Xr certes 8 .
 .It Ic authority_port Ar uint
 TCP port the authority listens on.
 Default:

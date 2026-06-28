@@ -84,7 +84,7 @@ authority-signed certificate written during bootstrap.
 Create the authority's certificate database and exit.
 Run once on the authority host before starting
 .Xr mdrd 8 .
-.It Cm bootstrap-setup Oo Fl cn Ar commonName Oc Oo Fl san Ar SAN Oc Oo Fl role Ar role Oc Oo Fl cert_expiry Ar seconds Oc Oo Fl timeout Ar seconds Oc
+.It Cm bootstrap-setup Oo Fl cn Ar commonName Oc Oo Fl san Ar SAN Oc Oo Fl role Ar role Oc Oo Fl cert_expiry Ar seconds Oc Oo Fl timeout Ar seconds Oc Oo Fl peer Ar host Ns Oo : Ns Ar port Oc Oc
 Create a bootstrap entry on the authority and print its base64
 bootstrap key on standard output.
 The key is single-use: an agent presents it once during bootstrap to
@@ -119,12 +119,22 @@ Validity of the bootstrap entry itself, in seconds.
 Default: 600.
 After this period the entry is purged and the bootstrap key becomes
 unusable.
+.It Fl peer Ar host Ns Oo : Ns Ar port Oc
+Authority to contact instead of the
+.Ic authority_fqdn
+configured in
+.Xr certes.conf 5 .
+If
+.Ar port
+is omitted, the configured
+.Ic authority_port
+is used.
 .El
 .Pp
 Must be run on the authority host with a certificate carrying the
 .Sy bootstrap
 role.
-.It Cm cert Oo Fl serial Ar hex Oc Oo Fl find Ar pattern Oc
+.It Cm cert Oo Fl serial Ar hex Oc Oo Fl find Ar pattern Oc Oo Fl peer Ar host Ns Oo : Ns Ar port Oc Oc
 Display a certificate from the authority's database, or list serials
 whose subject matches a pattern.
 With
@@ -133,11 +143,14 @@ prints the full certificate including roles and SANs.
 With
 .Fl find ,
 prints serial, subject, and flags for each match.
+.Fl peer
+selects the authority to contact, as described under
+.Cm bootstrap-setup .
 .Pp
 Requires a certificate with the
 .Sy certadmin
 role.
-.It Cm role Fl serial Ar hex Oo Fl add Ar role Oc Oo Fl del Ar role Oc
+.It Cm role Fl serial Ar hex Oo Fl add Ar role Oc Oo Fl del Ar role Oc Oo Fl peer Ar host Ns Oo : Ns Ar port Oc Oc
 Modify the roles on an existing certificate in the authority's
 database.
 The
@@ -148,17 +161,23 @@ flags may be repeated.
 Note that this modifies the database record but does not re-issue the
 certificate; the client must renew to get a certificate with the new
 roles.
+.Fl peer
+selects the authority to contact, as described under
+.Cm bootstrap-setup .
 .Pp
 Requires the
 .Sy certadmin
 role.
-.It Cm san Fl serial Ar hex Oo Fl add Ar SAN Oc Oo Fl del Ar SAN Oc
+.It Cm san Fl serial Ar hex Oo Fl add Ar SAN Oc Oo Fl del Ar SAN Oc Oo Fl peer Ar host Ns Oo : Ns Ar port Oc Oc
 Like
 .Cm role ,
 but for Subject Alternative Names.
-.It Cm revoke Fl serial Ar hex
+.It Cm revoke Fl serial Ar hex Oo Fl peer Ar host Ns Oo : Ns Ar port Oc Oc
 Revoke a certificate by serial.
 The revocation is reflected in the next CRL generation.
+.Fl peer
+selects the authority to contact, as described under
+.Cm bootstrap-setup .
 .Pp
 Requires the
 .Sy certadmin

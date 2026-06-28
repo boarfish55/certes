@@ -1495,6 +1495,8 @@ bootstrap_setup_usage()
 	printf("\t-help        Prints this help\n");
 	printf("\t-timeout     Validity of bootstrap entry in "
 	    "seconds (default 600)\n");
+	printf("\t-peer        Connect to this authority instead of what "
+	    "is specified in the configuration\n");
 	printf("\t-cert_expiry Validity of certificate in "
 	    "seconds (default 7*86400)\n");
 	printf("\t-san         Adds a Subject Alt Name to this "
@@ -1514,6 +1516,7 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 	size_t            roles_sz = 0;
 	char             *cn = NULL;
 	char            **sans = NULL;
+	const char       *peer = NULL;
 	size_t            sans_sz = 0;
 	struct pmdr       pm;
 	struct pmdr_vec   pv[6];
@@ -1532,6 +1535,16 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 		if (strcmp(argv[opt], "-help") == 0) {
 			bootstrap_setup_usage();
 			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-peer") == 0) {
+			opt++;
+			if (opt >= argc) {
+				bootstrap_setup_usage();
+				exit(1);
+			}
+			peer = argv[opt];
+			continue;
 		}
 
 		if (strcmp(argv[opt], "-timeout") == 0) {
@@ -1602,7 +1615,8 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 		exit(1);
 	}
 
-	if ((op = authop_new(AUTHOP_BOOTSTRAP_SETUP, NULL, xerrz(&e))) == NULL) {
+	if ((op = authop_new(AUTHOP_BOOTSTRAP_SETUP, peer,
+	    xerrz(&e))) == NULL) {
 		xerr_print(&e);
 		exit(1);
 	}
@@ -1962,6 +1976,8 @@ revoke_usage()
 	printf("Usage: %s revoke -serial <serial>\n",
 	    CERTES_PROGNAME);
 	printf("\t-help        Prints this help\n");
+	printf("\t-peer        Connect to this authority instead of what "
+	    "is specified in the configuration\n");
 	printf("\t-serial      Serial of the certificate to revoke\n");
 }
 
@@ -1970,6 +1986,7 @@ agent_cli_revoke(int argc, char **argv)
 {
 	int               opt, r;
 	char             *serial = NULL;
+	const char       *peer = NULL;
 	struct pmdr       pm;
 	struct pmdr_vec   pv[1];
 	char              pbuf[1024];
@@ -1986,6 +2003,16 @@ agent_cli_revoke(int argc, char **argv)
 		if (strcmp(argv[opt], "-help") == 0) {
 			revoke_usage();
 			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-peer") == 0) {
+			opt++;
+			if (opt >= argc) {
+				revoke_usage();
+				exit(1);
+			}
+			peer = argv[opt];
+			continue;
 		}
 
 		if (strcmp(argv[opt], "-serial") == 0) {
@@ -2015,7 +2042,7 @@ agent_cli_revoke(int argc, char **argv)
 		exit(1);
 	}
 
-	if ((op = authop_new(AUTHOP_CERT_REVOKE, NULL, xerrz(&e))) == NULL) {
+	if ((op = authop_new(AUTHOP_CERT_REVOKE, peer, xerrz(&e))) == NULL) {
 		xerr_print(&e);
 		exit(1);
 	}
@@ -2103,6 +2130,8 @@ role_san_usage(int role)
 	printf("Usage: %s %s -serial <serial> [-add <entry>] [-del <entry>]\n",
 	    CERTES_PROGNAME, (role) ? "role" : "san");
 	printf("\t-help        Prints this help\n");
+	printf("\t-peer        Connect to this authority instead of what "
+	    "is specified in the configuration\n");
 	printf("\t-serial      Which cert to change\n");
 	printf("\t-add         Entry to add\n");
 	printf("\t-del         Entry to remove\n");
@@ -2117,6 +2146,7 @@ agent_cli_role_sans(int role, int argc, char **argv)
 	size_t            add_sz = 0;
 	char            **del = NULL;
 	size_t            del_sz = 0;
+	const char       *peer = NULL;
 	struct pmdr       pm;
 	struct pmdr_vec   pv[3];
 	char              pbuf[CERTES_MAX_MSG_SIZE];
@@ -2133,6 +2163,16 @@ agent_cli_role_sans(int role, int argc, char **argv)
 		if (strcmp(argv[opt], "-help") == 0) {
 			role_san_usage(role);
 			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-peer") == 0) {
+			opt++;
+			if (opt >= argc) {
+				role_san_usage(role);
+				exit(1);
+			}
+			peer = argv[opt];
+			continue;
 		}
 
 		if (strcmp(argv[opt], "-add") == 0) {
@@ -2189,7 +2229,7 @@ agent_cli_role_sans(int role, int argc, char **argv)
 	}
 
 	if ((op = authop_new((role) ? AUTHOP_ROLE_MOD : AUTHOP_ROLE_SAN,
-	    NULL, xerrz(&e))) == NULL) {
+	    peer, xerrz(&e))) == NULL) {
 		xerr_print(&e);
 		exit(1);
 	}
@@ -2247,6 +2287,8 @@ cli_cert_usage()
 	printf("Usage: %s cert [-serial <serial>] [-find <pattern>]\n",
 	    CERTES_PROGNAME);
 	printf("\t-help             Prints this help\n");
+	printf("\t-peer <peer>      Connect to this authority instead of "
+	    "what is specified in the configuration\n");
 	printf("\t-serial <serial>  Serial of the certificate to display\n");
 	printf("\t-find <pattern>   List serials matching pattern\n");
 }
@@ -2264,6 +2306,7 @@ agent_cli_cert(int argc, char **argv)
 	int               opt, r, i;
 	char             *serial = NULL;
 	char             *find = NULL;
+	const char       *peer = NULL;
 	struct pmdr       pm;
 	struct pmdr_vec   pv[1];
 	char              pbuf[CERTES_MAX_MSG_SIZE];
@@ -2294,6 +2337,16 @@ agent_cli_cert(int argc, char **argv)
 		if (strcmp(argv[opt], "-help") == 0) {
 			cli_cert_usage();
 			exit(0);
+		}
+
+		if (strcmp(argv[opt], "-peer") == 0) {
+			opt++;
+			if (opt >= argc) {
+				cli_cert_usage();
+				exit(1);
+			}
+			peer = argv[opt];
+			continue;
 		}
 
 		if (strcmp(argv[opt], "-serial") == 0) {
@@ -2331,7 +2384,7 @@ agent_cli_cert(int argc, char **argv)
 
 	if ((op = authop_new(
 	    (serial == NULL) ? AUTHOP_CERT_FIND : AUTHOP_CERT_GET,
-	    NULL, xerrz(&e))) == NULL)
+	    peer, xerrz(&e))) == NULL)
 		goto fail;
 
 	pmdr_init(&pm, pbuf, sizeof(pbuf), MDR_FNONE);
