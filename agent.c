@@ -3011,8 +3011,15 @@ agent_start(struct xerr *e)
 	}
 
 	if (chdir("/") == -1) {
-		xlog_strerror(LOG_ERR, errno, "%s: chdir(/)", __func__);
-		exit(1);
+		/*
+		 * Under mdrd supervision the backend runs with unveil(2)
+		 * committed and "/" not unveiled, so this returns ENOENT.
+		 * That's harmless: when coredumps are off mdrd's spawnproc
+		 * already chdir("/")'d before unveil, so we're at "/" anyway;
+		 * when they're on, keeping cwd is intentional. Standalone runs
+		 * (no unveil) still succeed. Warn and continue.
+		 */
+		xlog_strerror(LOG_WARNING, errno, "%s: chdir(/)", __func__);
 	}
 
 	if ((null_fd = open("/dev/null", O_RDWR)) == -1) {
