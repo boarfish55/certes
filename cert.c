@@ -1311,10 +1311,6 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 	if (roles_idx == -1)
 		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
 		    "%s: certesRoles extension not found", __func__);
-	san_idx = X509_get_ext_by_NID(crt, NID_subject_alt_name, -1);
-	if (san_idx == -1)
-		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
-		    "%s: subjectAltName extension not found", __func__);
 
 	if ((ex = X509_get_ext(crt, roles_idx)) == NULL)
 		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
@@ -1335,19 +1331,24 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 		if (!cert_has_role(crt, ce->roles[i], xerrz(e)))
 			return 1;
 
-	if ((ex = X509_get_ext(crt, san_idx)) == NULL)
-		return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
-		    "%s: subjectAltName extension not found", __func__);
-	asn1str = X509_EXTENSION_get_data(ex);
-	p = asn1str->data;
-	/*
-	 * If the number of roles is not equal, or if one of the
-	 * roles is not found in the cert, we must renew.
-	 */
-	seq = d2i_ASN1_SEQUENCE_ANY(NULL,
-	    (const unsigned char **)&p, asn1str->length);
-	num = sk_ASN1_TYPE_num(seq);
-	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
+	san_idx = X509_get_ext_by_NID(crt, NID_subject_alt_name, -1);
+	if (san_idx == -1) {
+		num = 0;
+	} else {
+		if ((ex = X509_get_ext(crt, san_idx)) == NULL)
+			return XERRF(e, XLOG_APP, XLOG_NOTFOUND,
+			    "%s: subjectAltName extension not found", __func__);
+		asn1str = X509_EXTENSION_get_data(ex);
+		p = asn1str->data;
+		/*
+		 * If the number of roles is not equal, or if one of the
+		 * roles is not found in the cert, we must renew.
+		 */
+		seq = d2i_ASN1_SEQUENCE_ANY(NULL,
+		    (const unsigned char **)&p, asn1str->length);
+		num = sk_ASN1_TYPE_num(seq);
+		sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
+	}
 	if (num != ce->sans_sz)
 		return 1;
 	for (i = 0; ce->sans[i] != NULL; i++)
