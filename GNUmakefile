@@ -1,5 +1,5 @@
 CC := gcc
-VERSION = 0.5.11
+VERSION = 0.5.12
 DEPDIR := .deps
 # Project-mandatory flags. We *append* to CFLAGS/CPPFLAGS/LDFLAGS so that any
 # flags supplied through the environment (notably dpkg-buildflags under Debian:
