@@ -3010,7 +3010,10 @@ agent_start(struct xerr *e)
 		return 0;
 	}
 
-	chdir("/");
+	if (chdir("/") == -1) {
+		xlog_strerror(LOG_ERR, errno, "%s: chdir(/)", __func__);
+		exit(1);
+	}
 
 	if ((null_fd = open("/dev/null", O_RDWR)) == -1) {
 		xlog_strerror(LOG_ERR, errno, "%s: open /dev/null", __func__);
