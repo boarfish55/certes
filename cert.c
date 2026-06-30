@@ -1327,7 +1327,7 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 	sk_ASN1_TYPE_pop_free(seq, ASN1_TYPE_free);
 	if (num != ce->roles_sz)
 		return 1;
-	for (i = 0; ce->roles[i] != NULL; i++)
+	for (i = 0; ce->roles != NULL && ce->roles[i] != NULL; i++)
 		if (!cert_has_role(crt, ce->roles[i], xerrz(e)))
 			return 1;
 
@@ -1341,8 +1341,8 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 		asn1str = X509_EXTENSION_get_data(ex);
 		p = asn1str->data;
 		/*
-		 * If the number of roles is not equal, or if one of the
-		 * roles is not found in the cert, we must renew.
+		 * If the number of SANs is not equal, or if one of the
+		 * SANs is not found in the cert, we must renew.
 		 */
 		seq = d2i_ASN1_SEQUENCE_ANY(NULL,
 		    (const unsigned char **)&p, asn1str->length);
@@ -1351,7 +1351,7 @@ cert_must_renew(X509 *crt, struct cert_entry *ce, struct xerr *e)
 	}
 	if (num != ce->sans_sz)
 		return 1;
-	for (i = 0; ce->sans[i] != NULL; i++)
+	for (i = 0; ce->sans != NULL && ce->sans[i] != NULL; i++)
 		if (!cert_has_san(crt, ce->sans[i], xerrz(e)))
 			return 1;
 
