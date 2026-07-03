@@ -651,8 +651,17 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	if (flatconf_read(config_file_path, certes_config_vars, NULL) == -1)
-		err(1, "config_vars_read");
+	switch (flatconf_read(config_file_path, certes_config_vars, NULL)) {
+	case 0:
+		/* Success */
+		break;
+	case 1:
+		errx(1, "flatconf: configuration is not valid");
+	case 2:
+		errx(1, "flatconf: memory exhausted by parser");
+	default:
+		err(1, "flatconf_read");
+	}
 
 	if (certes_conf.authority_port > 65535 ||
 	    certes_conf.authority_port == 0)
