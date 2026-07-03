@@ -463,7 +463,6 @@ cert_new_serial(struct xerr *e)
 	BIGNUM      *v = NULL;
 	char        *p;
 	char         buf[MAX_HEX_SERIAL_LENGTH + 1];
-	struct xerr  e2;
 
 	if (!BN_hex2bn(&min_bn, certes_conf.min_serial)) {
 		XERRF(e, XLOG_SSL, ERR_get_error(), "BN_hex2bn");
@@ -557,8 +556,6 @@ cert_new_serial(struct xerr *e)
 
 	return v;
 fail:
-	if (certdb_rollback_txn(xerrz(&e2)) == -1)
-		xlog(LOG_ERR, &e2, __func__);
 	if (v != NULL)
 		BN_free(v);
 	if (min_bn != NULL)
@@ -746,6 +743,7 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 	X509V3_CTX      ctx;
 	char           *sans = NULL;
 	struct xerr     e2;
+	int             in_txn = 0;
 
 	X509V3_set_ctx(&ctx, issuer, crt, NULL, NULL, 0);
 
@@ -762,6 +760,7 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 		XERR_PREPENDFN(e);
 		goto fail;
 	}
+	in_txn = 1;
 
 	serial = cert_new_serial(xerrz(e));
 	if (serial == NULL)
@@ -857,11 +856,10 @@ cert_sign(X509 *crt, X509 *issuer, const struct cert_entry *ce,
 	free(sans);
 	return newcrt;
 fail:
-	if (serial != NULL) {
-		if (certdb_rollback_txn(xerrz(&e2)) == -1)
-			xlog(LOG_ERR, &e2, __func__);
+	if (in_txn && certdb_rollback_txn(xerrz(&e2)) == -1)
+		xlog(LOG_ERR, &e2, __func__);
+	if (serial != NULL)
 		BN_free(serial);
-	}
 	if (newcrt != NULL)
 		X509_free(newcrt);
 	free(sans);

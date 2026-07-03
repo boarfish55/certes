@@ -925,7 +925,7 @@ certdb_find_certs(const char *pattern,
 	    SQLITE_STATIC))) {
 		status = XERRF(e, XLOG_DB, r, "sqlite3_bind_blob: %s",
 		    sqlite3_errmsg(db));
-		goto end;
+		goto end_cleanup;
 	}
 
 	if (certdb_begin_txn(xerrz(e)) == -1)
@@ -1032,6 +1032,7 @@ end:
 	}
 	if (certdb_rollback_txn(&e2) == -1)
 		xlog(LOG_ERR, &e2, __func__);
+end_cleanup:
 	if (certdb_qry_cleanup(qry_find_certs.stmt, xerrz(&e2)) == -1)
 		xlog(LOG_ERR, &e2, __func__);
 	return status;

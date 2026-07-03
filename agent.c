@@ -355,7 +355,11 @@ agent_run(int lsock, struct xerr *e)
 
 			/* Handle our listening socket for new clients. */
 			if (fds[i].fd == lsock) {
-				if (client_tree_sz >= fds_sz) {
+				/*
+				 * pollfd size check for each clients and
+				 * listening socket.
+				 */
+				if (client_tree_sz + 1 >= fds_sz) {
 					tmp = reallocarray(fds,
 					    (client_tree_sz + 32),
 					    sizeof(struct pollfd));
@@ -1141,6 +1145,7 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 		}
 		fclose(f);
 		X509_CRL_free(crl);
+		crl = NULL;
 		xlog(LOG_NOTICE, NULL, "%s: wrote updated CRL from %s",
 		    __func__, issuer_cn);
 	}
@@ -1148,7 +1153,7 @@ agent_refresh_crls(const char *peer_fqdn, struct xerr *e)
 	authop_free(op);
 
 	if (load_crls(xerrz(e)) == -1)
-		xlog(LOG_ERR, e, "%s");
+		xlog(LOG_ERR, e, __func__);
 	crls_gen++;
 
 	return 0;
@@ -2782,7 +2787,8 @@ load_crls(struct xerr *e)
 		if (de->d_type != DT_REG)
 			continue;
 		de_len = strlen(de->d_name);
-		if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
+		if (de_len < 4 ||
+		    strcmp(de->d_name + (de_len - 4), ".crl") != 0)
 			continue;
 
 		count++;
@@ -2820,7 +2826,8 @@ load_crls(struct xerr *e)
 		if (de->d_type != DT_REG)
 			continue;
 		de_len = strlen(de->d_name);
-		if (strcmp(de->d_name + (de_len - 4), ".crl") != 0)
+		if (de_len < 4 ||
+		    strcmp(de->d_name + (de_len - 4), ".crl") != 0)
 			continue;
 
 		if (snprintf(crl_path, sizeof(crl_path), "%s/%s",
@@ -2860,7 +2867,7 @@ load_crls(struct xerr *e)
 
 	free_loaded_crls();
 
-	loaded_crls.count = count;
+	loaded_crls.count = i;
 	loaded_crls.issuers = issuers;
 	loaded_crls.last_updates = last_updates;
 	loaded_crls.crls = crls;

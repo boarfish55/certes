@@ -303,8 +303,10 @@ certes_client_name(struct mdrd_besession *s, char *dst, size_t sz,
 	}
 
 	if ((r = getnameinfo((struct sockaddr *)&s->peer, s->peer_len, namebuf,
-	    sizeof(namebuf), NULL, 0, NI_NUMERICHOST)) != 0)
+	    sizeof(namebuf), NULL, 0, NI_NUMERICHOST)) != 0) {
 		XERRF(e, XLOG_EAI, r, "getnameinfo");
+		return NULL;
+	}
 
 	if (s->cert == NULL) {
 		snprintf(buf, sz, "peer=%s (no certificate)", namebuf);
