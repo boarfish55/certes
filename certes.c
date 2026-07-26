@@ -454,11 +454,6 @@ mdrd_backend()
 	while ((r = mdrd_recv(&mrh, 1000))) {
 		if (r == MDR_FAIL) {
 			if (errno == ETIMEDOUT) {
-				if ((r = mdrd_purge_sessions_cb(&mrh,
-				    certes_conf.agent_recv_timeout_ms / 1000,
-				    &log_session, NULL)) > 0)
-					xlog(LOG_NOTICE, NULL,
-					    "purged %d idle sessions", r);
 				task_reload_crls();
 				continue;
 			}
