@@ -655,7 +655,7 @@ authop_new(enum authop_type type, const char *peer, struct xerr *e)
 	return op;
 fail:
 	if (op->bio != NULL)
-		BIO_free(op->bio);
+		BIO_free_all(op->bio);
 	free(op);
 	return NULL;
 }

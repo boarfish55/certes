@@ -762,7 +762,7 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	if (BIO_do_connect(bio) <= 0) {
 		beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
 		    "dialback failed");
-		BIO_free(bio);
+		BIO_free_all(bio);
 		SSL_CTX_free(ctx);
 		return XERRF(e, XLOG_SSL, ERR_get_error(),
 		    "BIO_do_connect: %s", challenge_host);
@@ -811,7 +811,7 @@ authority_challenge(struct mdrd_besession *sess, const char *op_id,
 	return status;
 befail:
 	if (bio != NULL)
-		BIO_free(bio);
+		BIO_free_all(bio);
 	if (ctx != NULL)
 		SSL_CTX_free(ctx);
 	beout_error(sess, op_id, MDRD_BEOUT_FNONE, MDR_ERR_BEFAIL,
