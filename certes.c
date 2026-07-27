@@ -42,7 +42,7 @@ struct certes_flatconf certes_conf = {
 	0,                       /* certdb_backup_pages_per_steps */
 	60000,                   /* agent_send_timeout_ms */
 	60000,                   /* agent_recv_timeout_ms */
-	"",                      /* bootstrap_key */
+	"",                      /* bootstrap_key_file */
 	30,                      /* challenge_timeout */
 	"ca.pem",                /* root_cert_file */
 	"",                      /* crl_path */
@@ -132,10 +132,10 @@ struct flatconf certes_config_vars[] = {
 		sizeof(certes_conf.agent_recv_timeout_ms)
 	},
 	{
-		"bootstrap_key",
+		"bootstrap_key_file",
 		FLATCONF_STRING,
-		certes_conf.bootstrap_key,
-		sizeof(certes_conf.bootstrap_key)
+		certes_conf.bootstrap_key_file,
+		sizeof(certes_conf.bootstrap_key_file)
 	},
 	{
 		"challenge_timeout_seconds",

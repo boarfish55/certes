@@ -9,10 +9,10 @@
 # Enable core dumps for crash debugging. Should be false in production.
 enable_coredumps = true
 
-# Base64-encoded one-time bootstrap key issued by the authority via
-# `certes bootstrap-setup`. Used on first startup to obtain a signed cert.
-# Once bootstrap completes, the key is no longer needed.
-bootstrap_key = "nL67iJsE/6dQRG+ZZYmgZm3bSyM22pSlO2UYMYLfxvxKpXELW3VfrZFrnPfbLPty"
+# Path to a file holding the base64-encoded one-time bootstrap key issued by
+# the authority via `certes bootstrap-setup`. Used on first startup to obtain a
+# signed cert. Once bootstrap completes, the key is no longer needed.
+bootstrap_key_file = "/etc/certes/bootstrap.key"
 
 # Authority this agent talks to for bootstrap, renewals, and CRL updates.
 authority_fqdn = "localhost"

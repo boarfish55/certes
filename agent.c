@@ -12,6 +12,7 @@
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <ctype.h>
 #include <dirent.h>
 #include <err.h>
 #include <fcntl.h>
@@ -47,6 +48,11 @@ static int             cert_fetch_in_progress = 0;
 extern struct certes_flatconf certes_conf;
 
 static struct loaded_crls loaded_crls = { 0, NULL, NULL, NULL };
+
+struct namelist {
+	char   **items;
+	size_t   sz;
+};
 
 enum authop_type {
 	AUTHOP_BOOTSTRAP_SETUP = 1,
@@ -137,6 +143,7 @@ static int            load_crls(struct xerr *);
 static int            agent_init_ctx(struct xerr *);
 static int            agent_poll_crls_gen(int, struct xerr *);
 static int            agent_regen_crl(struct xerr *);
+static int            agent_read_bootstrap_key(char *, size_t, struct xerr *);
 
 static int
 verify_callback(int ok, X509_STORE_CTX *ctx)
@@ -748,6 +755,45 @@ agent_error(struct umdr *msg, struct xerr *e)
 }
 
 /*
+ * Read the base64 bootstrap key from bootstrap_key_file. The file is expected
+ * to hold the key optionally followed by trailing whitespace (such as the
+ * newline written by "certes bootstrap-setup").
+ */
+static int
+agent_read_bootstrap_key(char *b64, size_t b64sz, struct xerr *e)
+{
+	FILE *f;
+	int   n;
+
+	if (certes_conf.bootstrap_key_file[0] == '\0')
+		return XERRF(e, XLOG_APP, XLOG_INVALID,
+		    "bootstrap_key_file is not configured");
+
+	if ((f = fopen(certes_conf.bootstrap_key_file, "r")) == NULL)
+		return XERRF(e, XLOG_ERRNO, errno, "fopen: %s",
+		    certes_conf.bootstrap_key_file);
+
+	if (fgets(b64, b64sz, f) == NULL) {
+		if (ferror(f))
+			XERRF(e, XLOG_ERRNO, errno, "fgets: %s",
+			    certes_conf.bootstrap_key_file);
+		else
+			XERRF(e, XLOG_APP, XLOG_INVALID,
+			    "bootstrap_key_file is empty: %s",
+			    certes_conf.bootstrap_key_file);
+		fclose(f);
+		return -1;
+	}
+	fclose(f);
+
+	for (n = strlen(b64) - 1; n > 0 && isspace((unsigned char)b64[n]); n--)
+		/* Nothing */ ;
+	b64[n + 1] = '\0';
+
+	return 0;
+}
+
+/*
  * Contact the authority to send our bootstrap key in order to obtain
  * a challenge so we can send our REQ.
  */
@@ -758,6 +804,7 @@ agent_bootstrap(struct xerr *e)
 	struct pmdr_vec      pv[3];
 	char                 pbuf[CERTES_MAX_MSG_SIZE];
 	uint8_t              bootstrap_key[CERTES_BOOTSTRAP_KEY_LENGTH];
+	char                 b64[CERTES_BOOTSTRAP_KEY_LENGTH_B64 + 1];
 	struct authop       *op;
 	unsigned char       *req_buf = NULL;
 	int                  req_len;
@@ -775,18 +822,29 @@ agent_bootstrap(struct xerr *e)
 		return 0;
 	cert_fetch_in_progress = 1;
 
-	if (strlen(certes_conf.bootstrap_key) !=
-	    CERTES_BOOTSTRAP_KEY_LENGTH_B64)
-		return XERRF(e, XLOG_APP, XLOG_INVALID,
-		    "bad bootstrap key format in configuration; bad length");
+	if (agent_read_bootstrap_key(b64, sizeof(b64), e) == -1) {
+		cert_fetch_in_progress = 0;
+		return XERR_PREPENDFN(e);
+	}
 
-	r = b64dec(bootstrap_key, sizeof(bootstrap_key),
-	    certes_conf.bootstrap_key);
-	if (r == -1)
-		return XERRF(e, XLOG_ERRNO, errno, "b64dec");
-	if (r < sizeof(bootstrap_key))
+	if (strlen(b64) != CERTES_BOOTSTRAP_KEY_LENGTH_B64) {
+		cert_fetch_in_progress = 0;
 		return XERRF(e, XLOG_APP, XLOG_INVALID,
-		    "bootstrap_key is malformed");
+		    "bad bootstrap key format in %s; bad length",
+		    certes_conf.bootstrap_key_file);
+	}
+
+	r = b64dec(bootstrap_key, sizeof(bootstrap_key), b64);
+	if (r == -1) {
+		cert_fetch_in_progress = 0;
+		return XERRF(e, XLOG_ERRNO, errno, "b64dec");
+	}
+	if (r < sizeof(bootstrap_key)) {
+		cert_fetch_in_progress = 0;
+		return XERRF(e, XLOG_APP, XLOG_INVALID,
+		    "bootstrap key in %s is malformed",
+		    certes_conf.bootstrap_key_file);
+	}
 
 	if ((op = authop_new(AUTHOP_BOOTSTRAP, NULL, xerrz(e))) == NULL) {
 		cert_fetch_in_progress = 0;
@@ -1508,6 +1566,47 @@ bootstrap_setup_usage()
 	    "bootstrap entry\n");
 	printf("\t-role        Adds a role to this bootstrap entry\n");
 	printf("\t-cn          Sets de CommonName for the entry\n");
+	printf("\t-from-cert   Copy CN, roles and DNS SANs from an existing "
+	    "(possibly expired) PEM certificate\n");
+}
+
+/*
+ * Collect roles from an existing cert, skipping ROLE_AGENT: the authority
+ * appends it unconditionally when it creates the bootstrap entry, so copying
+ * it here would duplicate it in the reissued cert.
+ */
+static int
+bootstrap_collect_role(const char *role, void *arg)
+{
+	struct namelist *a = (struct namelist *)arg;
+
+	if (strcmp(role, ROLE_AGENT) == 0)
+		return 1;
+
+	a->items = strarray_add(a->items, role);
+	if (a->items == NULL)
+		err(1, "strarray_add");
+	a->sz++;
+	return 1;
+}
+
+/*
+ * Collect DNS SANs only. IP SANs are skipped: the agent re-derives its own
+ * address into the bootstrap REQ at dialin.
+ */
+static int
+bootstrap_collect_san(const char *san, void *arg)
+{
+	struct namelist *a = (struct namelist *)arg;
+
+	if (strncmp(san, "DNS:", 4) != 0)
+		return 1;
+
+	a->items = strarray_add(a->items, san);
+	if (a->items == NULL)
+		err(1, "strarray_add");
+	a->sz++;
+	return 1;
 }
 
 void
@@ -1520,6 +1619,11 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 	char            **roles = NULL;
 	size_t            roles_sz = 0;
 	char             *cn = NULL;
+	char              cn_buf[256];
+	const char       *from_cert = NULL;
+	X509             *crt = NULL;
+	FILE             *f;
+	struct namelist   role_list, san_list;
 	char            **sans = NULL;
 	const char       *peer = NULL;
 	size_t            sans_sz = 0;
@@ -1608,11 +1712,60 @@ agent_cli_bootstrap_setup(int argc, char **argv)
 			roles_sz++;
 			continue;
 		}
+
+		if (strcmp(argv[opt], "-from-cert") == 0) {
+			opt++;
+			if (opt >= argc) {
+				bootstrap_setup_usage();
+				exit(1);
+			}
+			from_cert = argv[opt];
+			continue;
+		}
 	}
 
 	if (cert_init(xerrz(&e)) == -1) {
 		xerr_print(&e);
 		exit(1);
+	}
+
+	if (from_cert != NULL) {
+		if ((f = fopen(from_cert, "r")) == NULL)
+			err(1, "fopen: %s", from_cert);
+		if ((crt = PEM_read_X509(f, NULL, NULL, NULL)) == NULL) {
+			ERR_print_errors_fp(stderr);
+			exit(1);
+		}
+		fclose(f);
+
+		if (X509_NAME_get_text_by_NID(X509_get_subject_name(crt),
+		    NID_commonName, cn_buf, sizeof(cn_buf)) == -1)
+			errx(1, "certificate has no commonName");
+		cn = cn_buf;
+		flags |= CERTDB_BOOTSTRAP_FLAG_SETSUBJECT;
+
+		role_list.items = roles;
+		role_list.sz = roles_sz;
+		if (cert_foreach_role(crt, &bootstrap_collect_role,
+		    &role_list, xerrz(&e)) == -1) {
+			xerr_print(&e);
+			exit(1);
+		}
+		roles = role_list.items;
+		roles_sz = role_list.sz;
+
+		/* A cert with only a CN and no SANs is legitimate. */
+		san_list.items = sans;
+		san_list.sz = sans_sz;
+		if (cert_foreach_san(crt, &bootstrap_collect_san, &san_list,
+		    xerrz(&e)) == -1 && !xerr_is(&e, XLOG_APP, XLOG_NOTFOUND)) {
+			xerr_print(&e);
+			exit(1);
+		}
+		sans = san_list.items;
+		sans_sz = san_list.sz;
+
+		X509_free(crt);
 	}
 
 	if (agent_init(xerrz(&e)) == -1) {

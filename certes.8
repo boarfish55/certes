@@ -84,7 +84,7 @@ authority-signed certificate written during bootstrap.
 Create the authority's certificate database and exit.
 Run once on the authority host before starting
 .Xr mdrd 8 .
-.It Cm bootstrap-setup Oo Fl cn Ar commonName Oc Oo Fl san Ar SAN Oc Oo Fl role Ar role Oc Oo Fl cert_expiry Ar seconds Oc Oo Fl timeout Ar seconds Oc Oo Fl peer Ar host Ns Oo : Ns Ar port Oc Oc
+.It Cm bootstrap-setup Oo Fl cn Ar commonName Oc Oo Fl san Ar SAN Oc Oo Fl role Ar role Oc Oo Fl from-cert Ar file Oc Oo Fl cert_expiry Ar seconds Oc Oo Fl timeout Ar seconds Oc Oo Fl peer Ar host Ns Oo : Ns Ar port Oc Oc
 Create a bootstrap entry on the authority and print its base64
 bootstrap key on standard output.
 The key is single-use: an agent presents it once during bootstrap to
@@ -111,6 +111,29 @@ Roles must be alphanumeric.
 The
 .Sy agent
 role is always added implicitly.
+.It Fl from-cert Ar file
+Read an existing PEM-encoded certificate from
+.Ar file
+and copy its CN, roles and DNS SANs into the bootstrap entry, as if the
+corresponding
+.Fl cn ,
+.Fl role
+and
+.Fl san
+options had been given.
+The certificate is only parsed, never verified, so an expired certificate is
+accepted; this is the intended way to re-issue an agent whose certificate has
+already lapsed.
+The implicit
+.Sy agent
+role and any IP SANs are skipped: the former is re-added by the authority and
+the latter is re-derived by the agent during bootstrap.
+Values may be combined with explicit
+.Fl cn ,
+.Fl role
+and
+.Fl san
+options.
 .It Fl cert_expiry Ar seconds
 Certificate lifetime, in seconds.
 Default: 604800 (7 days).

@@ -56,7 +56,7 @@ struct certes_flatconf {
 	uint64_t   certdb_backup_pages_per_step;
 	uint64_t   agent_send_timeout_ms;
 	uint64_t   agent_recv_timeout_ms;
-	char       bootstrap_key[CERTES_BOOTSTRAP_KEY_LENGTH_B64 + 1];
+	char       bootstrap_key_file[PATH_MAX];
 	uint64_t   challenge_timeout_seconds;
 	char       root_cert_file[PATH_MAX];
 	char       crl_path[PATH_MAX];
