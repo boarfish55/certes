@@ -53,7 +53,7 @@ max_payload_size = 16384
 # Put an upper bound to avoid clients sending absurd certs.
 max_cert_size = 4096
 
-allowed_mdr_domains = [ 0x00000002 ]
+allowed_mdr_domains = [ 0x00000003 ]
 
 backend_argv = [
 	"/home/plalonde/prog/certes/certes"

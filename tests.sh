@@ -96,7 +96,7 @@ max_payload_size = 16384
 max_cert_size = 4096
 dbg_delay_to_backend_seconds = $DBG_DELAY
 
-allowed_mdr_domains = [ 0x00000002 ]
+allowed_mdr_domains = [ 0x00000003 ]
 
 EOF
 
@@ -235,7 +235,7 @@ max_payload_size = 16384
 max_cert_size = 4096
 dbg_delay_to_backend_seconds = $DBG_DELAY
 
-allowed_mdr_domains = [ 0x00000002 ]
+allowed_mdr_domains = [ 0x00000003 ]
 
 EOF
 
