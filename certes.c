@@ -10,6 +10,7 @@
 #include <sys/tree.h>
 #include <sys/types.h>
 #include <err.h>
+#include <inttypes.h>
 #include <netdb.h>
 #include <signal.h>
 #include <unistd.h>
@@ -360,8 +361,8 @@ task_reload_crls()
 	}
 
 	if (umdr_dcv(&um) != MDR_DCV_CERTES_CRLS_GEN) {
-		xlog(LOG_ERR, NULL, "%s: unexpected response from agent (%llu)",
-		    __func__, umdr_dcv(&um));
+		xlog(LOG_ERR, NULL, "%s: unexpected response from agent (%" PRIu64
+		    ")", __func__, umdr_dcv(&um));
 		return;
 	}
 
@@ -585,16 +586,16 @@ mdrd_backend()
 				xlog(LOG_ERR, &e, "%s", __func__);
 			break;
 		default:
-			xlog(LOG_ERR, NULL, "%s: message not supported (%x)",
-			    __func__, umdr_dcv(mrh.msg));
+			xlog(LOG_ERR, NULL, "%s: message not supported (%" PRIx64
+			    ")", __func__, umdr_dcv(mrh.msg));
 			if (agent_is_authority())
 				mdrd_beout_error(mrh.session, MDRD_BEOUT_FNONE,
 				    MDR_ERR_NOTSUPP, "not supported");
 		}
 		task_reload_crls();
 	}
-	if ((r = mdrd_purge_sessions_cb(NULL, 0, &log_session, NULL)) > 0)
-		xlog(LOG_NOTICE, NULL, "purged %d sessions before exit", r);
+	if ((r = mdrd_purge_all_sessions(NULL, &log_session, NULL)) > 0)
+		xlog(LOG_NOTICE, NULL, "purged %td sessions before exit", r);
 	X509_STORE_CTX_free(ctx);
 	return 0;
 }
